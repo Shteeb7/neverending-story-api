@@ -112,13 +112,13 @@ if (missingEnvVars.length > 0) {
 }
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log('\n=================================');
   console.log('🚀 Neverending Story API Server');
   console.log('=================================');
   console.log(`📡 Server running on port ${PORT}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔗 Base URL: http://localhost:${PORT}`);
+  console.log(`🔗 Base URL: http://0.0.0.0:${PORT}`);
   console.log('=================================\n');
   console.log('📋 Available Routes:');
   console.log('   GET  / - API info');
