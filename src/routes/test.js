@@ -14,7 +14,7 @@ router.get('/claude', asyncHandler(async (req, res) => {
   try {
     // Call Claude API with a simple prompt
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4.5-20250929',
+      model: 'claude-sonnet-4-5-20250929',
       max_tokens: 200,
       messages: [{
         role: 'user',
@@ -40,7 +40,7 @@ router.get('/claude', asyncHandler(async (req, res) => {
     res.json({
       success: true,
       test: 'Claude API Integration',
-      model: 'claude-sonnet-4.5-20250929',
+      model: 'claude-sonnet-4-5-20250929',
       premise: generatedPremise,
       usage: {
         inputTokens,

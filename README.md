@@ -274,7 +274,7 @@ Example response:
 {
   "success": true,
   "test": "Claude API Integration",
-  "model": "claude-sonnet-4.5-20250929",
+  "model": "claude-sonnet-4-5-20250929",
   "premise": "A young apprentice discovers their mentor's forbidden spell has trapped their entire village in a time loop that only they can remember.",
   "usage": {
     "inputTokens": 23,
