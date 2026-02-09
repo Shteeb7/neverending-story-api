@@ -12,6 +12,7 @@ const storyRoutes = require('./routes/story');
 const feedbackRoutes = require('./routes/feedback');
 const libraryRoutes = require('./routes/library');
 const adminRoutes = require('./routes/admin');
+const testRoutes = require('./routes/test');
 
 // Initialize Express app
 const app = express();
@@ -78,6 +79,7 @@ app.use('/story', storyRoutes);
 app.use('/feedback', feedbackRoutes);
 app.use('/library', libraryRoutes);
 app.use('/admin', adminRoutes);
+app.use('/test', testRoutes);
 
 // =========================
 // Error Handling

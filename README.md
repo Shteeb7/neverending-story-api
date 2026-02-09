@@ -256,6 +256,38 @@ curl https://your-app.railway.app/
 # Test authentication (requires valid token)
 curl https://your-app.railway.app/auth/session \
   -H "Authorization: Bearer <your-token>"
+
+# Test Claude API integration (verifies API key and story generation)
+curl https://your-app.railway.app/test/claude
+```
+
+### Claude API Integration Test
+
+The `/test/claude` endpoint verifies that:
+- Your Anthropic API key is configured correctly
+- The Claude API client is working
+- Story generation functionality is operational
+- Token usage and cost tracking is accurate
+
+Example response:
+```json
+{
+  "success": true,
+  "test": "Claude API Integration",
+  "model": "claude-sonnet-4.5-20250929",
+  "premise": "A young apprentice discovers their mentor's forbidden spell has trapped their entire village in a time loop that only they can remember.",
+  "usage": {
+    "inputTokens": 23,
+    "outputTokens": 45,
+    "totalTokens": 68
+  },
+  "cost": {
+    "inputCost": "$0.000069",
+    "outputCost": "$0.000675",
+    "totalCost": "$0.000744"
+  },
+  "responseTime": "1234ms"
+}
 ```
 
 ## Support
