@@ -14,7 +14,7 @@ router.get('/claude', asyncHandler(async (req, res) => {
   try {
     // Call Claude API with a simple prompt
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'claude-opus-4-6',
       max_tokens: 200,
       messages: [{
         role: 'user',
@@ -28,10 +28,10 @@ router.get('/claude', asyncHandler(async (req, res) => {
     const inputTokens = message.usage.input_tokens;
     const outputTokens = message.usage.output_tokens;
 
-    // Calculate cost (Claude Sonnet 4.5 pricing as of 2026)
-    // Input: $3 per million tokens, Output: $15 per million tokens
-    const inputCost = (inputTokens / 1_000_000) * 3;
-    const outputCost = (outputTokens / 1_000_000) * 15;
+    // Calculate cost (Claude Opus 4.6 pricing as of 2026)
+    // Input: $15 per million tokens, Output: $75 per million tokens
+    const inputCost = (inputTokens / 1_000_000) * 15;
+    const outputCost = (outputTokens / 1_000_000) * 75;
     const totalCost = inputCost + outputCost;
 
     // Extract the generated text
@@ -40,7 +40,7 @@ router.get('/claude', asyncHandler(async (req, res) => {
     res.json({
       success: true,
       test: 'Claude API Integration',
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'claude-opus-4-6',
       premise: generatedPremise,
       usage: {
         inputTokens,
