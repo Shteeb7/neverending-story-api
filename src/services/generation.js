@@ -53,29 +53,54 @@ async function logApiCost(userId, operation, inputTokens, outputTokens, metadata
 function parseAndValidateJSON(jsonString, requiredFields = []) {
   let parsed;
 
+  // DEBUG: Log raw input details
+  console.log('🔍 DEBUG parseAndValidateJSON:');
+  console.log(`   Input length: ${jsonString.length} chars`);
+  console.log(`   First 100 chars: "${jsonString.substring(0, 100)}"`);
+  console.log(`   Last 50 chars: "${jsonString.substring(Math.max(0, jsonString.length - 50))}"`);
+
   // Step 1: Trim input to remove leading/trailing whitespace
   const trimmed = jsonString.trim();
+  console.log(`   After trim length: ${trimmed.length} chars`);
 
   // Step 2: Try direct JSON.parse() first (handles raw JSON)
   try {
     parsed = JSON.parse(trimmed);
+    console.log('   ✅ Direct JSON.parse() succeeded');
   } catch (e) {
+    console.log(`   ❌ Direct JSON.parse() failed: ${e.message}`);
+
     // Step 3: Try to extract JSON from markdown code blocks
     // Matches: ```json\n{...}\n``` or ```{...}``` or even ``` json {...} ```
     const codeBlockMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
 
+    console.log(`   Markdown regex match: ${codeBlockMatch ? 'SUCCESS' : 'FAILED'}`);
+    if (codeBlockMatch) {
+      console.log(`   Captured groups: ${codeBlockMatch.length}`);
+      console.log(`   Group[1] length: ${codeBlockMatch[1]?.length || 0} chars`);
+      console.log(`   Group[1] first 100: "${codeBlockMatch[1]?.substring(0, 100)}"`);
+    }
+
     if (codeBlockMatch && codeBlockMatch[1]) {
       // Step 4: Parse the extracted JSON content
+      const extracted = codeBlockMatch[1].trim();
+      console.log(`   Attempting to parse extracted content (${extracted.length} chars)...`);
+
       try {
-        parsed = JSON.parse(codeBlockMatch[1].trim());
+        parsed = JSON.parse(extracted);
+        console.log('   ✅ Markdown extraction and parse succeeded');
       } catch (e2) {
+        console.log(`   ❌ Failed to parse extracted JSON: ${e2.message}`);
         throw new Error(`Failed to parse JSON from markdown block: ${e2.message}`);
       }
     } else {
       // No markdown block found, throw original error
+      console.log('   ❌ No markdown block found, throwing error');
       throw new Error(`Failed to parse JSON: ${e.message}`);
     }
   }
+
+  console.log('   ✅ Parsing complete, validating required fields...');
 
   // Validate required fields if specified
   for (const field of requiredFields) {
@@ -84,6 +109,7 @@ function parseAndValidateJSON(jsonString, requiredFields = []) {
     }
   }
 
+  console.log('   ✅ Validation complete\n');
   return parsed;
 }
 
