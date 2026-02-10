@@ -9,20 +9,42 @@ const router = express.Router();
 /**
  * POST /onboarding/start
  * Initialize voice conversation session for onboarding
+ * Creates an ephemeral OpenAI Realtime session and returns credentials to client
  */
 router.post('/start', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req;
 
-  // TODO: Initialize OpenAI Realtime API session
-  // For now, return mock session data
-  const sessionId = `session_${Date.now()}_${userId}`;
+  console.log('🎙️ Creating OpenAI Realtime session for user:', userId);
+
+  // Create ephemeral OpenAI Realtime session
+  const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-realtime-preview-2024-12-17',
+      voice: 'alloy'
+    })
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    console.error('OpenAI session creation failed:', error);
+    throw new Error(`Failed to create OpenAI session: ${response.status}`);
+  }
+
+  const session = await response.json();
+
+  console.log('✅ OpenAI Realtime session created:', session.id);
 
   res.json({
     success: true,
-    sessionId,
-    message: 'Voice session initialized',
-    // In production, return WebSocket URL or session token for OpenAI Realtime API
-    websocketUrl: `wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01`
+    sessionId: session.id,
+    clientSecret: session.client_secret,
+    expiresAt: session.expires_at,
+    message: 'Voice session initialized'
   });
 }));
 
