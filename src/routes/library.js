@@ -24,15 +24,7 @@ router.get('/:userId', authenticateUser, asyncHandler(async (req, res) => {
   // Fetch all stories for user
   const { data: stories, error } = await supabaseAdmin
     .from('stories')
-    .select(`
-      *,
-      reading_progress (
-        chapter_id,
-        position,
-        percent_complete,
-        updated_at
-      )
-    `)
+    .select('*')
     .eq('user_id', userId)
     .eq('archived', false)
     .order('created_at', { ascending: false });
@@ -132,7 +124,6 @@ router.delete('/:storyId', authenticateUser, asyncHandler(async (req, res) => {
 
   // Delete associated data (cascading deletes should handle this, but being explicit)
   await supabaseAdmin.from('chapters').delete().eq('story_id', storyId);
-  await supabaseAdmin.from('reading_progress').delete().eq('story_id', storyId);
   await supabaseAdmin.from('feedback').delete().eq('story_id', storyId);
 
   // Delete the story
