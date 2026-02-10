@@ -12,8 +12,9 @@ const router = express.Router();
 router.get('/:userId', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req.params;
 
-  // Verify requesting user matches or is admin
-  if (req.userId !== userId) {
+  // Verify requesting user matches or is admin (case-insensitive UUID comparison)
+  if (req.userId.toLowerCase() !== userId.toLowerCase()) {
+    console.log('User ID mismatch:', { reqUserId: req.userId, paramUserId: userId });
     return res.status(403).json({
       success: false,
       error: 'Unauthorized access'
