@@ -48,28 +48,36 @@ async function logApiCost(userId, operation, inputTokens, outputTokens, metadata
 
 /**
  * Parse and validate JSON response from Claude
+ * Handles both raw JSON and markdown-wrapped JSON (```json ... ```)
  */
 function parseAndValidateJSON(jsonString, requiredFields = []) {
   let parsed;
 
-  // Try direct parse first
+  // Step 1: Trim input to remove leading/trailing whitespace
+  const trimmed = jsonString.trim();
+
+  // Step 2: Try direct JSON.parse() first (handles raw JSON)
   try {
-    parsed = JSON.parse(jsonString);
+    parsed = JSON.parse(trimmed);
   } catch (e) {
-    // Try to extract from markdown code block
-    const codeBlockMatch = jsonString.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-    if (codeBlockMatch) {
+    // Step 3: Try to extract JSON from markdown code blocks
+    // Matches: ```json\n{...}\n``` or ```{...}``` or even ``` json {...} ```
+    const codeBlockMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+
+    if (codeBlockMatch && codeBlockMatch[1]) {
+      // Step 4: Parse the extracted JSON content
       try {
-        parsed = JSON.parse(codeBlockMatch[1]);
+        parsed = JSON.parse(codeBlockMatch[1].trim());
       } catch (e2) {
-        throw new Error(`Failed to parse JSON: ${e2.message}`);
+        throw new Error(`Failed to parse JSON from markdown block: ${e2.message}`);
       }
     } else {
+      // No markdown block found, throw original error
       throw new Error(`Failed to parse JSON: ${e.message}`);
     }
   }
 
-  // Validate required fields
+  // Validate required fields if specified
   for (const field of requiredFields) {
     if (!(field in parsed)) {
       throw new Error(`Missing required field: ${field}`);
