@@ -1,16 +1,27 @@
 # Neverending Story API Server
 
-Backend API server for the Neverending Story iOS app - an AI-powered book generation platform that orchestrates story creation using Claude API and OpenAI Realtime API.
+Backend API server for the Neverending Story iOS app - an AI-powered book generation platform that creates personalized children's stories using Claude Opus 4.6 and OpenAI Realtime API.
+
+**Version:** 2.0.0 - Production Ready ✨
 
 ## Features
 
+### Core AI Generation Engine 🚀
+- **Premise Generation**: AI creates 3 unique story concepts from user preferences (~10s, $0.05)
+- **Story Bible**: Comprehensive world-building with characters, conflict, stakes (~60s, $0.75)
+- **Arc Outlining**: 12-chapter story structure with pacing and tension (~40s, $0.50)
+- **Chapter Writing**: 2500-3500 word chapters with quality review (~120s, $0.90)
+- **Pre-Generation**: Automatic generation of bible + arc + 8 chapters (~15min, $8.45)
+- **Quality Assurance**: 2-pass system with 6-criteria review and auto-regeneration
+
+### Platform Features
 - **Authentication**: Google and Apple OAuth integration via Supabase
 - **Voice Onboarding**: Real-time voice conversations to understand user preferences
-- **Story Generation**: AI-powered story and chapter generation using Claude
 - **Reading Progress**: Track user reading position and progress
 - **Feedback System**: Voice and quick-tap feedback collection
 - **Library Management**: Full CRUD operations for user story libraries
-- **Cost Tracking**: Monitor AI API usage and costs
+- **Cost Tracking**: Monitor AI API usage and costs per user/story
+- **Error Recovery**: Graceful failure handling with progress preservation
 
 ## Tech Stack
 
@@ -30,40 +41,52 @@ Backend API server for the Neverending Story iOS app - an AI-powered book genera
 - OpenAI API key
 - Railway account (for deployment)
 
-## Local Development Setup
+## Quick Start
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd neverending-story-api
-   ```
+**Get up and running in 5 minutes!** See [QUICKSTART.md](QUICKSTART.md) for detailed setup.
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+### 1. Install Dependencies
+```bash
+npm install
+```
 
-3. **Configure environment variables**
+### 2. Configure Environment
+```bash
+cp .env.example .env
+# Edit .env and add your API keys
+```
 
-   Copy `.env.example` to `.env` and fill in your credentials:
-   ```bash
-   cp .env.example .env
-   ```
+Required variables:
+- `ANTHROPIC_API_KEY` - Get from https://console.anthropic.com
+- `SUPABASE_URL` - Your Supabase project URL
+- `SUPABASE_SERVICE_KEY` - Supabase service role key
+- `OPENAI_API_KEY` - OpenAI API key
 
-   Required environment variables:
-   - `SUPABASE_URL`: Your Supabase project URL
-   - `SUPABASE_ANON_KEY`: Supabase anonymous key
-   - `SUPABASE_SERVICE_KEY`: Supabase service role key
-   - `ANTHROPIC_API_KEY`: Claude API key
-   - `OPENAI_API_KEY`: OpenAI API key
-   - `DATABASE_URL`: PostgreSQL connection string (auto-populated by Railway)
+### 3. Run Database Migration
+Open Supabase SQL Editor and run `database/migrations/002_generation_engine.sql`
 
-4. **Start the development server**
-   ```bash
-   npm run dev
-   ```
+See [DATABASE_SETUP.md](DATABASE_SETUP.md) for detailed instructions.
 
-   The server will start on `http://localhost:3000`
+### 4. Test the Implementation
+```bash
+node scripts/test-generation.js
+```
+
+### 5. Start Development Server
+```bash
+npm run dev
+```
+
+Server starts on `http://localhost:3000`
+
+## Documentation
+
+- **[QUICKSTART.md](QUICKSTART.md)** - 5-minute setup guide
+- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Complete implementation overview
+- **[DATABASE_SETUP.md](DATABASE_SETUP.md)** - Database setup and RLS policies
+- **[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)** - Production deployment guide
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
+- **[src/services/README.md](src/services/README.md)** - Generation service API docs
 
 ## API Endpoints
 
@@ -171,39 +194,57 @@ Railway will automatically provide `DATABASE_URL` if you add a PostgreSQL databa
 neverending-story-api/
 ├── src/
 │   ├── config/
-│   │   ├── supabase.js       # Supabase client configuration
-│   │   └── ai-clients.js     # Anthropic & OpenAI clients
+│   │   ├── supabase.js          # Supabase client configuration
+│   │   └── ai-clients.js        # Anthropic & OpenAI clients
 │   ├── middleware/
-│   │   ├── auth.js           # Authentication middleware
-│   │   └── error-handler.js  # Global error handling
+│   │   ├── auth.js              # Authentication middleware
+│   │   └── error-handler.js     # Global error handling
+│   ├── services/
+│   │   ├── generation.js        # ⭐ AI generation engine (812 lines)
+│   │   └── README.md            # Service API documentation
 │   ├── routes/
-│   │   ├── auth.js           # Authentication endpoints
-│   │   ├── onboarding.js     # Onboarding endpoints
-│   │   ├── story.js          # Story generation endpoints
-│   │   ├── feedback.js       # Feedback endpoints
-│   │   ├── library.js        # Library management endpoints
-│   │   └── admin.js          # Admin/monitoring endpoints
-│   └── server.js             # Main application entry point
-├── .env.example              # Environment variables template
-├── .gitignore
+│   │   ├── auth.js              # Authentication endpoints
+│   │   ├── onboarding.js        # Onboarding endpoints (updated)
+│   │   ├── story.js             # Story generation endpoints (updated)
+│   │   ├── feedback.js          # Feedback endpoints
+│   │   ├── library.js           # Library management endpoints
+│   │   └── admin.js             # Admin/monitoring endpoints
+│   └── server.js                # Main application entry point
+├── database/
+│   └── migrations/
+│       └── 002_generation_engine.sql  # Database schema
+├── scripts/
+│   ├── test-generation.js       # Test suite
+│   └── apply-migration.js       # Migration helper
+├── QUICKSTART.md                # 5-minute setup guide
+├── IMPLEMENTATION_SUMMARY.md    # Complete implementation docs
+├── DATABASE_SETUP.md            # Database setup guide
+├── DEPLOYMENT_CHECKLIST.md      # Deployment guide
+├── CHANGELOG.md                 # Version history
+├── .env.example                 # Environment variables template
 ├── package.json
-├── railway.json              # Railway deployment config
-└── README.md
+└── README.md                    # This file
 ```
 
 ## Database Schema (Supabase)
 
-You'll need to create these tables in your Supabase database:
+Run `database/migrations/002_generation_engine.sql` to create these tables:
 
+**Core Tables:**
 - `user_preferences` - User reading preferences from onboarding
-- `story_premises` - Generated story premises
-- `stories` - User stories
-- `chapters` - Story chapters
+- `story_premises` - Generated story premises (with status, preferences_used)
+- `story_bibles` - World-building, characters, conflict, stakes
+- `story_arcs` - 12-chapter outlines with pacing
+- `stories` - User stories (with bible_id, generation_progress, error_message)
+- `chapters` - Story chapters (with quality_score, quality_review, metadata)
+- `api_costs` - Detailed API usage tracking (tokens, cost, operation)
+
+**Supporting Tables:**
 - `reading_progress` - User reading positions
 - `feedback` - User feedback data
 - `feedback_sessions` - Voice feedback sessions
-- `api_costs` - API usage cost tracking
-- `generation_metrics` - Performance metrics
+
+See [DATABASE_SETUP.md](DATABASE_SETUP.md) for complete schema and RLS policies.
 
 ## Error Handling
 

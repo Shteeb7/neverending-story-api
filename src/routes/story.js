@@ -21,31 +21,21 @@ router.post('/select-premise', authenticateUser, asyncHandler(async (req, res) =
     });
   }
 
-  // Create new story record
-  const { data: story, error: storyError } = await supabaseAdmin
-    .from('stories')
-    .insert({
-      user_id: userId,
-      premise_id: premiseId,
-      custom_premise: customPremise,
-      status: 'generating',
-      created_at: new Date().toISOString()
-    })
-    .select()
-    .single();
+  // Generate story bible which creates the story record
+  const { generateStoryBible, orchestratePreGeneration } = require('../services/generation');
+  const { storyId } = await generateStoryBible(premiseId, userId);
 
-  if (storyError) {
-    throw new Error(`Failed to create story: ${storyError.message}`);
-  }
-
-  // TODO: Trigger background job to pre-generate first 3 chapters
-  // For now, we'll simulate this with a status update
+  // Start orchestration asynchronously (non-blocking)
+  orchestratePreGeneration(storyId, userId).catch(error => {
+    console.error('Pre-generation failed:', error);
+  });
 
   res.json({
     success: true,
-    storyId: story.id,
+    storyId,
     status: 'generating',
-    message: 'Story generation started'
+    message: 'Story generation started. Check status with GET /story/generation-status/:storyId',
+    estimatedTime: '10-15 minutes'
   });
 }));
 
@@ -71,14 +61,19 @@ router.get('/generation-status/:storyId', authenticateUser, asyncHandler(async (
     });
   }
 
-  // TODO: Check actual generation progress from background job
+  const { count: chapterCount } = await supabaseAdmin
+    .from('chapters')
+    .select('*', { count: 'exact', head: true })
+    .eq('story_id', storyId);
+
   res.json({
     success: true,
     storyId: story.id,
+    title: story.title,
     status: story.status,
-    chaptersGenerated: story.chapters_generated || 0,
-    totalChapters: story.total_chapters || null,
-    progress: story.generation_progress || 0
+    progress: story.generation_progress || {},
+    chaptersAvailable: chapterCount || 0,
+    error: story.error_message || null
   });
 }));
 
@@ -147,6 +142,13 @@ router.post('/:storyId/generate-next', authenticateUser, asyncHandler(async (req
     });
   }
 
+  if (story.status === 'generating') {
+    return res.status(400).json({
+      success: false,
+      error: 'Story is still in initial generation. Please wait.'
+    });
+  }
+
   // Get current chapter count
   const { count: chapterCount } = await supabaseAdmin
     .from('chapters')
@@ -155,17 +157,23 @@ router.post('/:storyId/generate-next', authenticateUser, asyncHandler(async (req
 
   const nextChapterNumber = (chapterCount || 0) + 1;
 
-  // TODO: Use Claude API to generate next chapter(s)
-  // This should consider:
-  // - Previous chapters for continuity
-  // - User's reading preferences
-  // - Story arc and pacing
+  const { generateChapter } = require('../services/generation');
+  const generatedChapters = [];
+
+  for (let i = 0; i < count; i++) {
+    const chapter = await generateChapter(storyId, nextChapterNumber + i, userId);
+    generatedChapters.push({
+      id: chapter.id,
+      chapter_number: chapter.chapter_number,
+      title: chapter.title,
+      word_count: chapter.word_count
+    });
+  }
 
   res.json({
     success: true,
-    message: `Generating ${count} chapter(s)`,
-    nextChapterNumber,
-    status: 'generating'
+    message: `Generated ${count} chapter(s)`,
+    chapters: generatedChapters
   });
 }));
 

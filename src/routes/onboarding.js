@@ -84,55 +84,32 @@ router.post('/process-transcript', authenticateUser, asyncHandler(async (req, re
  */
 router.post('/generate-premises', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req;
-  const { preferences } = req.body;
 
-  // TODO: Use Claude to generate 3 unique story premises
-  // Based on user preferences from onboarding
-
-  // Mock premises for now
-  const premises = [
-    {
-      id: 1,
-      title: 'The Dragon\'s Apprentice',
-      description: 'A young explorer discovers a hidden valley where dragons teach humans the ancient art of sky-sailing.',
-      genre: 'fantasy',
-      themes: ['adventure', 'friendship', 'discovery']
-    },
-    {
-      id: 2,
-      title: 'The Courage Stone',
-      description: 'A shy child finds a magical stone that grants bravery, but must learn that true courage comes from within.',
-      genre: 'fantasy',
-      themes: ['courage', 'self-discovery', 'magic']
-    },
-    {
-      id: 3,
-      title: 'Explorer\'s Map',
-      description: 'An enchanted map leads three friends on a quest to find a legendary treasure hidden in the Whispering Woods.',
-      genre: 'adventure',
-      themes: ['friendship', 'exploration', 'mystery']
-    }
-  ];
-
-  // Store premises in database
-  const { data, error } = await supabaseAdmin
-    .from('story_premises')
-    .insert({
-      user_id: userId,
-      premises: premises,
-      generated_at: new Date().toISOString()
-    })
-    .select()
+  // Fetch user preferences from database
+  const { data: userPrefs, error: prefsError } = await supabaseAdmin
+    .from('user_preferences')
+    .select('preferences')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
+    .limit(1)
     .single();
 
-  if (error) {
-    throw new Error(`Failed to store premises: ${error.message}`);
+  if (prefsError || !userPrefs) {
+    return res.status(400).json({
+      success: false,
+      error: 'User preferences not found. Complete onboarding first.'
+    });
   }
+
+  // Call generation service
+  const { generatePremises } = require('../services/generation');
+  const { premises, premisesId } = await generatePremises(userId, userPrefs.preferences);
 
   res.json({
     success: true,
     premises,
-    premisesId: data?.id
+    premisesId,
+    message: 'Story premises generated successfully'
   });
 }));
 
