@@ -71,8 +71,9 @@ function parseAndValidateJSON(jsonString, requiredFields = []) {
     console.log(`   ❌ Direct JSON.parse() failed: ${e.message}`);
 
     // Step 3: Try to extract JSON from markdown code blocks
-    // Matches: ```json\n{...}\n``` or ```{...}``` or even ``` json {...} ```
-    const codeBlockMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    // Matches: ```json\n{...}\n``` or ```{...}``` or incomplete blocks like ```json\n{...}
+    // The closing ``` is optional (?:\n?```)? and anchored to end of string with $
+    const codeBlockMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)(?:\n?```)?$/);
 
     console.log(`   Markdown regex match: ${codeBlockMatch ? 'SUCCESS' : 'FAILED'}`);
     if (codeBlockMatch) {
