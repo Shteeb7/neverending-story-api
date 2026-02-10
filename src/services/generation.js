@@ -372,12 +372,37 @@ Return ONLY a JSON object in this exact format:
     'stakes', 'themes', 'key_locations', 'timeline'
   ]);
 
-  // Store bible in database
+  // Step 1: Create story record FIRST (bible table requires story_id foreign key)
+  const { data: story, error: storyError } = await supabaseAdmin
+    .from('stories')
+    .insert({
+      user_id: userId,
+      premise_id: premiseId,
+      title: parsed.title,
+      status: 'generating',
+      generation_progress: {
+        bible_complete: false,
+        arc_complete: false,
+        chapters_generated: 0,
+        current_step: 'generating_bible',
+        last_updated: new Date().toISOString()
+      },
+      created_at: new Date().toISOString()
+    })
+    .select()
+    .single();
+
+  if (storyError) {
+    throw new Error(`Failed to create story: ${storyError.message}`);
+  }
+
+  // Step 2: Store bible in database with story_id
   const { data: bible, error: bibleError } = await supabaseAdmin
     .from('story_bibles')
     .insert({
       user_id: userId,
       premise_id: premiseId,
+      story_id: story.id,  // Required by database schema
       title: parsed.title,
       world_rules: parsed.world_rules,
       characters: parsed.characters,
@@ -395,29 +420,23 @@ Return ONLY a JSON object in this exact format:
     throw new Error(`Failed to store bible: ${bibleError.message}`);
   }
 
-  // Create story record
-  const { data: story, error: storyError } = await supabaseAdmin
+  // Step 3: Update story with bible_id now that bible is created
+  const { error: updateError } = await supabaseAdmin
     .from('stories')
-    .insert({
-      user_id: userId,
+    .update({
       bible_id: bible.id,
-      premise_id: premiseId,
-      title: parsed.title,
-      status: 'generating',
       generation_progress: {
         bible_complete: true,
         arc_complete: false,
         chapters_generated: 0,
         current_step: 'bible_created',
         last_updated: new Date().toISOString()
-      },
-      created_at: new Date().toISOString()
+      }
     })
-    .select()
-    .single();
+    .eq('id', story.id);
 
-  if (storyError) {
-    throw new Error(`Failed to create story: ${storyError.message}`);
+  if (updateError) {
+    throw new Error(`Failed to update story with bible_id: ${updateError.message}`);
   }
 
   await logApiCost(userId, 'generate_bible', inputTokens, outputTokens, {
