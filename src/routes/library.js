@@ -26,7 +26,6 @@ router.get('/:userId', authenticateUser, asyncHandler(async (req, res) => {
     .from('stories')
     .select('*')
     .eq('user_id', userId)
-    .eq('archived', false)
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -77,12 +76,12 @@ router.put('/:storyId/archive', authenticateUser, asyncHandler(async (req, res) 
     });
   }
 
-  // Archive the story
+  // Archive the story (soft delete by setting status)
   const { data, error } = await supabaseAdmin
     .from('stories')
     .update({
-      archived: true,
-      archived_at: new Date().toISOString()
+      status: 'archived',
+      updated_at: new Date().toISOString()
     })
     .eq('id', storyId)
     .select()
