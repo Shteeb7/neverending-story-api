@@ -38,11 +38,20 @@ router.post('/start', authenticateUser, asyncHandler(async (req, res) => {
   const session = await response.json();
 
   console.log('✅ OpenAI Realtime session created:', session.id);
+  console.log('   Client secret type:', typeof session.client_secret);
+
+  // Extract the actual token value from the client_secret object
+  // OpenAI returns: { client_secret: { value: "eph_...", expires_at: ... } }
+  const secretValue = typeof session.client_secret === 'object'
+    ? session.client_secret.value
+    : session.client_secret;
+
+  console.log('   Token value (first 20 chars):', secretValue?.substring(0, 20));
 
   res.json({
     success: true,
     sessionId: session.id,
-    clientSecret: session.client_secret,
+    clientSecret: secretValue,  // Return the actual token string, not the object
     expiresAt: session.expires_at,
     message: 'Voice session initialized'
   });
