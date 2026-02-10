@@ -146,4 +146,31 @@ router.get('/premises/:userId', authenticateUser, asyncHandler(async (req, res) 
   });
 }));
 
+/**
+ * POST /onboarding/complete
+ * Mark user's onboarding as complete
+ */
+router.post('/complete', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+
+  // Update user metadata in Supabase auth
+  const { data, error } = await supabaseAdmin.auth.admin.updateUserById(
+    userId,
+    {
+      user_metadata: {
+        has_completed_onboarding: true
+      }
+    }
+  );
+
+  if (error) {
+    throw new Error(`Failed to update user metadata: ${error.message}`);
+  }
+
+  res.json({
+    success: true,
+    message: 'Onboarding marked as complete'
+  });
+}));
+
 module.exports = router;
