@@ -224,7 +224,7 @@ Return ONLY a JSON object in this exact format:
 
   const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
     messages,
-    2000,
+    64000,
     { operation: 'generate_premises', userId }
   );
 
@@ -363,7 +363,7 @@ Return ONLY a JSON object in this exact format:
 
   const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
     messages,
-    4000,
+    64000,
     { operation: 'generate_bible', userId, premiseId }
   );
 
@@ -499,7 +499,7 @@ Return ONLY a JSON object in this exact format:
 
   const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
     messages,
-    3000,
+    64000,
     { operation: 'generate_arc', userId, storyId }
   );
 
@@ -643,7 +643,7 @@ Return ONLY a JSON object in this exact format:
 
     const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
       messages,
-      8000,
+      64000,
       { operation: 'generate_chapter', userId, storyId, chapterNumber, regenerationCount }
     );
 
@@ -700,7 +700,7 @@ Return ONLY a JSON object in this exact format:
 
     const { response: reviewResponse, inputTokens: reviewInputTokens, outputTokens: reviewOutputTokens } = await callClaudeWithRetry(
       reviewMessages,
-      2000,
+      64000,
       { operation: 'quality_review', userId, storyId, chapterNumber, regenerationCount }
     );
 
