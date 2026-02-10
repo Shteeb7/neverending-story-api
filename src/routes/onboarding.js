@@ -38,6 +38,7 @@ router.post('/start', authenticateUser, asyncHandler(async (req, res) => {
   const session = await response.json();
 
   console.log('✅ OpenAI Realtime session created:', session.id);
+  console.log('   Full session object:', JSON.stringify(session, null, 2));
   console.log('   Client secret type:', typeof session.client_secret);
 
   // Extract the actual token value from the client_secret object
@@ -46,7 +47,7 @@ router.post('/start', authenticateUser, asyncHandler(async (req, res) => {
     ? session.client_secret.value
     : session.client_secret;
 
-  console.log('   Token value (first 20 chars):', secretValue?.substring(0, 20));
+  console.log('   Extracted token value (first 20 chars):', secretValue?.substring(0, 20));
 
   res.json({
     success: true,
