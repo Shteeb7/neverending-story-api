@@ -404,6 +404,7 @@ Return ONLY a JSON object in this exact format:
       premise_id: premiseId,
       story_id: story.id,  // Required by database schema
       title: parsed.title,
+      content: response,  // Store the full Claude response
       world_rules: parsed.world_rules,
       characters: parsed.characters,
       central_conflict: parsed.central_conflict,
