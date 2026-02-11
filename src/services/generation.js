@@ -593,9 +593,6 @@ async function generateChapter(storyId, chapterNumber, userId) {
     .eq('story_id', storyId)
     .single();
 
-  story.bible = bible;
-  story.arc = arc;
-
   // Get last 3 chapters for context
   const { data: previousChapters } = await supabaseAdmin
     .from('chapters')
@@ -605,8 +602,7 @@ async function generateChapter(storyId, chapterNumber, userId) {
     .order('chapter_number', { ascending: false })
     .limit(3);
 
-  const bible = story.bible;
-  const arc = story.arc;
+  // Use bible and arc variables already fetched above
   const chapterOutline = arc.chapters.find(ch => ch.chapter_number === chapterNumber);
 
   if (!chapterOutline) {
