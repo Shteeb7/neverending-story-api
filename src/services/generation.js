@@ -454,21 +454,27 @@ Return ONLY a JSON object in this exact format:
  * Generate 12-chapter arc outline
  */
 async function generateArcOutline(storyId, userId) {
-  // Fetch story and bible
+  // Fetch story
   const { data: story, error: storyError } = await supabaseAdmin
     .from('stories')
-    .select(`
-      *,
-      bible:story_bibles(*)
-    `)
+    .select('*')
     .eq('id', storyId)
     .single();
 
   if (storyError || !story) {
-    throw new Error('Story not found');
+    throw new Error(`Story not found: ${storyError?.message || 'No story returned'}`);
   }
 
-  const bible = story.bible;
+  // Fetch bible separately using story_id
+  const { data: bible, error: bibleError } = await supabaseAdmin
+    .from('story_bibles')
+    .select('*')
+    .eq('story_id', storyId)
+    .single();
+
+  if (bibleError || !bible) {
+    throw new Error(`Bible not found for story ${storyId}: ${bibleError?.message || 'No bible returned'}`);
+  }
 
   const prompt = `You are an expert story structure designer for children's fiction.
 
@@ -563,20 +569,32 @@ Return ONLY a JSON object in this exact format:
  * Generate a single chapter with quality review
  */
 async function generateChapter(storyId, chapterNumber, userId) {
-  // Fetch story, bible, arc, and previous chapters
+  // Fetch story
   const { data: story, error: storyError } = await supabaseAdmin
     .from('stories')
-    .select(`
-      *,
-      bible:story_bibles(*),
-      arc:story_arcs(*)
-    `)
+    .select('*')
     .eq('id', storyId)
     .single();
 
   if (storyError || !story) {
-    throw new Error('Story not found');
+    throw new Error(`Story not found: ${storyError?.message || 'No story returned'}`);
   }
+
+  // Fetch bible and arc separately
+  const { data: bible } = await supabaseAdmin
+    .from('story_bibles')
+    .select('*')
+    .eq('story_id', storyId)
+    .single();
+
+  const { data: arc } = await supabaseAdmin
+    .from('story_arcs')
+    .select('*')
+    .eq('story_id', storyId)
+    .single();
+
+  story.bible = bible;
+  story.arc = arc;
 
   // Get last 3 chapters for context
   const { data: previousChapters } = await supabaseAdmin
@@ -784,15 +802,25 @@ Return ONLY a JSON object in this exact format:
  */
 async function orchestratePreGeneration(storyId, userId) {
   try {
-    // Step 1: Generate Bible (already done when story was created)
+    // Step 1: Verify story and bible exist
     const { data: story } = await supabaseAdmin
       .from('stories')
-      .select('*, bible:story_bibles(*)')
+      .select('*')
       .eq('id', storyId)
       .single();
 
-    if (!story || !story.bible) {
-      throw new Error('Story or bible not found');
+    if (!story) {
+      throw new Error('Story not found');
+    }
+
+    const { data: bible } = await supabaseAdmin
+      .from('story_bibles')
+      .select('*')
+      .eq('story_id', storyId)
+      .single();
+
+    if (!bible) {
+      throw new Error('Bible not found');
     }
 
     // Step 2: Generate Arc
