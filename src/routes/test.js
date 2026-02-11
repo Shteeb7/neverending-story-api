@@ -91,9 +91,66 @@ router.get('/health', asyncHandler(async (req, res) => {
     availableTests: [
       'GET /test/claude - Test Claude API integration',
       'POST /test/generate-story - Full end-to-end generation test',
+      'GET /test/schema - Check actual database schema',
       'GET /test/health - This endpoint'
     ]
   });
+}));
+
+/**
+ * GET /test/schema
+ * Query actual database schema - try inserting with minimal data to see what's required
+ */
+router.get('/schema', asyncHandler(async (req, res) => {
+  const { supabaseAdmin } = require('../config/supabase');
+
+  const results = {
+    success: true,
+    story_bibles: { required_fields: [], errors: [] },
+    stories: { required_fields: [], errors: [] }
+  };
+
+  // Test 1: Try to insert minimal story_bibles record to see what fields are required
+  try {
+    const { error } = await supabaseAdmin
+      .from('story_bibles')
+      .insert({ user_id: '00000000-0000-0000-0000-000000000001' })
+      .select();
+
+    if (error) {
+      results.story_bibles.errors.push(error.message);
+      // Parse error to extract required fields
+      if (error.message.includes('violates not-null constraint')) {
+        const match = error.message.match(/column "([^"]+)"/);
+        if (match) results.story_bibles.required_fields.push(match[1]);
+      }
+    }
+  } catch (e) {
+    results.story_bibles.errors.push(e.message);
+  }
+
+  // Test 2: Try to insert minimal stories record
+  try {
+    const { error } = await supabaseAdmin
+      .from('stories')
+      .insert({ user_id: '00000000-0000-0000-0000-000000000001' })
+      .select();
+
+    if (error) {
+      results.stories.errors.push(error.message);
+      if (error.message.includes('violates not-null constraint')) {
+        const match = error.message.match(/column "([^"]+)"/);
+        if (match) results.stories.required_fields.push(match[1]);
+      }
+      if (error.message.includes('violates check constraint')) {
+        results.stories.errors.push('Has CHECK constraints - see error details');
+      }
+    }
+  } catch (e) {
+    results.stories.errors.push(e.message);
+  }
+
+  res.json(results);
 }));
 
 /**
