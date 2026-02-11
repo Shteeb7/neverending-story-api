@@ -8,12 +8,56 @@ const router = express.Router();
 
 /**
  * POST /onboarding/start
- * Initialize voice conversation session for onboarding
- * Creates an ephemeral OpenAI Realtime session and returns credentials to client
+ * Initialize voice conversation session for onboarding OR accept hardcoded preferences
+ *
+ * TEMPORARY: If preferences are provided in the request body, store them directly
+ * and skip OpenAI Realtime session creation (for testing without voice interview)
+ *
+ * Otherwise, creates an ephemeral OpenAI Realtime session and returns credentials to client
  */
 router.post('/start', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req;
+  const { age_range, favorite_genres, themes, reading_level, content_preferences } = req.body;
 
+  // TEMPORARY: If preferences are provided, store them directly (bypass voice interview)
+  if (age_range || favorite_genres || themes || reading_level || content_preferences) {
+    console.log('📝 Storing hardcoded preferences for user:', userId);
+    console.log('   Preferences:', { age_range, favorite_genres, themes, reading_level, content_preferences });
+
+    const preferencesData = {
+      ageRange: age_range,
+      genres: favorite_genres || [],
+      themes: themes || [],
+      readingLevel: reading_level,
+      contentPreferences: content_preferences
+    };
+
+    // Store in database
+    const { data, error } = await supabaseAdmin
+      .from('user_preferences')
+      .upsert({
+        user_id: userId,
+        preferences: preferencesData,
+        transcript: 'BYPASSED_FOR_TESTING',
+        session_id: 'hardcoded_preferences',
+        updated_at: new Date().toISOString()
+      });
+
+    if (error) {
+      console.error('Failed to store preferences:', error);
+      throw new Error(`Failed to store preferences: ${error.message}`);
+    }
+
+    console.log('✅ Preferences stored successfully');
+
+    return res.json({
+      success: true,
+      message: 'Preferences stored successfully (testing mode)',
+      preferences: preferencesData
+    });
+  }
+
+  // Normal flow: Create OpenAI Realtime session
   console.log('🎙️ Creating OpenAI Realtime session for user:', userId);
 
   // Create ephemeral OpenAI Realtime session
