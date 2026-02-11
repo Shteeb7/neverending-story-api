@@ -402,17 +402,16 @@ Return ONLY a JSON object in this exact format:
     .insert({
       user_id: userId,
       premise_id: premiseId,
-      story_id: story.id,  // Required by database schema
+      story_id: story.id,  // Required NOT NULL
+      content: parsed,  // Required NOT NULL - JSONB type, store structured data
       title: parsed.title,
-      content: response,  // Store the full Claude response
       world_rules: parsed.world_rules,
       characters: parsed.characters,
       central_conflict: parsed.central_conflict,
       stakes: parsed.stakes,
       themes: parsed.themes,
       key_locations: parsed.key_locations,
-      timeline: parsed.timeline,
-      created_at: new Date().toISOString()
+      timeline: parsed.timeline
     })
     .select()
     .single();
