@@ -538,7 +538,6 @@ Return ONLY a JSON object in this exact format:
   const { data: arc, error: arcError} = await supabaseAdmin
     .from('story_arcs')
     .insert({
-      user_id: userId,  // Required for RLS - pattern across all tables
       story_id: storyId,
       bible_id: bible.id,
       arc_number: 1,  // First arc for this story
@@ -760,7 +759,6 @@ Return ONLY a JSON object in this exact format:
   const { data: storedChapter, error: chapterError } = await supabaseAdmin
     .from('chapters')
     .insert({
-      user_id: userId,  // Required for RLS - pattern across all tables
       story_id: storyId,
       chapter_number: chapterNumber,
       title: chapter.title,
