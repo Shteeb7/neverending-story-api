@@ -401,7 +401,7 @@ Return ONLY a JSON object in this exact format:
     .from('story_bibles')
     .insert({
       user_id: userId,
-      premise_id: premiseId,
+      // premise_id removed - FK references generated_premises, not story_premises
       story_id: story.id,  // Required NOT NULL
       content: parsed,  // Required NOT NULL - JSONB type, store structured data
       title: parsed.title,
