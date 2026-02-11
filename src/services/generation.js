@@ -379,7 +379,7 @@ Return ONLY a JSON object in this exact format:
       user_id: userId,
       premise_id: premiseId,
       title: parsed.title,
-      status: 'generating',
+      status: 'active',  // Use 'active' - generation_progress tracks actual status
       generation_progress: {
         bible_complete: false,
         arc_complete: false,
