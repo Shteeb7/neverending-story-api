@@ -539,12 +539,12 @@ Return ONLY a JSON object in this exact format:
     .from('story_arcs')
     .insert({
       story_id: storyId,
-      bible_id: bible.id,
       arc_number: 1,  // First arc for this story
+      outline: parsed,  // REQUIRED: Full arc outline as JSONB
+      bible_id: bible.id,
       chapters: parsed.chapters,
       pacing_notes: parsed.pacing_notes,
-      story_threads: parsed.story_threads,
-      created_at: new Date().toISOString()
+      story_threads: parsed.story_threads
     })
     .select()
     .single();
@@ -760,6 +760,7 @@ Return ONLY a JSON object in this exact format:
     .from('chapters')
     .insert({
       story_id: storyId,
+      arc_id: arc.id,  // REQUIRED: Link to parent arc
       chapter_number: chapterNumber,
       title: chapter.title,
       content: chapter.content,
@@ -773,8 +774,7 @@ Return ONLY a JSON object in this exact format:
         closing_hook: chapter.closing_hook,
         key_events: chapter.key_events,
         character_development: chapter.character_development
-      },
-      created_at: new Date().toISOString()
+      }
     })
     .select()
     .single();
