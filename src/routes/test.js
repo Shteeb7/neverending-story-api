@@ -13,6 +13,9 @@ const router = express.Router();
 // Hardcoded test user ID (consistent across test runs)
 const TEST_USER_ID = '00000000-0000-0000-0000-000000000001';
 
+// Read generation model from environment
+const GENERATION_MODEL = process.env.CLAUDE_GENERATION_MODEL || 'claude-opus-4-6';
+
 /**
  * GET /test/claude
  * Test Claude API integration with a simple story premise generation
@@ -23,7 +26,7 @@ router.get('/claude', asyncHandler(async (req, res) => {
   try {
     // Call Claude API with a simple prompt
     const message = await anthropic.messages.create({
-      model: 'claude-opus-4-6',
+      model: GENERATION_MODEL,
       max_tokens: 200,
       messages: [{
         role: 'user',
@@ -38,9 +41,9 @@ router.get('/claude', asyncHandler(async (req, res) => {
     const outputTokens = message.usage.output_tokens;
 
     // Calculate cost (Claude Opus 4.6 pricing as of 2026)
-    // Input: $15 per million tokens, Output: $75 per million tokens
-    const inputCost = (inputTokens / 1_000_000) * 15;
-    const outputCost = (outputTokens / 1_000_000) * 75;
+    // Input: $5 per million tokens, Output: $25 per million tokens
+    const inputCost = (inputTokens / 1_000_000) * 5;
+    const outputCost = (outputTokens / 1_000_000) * 25;
     const totalCost = inputCost + outputCost;
 
     // Extract the generated text
@@ -49,7 +52,7 @@ router.get('/claude', asyncHandler(async (req, res) => {
     res.json({
       success: true,
       test: 'Claude API Integration',
-      model: 'claude-opus-4-6',
+      model: GENERATION_MODEL,
       premise: generatedPremise,
       usage: {
         inputTokens,

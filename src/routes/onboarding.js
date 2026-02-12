@@ -24,7 +24,7 @@ router.post('/start', authenticateUser, asyncHandler(async (req, res) => {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: 'gpt-4o-realtime-preview-2024-12-17',
+      model: process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-mini-realtime-preview-2024-12-17',
       voice: 'alloy'
     })
   });

@@ -153,6 +153,8 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('   POST /story/select-premise - Create story');
   console.log('   GET  /library/:userId - Get user library');
   console.log('   ... and more');
+  console.log('=================================');
+  console.log(`🤖 AI Models: Claude=${process.env.CLAUDE_GENERATION_MODEL || 'claude-opus-4-6'}, OpenAI Realtime=${process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-mini-realtime-preview-2024-12-17'}`);
   console.log('=================================\n');
 });
 

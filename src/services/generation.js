@@ -30,11 +30,16 @@ function mapAgeRange(ageCategory) {
   return ageMap[ageCategory] || ageMap['adult'];
 }
 
-// Claude Opus 4.6 pricing (per million tokens)
+// Model and pricing configuration
+// Model is read from environment so it can be changed without redeployment
+const GENERATION_MODEL = process.env.CLAUDE_GENERATION_MODEL || 'claude-opus-4-6';
+
+// Claude Opus 4.6 pricing (per million tokens) — as of Feb 2026
+// IMPORTANT: Update these if you change the model
 const PRICING = {
-  INPUT_PER_MILLION: 15,
-  OUTPUT_PER_MILLION: 75,
-  MODEL: 'claude-opus-4-6'
+  INPUT_PER_MILLION: 5,    // was 15 (WRONG — that was Opus 4.5 pricing)
+  OUTPUT_PER_MILLION: 25,  // was 75 (WRONG — that was Opus 4.5 pricing)
+  MODEL: GENERATION_MODEL
 };
 
 /**
@@ -848,16 +853,22 @@ Write Chapter ${chapterNumber} of "${bible.title}" following this outline and cr
     <flaws>${bible.characters.protagonist.flaws?.join(', ') || 'N/A'}</flaws>
     <goals>${bible.characters.protagonist.goals}</goals>
     <fears>${bible.characters.protagonist.fears}</fears>
+    <internal_contradiction>${bible.characters.protagonist.internal_contradiction || 'N/A'}</internal_contradiction>
+    <lie_they_believe>${bible.characters.protagonist.lie_they_believe || 'N/A'}</lie_they_believe>
+    <deepest_fear>${bible.characters.protagonist.deepest_fear || 'N/A'}</deepest_fear>
+    <voice_notes>${bible.characters.protagonist.voice_notes || 'N/A'}</voice_notes>
   </protagonist>
 
   <antagonist>
     <name>${bible.characters.antagonist.name}</name>
     <motivation>${bible.characters.antagonist.motivation}</motivation>
     <methods>${bible.characters.antagonist.methods || 'N/A'}</methods>
+    <why_they_believe_theyre_right>${bible.characters.antagonist.why_they_believe_theyre_right || 'N/A'}</why_they_believe_theyre_right>
+    <sympathetic_element>${bible.characters.antagonist.sympathetic_element || 'N/A'}</sympathetic_element>
   </antagonist>
 
   <supporting_characters>
-    ${bible.characters.supporting?.map(sc => `<character name="${sc.name}" role="${sc.role}">${sc.personality}</character>`).join('\n    ') || 'None'}
+    ${bible.characters.supporting?.map(sc => `<character name="${sc.name}" role="${sc.role}" relationship="${sc.relationship_dynamic || 'N/A'}">${sc.personality}</character>`).join('\n    ') || 'None'}
   </supporting_characters>
 
   <world_rules>
