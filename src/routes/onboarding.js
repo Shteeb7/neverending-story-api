@@ -64,7 +64,7 @@ router.post('/start', authenticateUser, asyncHandler(async (req, res) => {
  */
 router.post('/process-transcript', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req;
-  const { transcript, sessionId } = req.body;
+  const { transcript, sessionId, preferences } = req.body;
 
   if (!transcript) {
     return res.status(400).json({
@@ -73,14 +73,9 @@ router.post('/process-transcript', authenticateUser, asyncHandler(async (req, re
     });
   }
 
-  // TODO: Use Claude to analyze transcript and extract:
-  // - Reading preferences (genres, themes)
-  // - Age/reading level
-  // - Interests and hobbies
-  // - Any specific story requests
-
-  // Mock extracted data for now
-  const extractedData = {
+  // Use preferences from iOS app (collected via OpenAI function call)
+  // or fall back to mock data for testing
+  const extractedData = preferences || {
     genres: ['fantasy', 'adventure'],
     themes: ['friendship', 'courage'],
     ageRange: '8-12',
@@ -88,12 +83,27 @@ router.post('/process-transcript', authenticateUser, asyncHandler(async (req, re
     specificRequests: 'Story about a young explorer'
   };
 
+  console.log('💾 Storing user preferences:', extractedData);
+
+  // Transform iOS preferences to match expected format
+  const normalizedPreferences = {
+    genres: extractedData.favoriteGenres || extractedData.genres || [],
+    themes: extractedData.preferredThemes || extractedData.themes || [],
+    mood: extractedData.mood || 'varied',
+    dislikedElements: extractedData.dislikedElements || [],
+    characterTypes: extractedData.characterTypes || 'varied',
+    name: extractedData.name || 'Reader',
+    ageRange: extractedData.ageRange || '8-12'
+  };
+
+  console.log('✅ Normalized preferences:', normalizedPreferences);
+
   // Store in database
   const { data, error } = await supabaseAdmin
     .from('user_preferences')
     .upsert({
       user_id: userId,
-      preferences: extractedData,
+      preferences: normalizedPreferences,
       transcript: transcript,
       session_id: sessionId,
       updated_at: new Date().toISOString()
@@ -105,7 +115,7 @@ router.post('/process-transcript', authenticateUser, asyncHandler(async (req, re
 
   res.json({
     success: true,
-    preferences: extractedData,
+    preferences: normalizedPreferences,
     message: 'Transcript processed successfully'
   });
 }));

@@ -272,20 +272,42 @@ Return ONLY a JSON object in this exact format:
  * Generate comprehensive story bible from selected premise
  */
 async function generateStoryBible(premiseId, userId) {
-  // Fetch premise and user preferences
-  const { data: premiseData, error: premiseError } = await supabaseAdmin
+  console.log(`🔍 Looking for premise ID: ${premiseId} for user: ${userId}`);
+
+  // Fetch all premise records for this user (premises are stored as arrays)
+  const { data: premiseRecords, error: premiseError } = await supabaseAdmin
     .from('story_premises')
     .select('premises, preferences_used')
-    .eq('id', premiseId)
-    .single();
+    .eq('user_id', userId)
+    .order('generated_at', { ascending: false });
 
-  if (premiseError || !premiseData) {
+  if (premiseError || !premiseRecords || premiseRecords.length === 0) {
+    console.log('❌ No premise records found for user');
     throw new Error('Premise not found');
   }
 
-  // The premise is stored as an array, we need to get the selected one
-  // For now, we'll use the first one (this should be updated to handle selection)
-  const premise = Array.isArray(premiseData.premises) ? premiseData.premises[0] : premiseData.premises;
+  // Find the specific premise by ID within the arrays
+  let selectedPremise = null;
+  let preferencesUsed = null;
+
+  for (const record of premiseRecords) {
+    if (Array.isArray(record.premises)) {
+      const found = record.premises.find(p => p.id === premiseId);
+      if (found) {
+        selectedPremise = found;
+        preferencesUsed = record.preferences_used;
+        console.log(`✅ Found premise: "${found.title}"`);
+        break;
+      }
+    }
+  }
+
+  if (!selectedPremise) {
+    console.log('❌ Premise ID not found in any records');
+    throw new Error(`Premise with ID ${premiseId} not found`);
+  }
+
+  const premise = selectedPremise;
 
   const prompt = `You are an expert world-builder and story architect for children's fiction.
 
