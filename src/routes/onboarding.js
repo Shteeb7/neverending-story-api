@@ -116,26 +116,41 @@ router.post('/process-transcript', authenticateUser, asyncHandler(async (req, re
  */
 router.post('/generate-premises', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req;
+  console.log(`🎬 /generate-premises called for user: ${userId}`);
 
   // Fetch user preferences from database
+  console.log('📊 Fetching user preferences from database...');
   const { data: userPrefs, error: prefsError } = await supabaseAdmin
     .from('user_preferences')
     .select('preferences')
     .eq('user_id', userId)
-    .order('updated_at', { ascending: false })
+    .order('updated_at', { ascending: false})
     .limit(1)
     .single();
 
-  if (prefsError || !userPrefs) {
+  if (prefsError) {
+    console.log('❌ Error fetching preferences:', prefsError);
+    return res.status(400).json({
+      success: false,
+      error: `Failed to fetch preferences: ${prefsError.message}`
+    });
+  }
+
+  if (!userPrefs) {
+    console.log('❌ No user preferences found for user:', userId);
     return res.status(400).json({
       success: false,
       error: 'User preferences not found. Complete onboarding first.'
     });
   }
 
+  console.log('✅ User preferences found:', userPrefs.preferences);
+
   // Call generation service
+  console.log('🤖 Calling Claude API to generate premises...');
   const { generatePremises } = require('../services/generation');
   const { premises, premisesId } = await generatePremises(userId, userPrefs.preferences);
+  console.log(`✅ Generated ${premises.length} premises with ID: ${premisesId}`);
 
   res.json({
     success: true,
