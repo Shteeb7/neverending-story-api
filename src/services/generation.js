@@ -1,5 +1,6 @@
 const { anthropic } = require('../config/ai-clients');
 const { supabaseAdmin } = require('../config/supabase');
+const crypto = require('crypto');
 
 // Claude Opus 4.6 pricing (per million tokens)
 const PRICING = {
@@ -236,12 +237,20 @@ Return ONLY a JSON object in this exact format:
     throw new Error('Expected exactly 3 premises');
   }
 
+  // Add unique IDs to each premise (required by iOS Premise model)
+  const premisesWithIds = parsed.premises.map(premise => ({
+    id: crypto.randomUUID(),
+    ...premise
+  }));
+
+  console.log('✅ Added UUIDs to premises:', premisesWithIds.map(p => ({ id: p.id, title: p.title })));
+
   // Store in database
   const { data, error } = await supabaseAdmin
     .from('story_premises')
     .insert({
       user_id: userId,
-      premises: parsed.premises,
+      premises: premisesWithIds,
       status: 'offered',
       preferences_used: preferences,
       generated_at: new Date().toISOString()
@@ -254,7 +263,7 @@ Return ONLY a JSON object in this exact format:
   }
 
   return {
-    premises: parsed.premises,
+    premises: premisesWithIds,
     premisesId: data.id
   };
 }
