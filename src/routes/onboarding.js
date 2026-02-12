@@ -93,8 +93,13 @@ router.post('/process-transcript', authenticateUser, asyncHandler(async (req, re
     dislikedElements: extractedData.dislikedElements || [],
     characterTypes: extractedData.characterTypes || 'varied',
     name: extractedData.name || 'Reader',
-    ageRange: extractedData.ageRange || '8-12'
+    ageRange: extractedData.ageRange || 'adult' // Default to adult, not child
   };
+
+  // Log warning if ageRange wasn't provided
+  if (!extractedData.ageRange) {
+    console.log('⚠️ WARNING: ageRange not provided by iOS, defaulting to "adult"');
+  }
 
   console.log('✅ Normalized preferences:', normalizedPreferences);
 
