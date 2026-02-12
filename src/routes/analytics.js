@@ -38,15 +38,25 @@ router.post('/session/start', authenticateUser, asyncHandler(async (req, res) =>
     throw new Error(`Failed to start reading session: ${error.message}`);
   }
 
-  // Update chapter_reading_stats: upsert to set first_opened if this is the first time
+  // Update chapter_reading_stats: set first_opened only if this is the first time
   const now = new Date().toISOString();
+
+  // Check if stats row already exists
+  const { data: existingStats } = await supabaseAdmin
+    .from('chapter_reading_stats')
+    .select('first_opened')
+    .eq('user_id', userId)
+    .eq('story_id', storyId)
+    .eq('chapter_number', chapterNumber)
+    .maybeSingle();
+
   const { error: statsError } = await supabaseAdmin
     .from('chapter_reading_stats')
     .upsert({
       user_id: userId,
       story_id: storyId,
       chapter_number: chapterNumber,
-      first_opened: now,
+      first_opened: existingStats?.first_opened || now,  // Only set if no existing row
       updated_at: now
     }, {
       onConflict: 'user_id,story_id,chapter_number',
