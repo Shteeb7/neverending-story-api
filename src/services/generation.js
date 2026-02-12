@@ -894,8 +894,8 @@ async function orchestratePreGeneration(storyId, userId) {
 
     await generateArcOutline(storyId, userId);
 
-    // Step 3: Generate Chapters 1-8
-    for (let i = 1; i <= 8; i++) {
+    // Step 3: Generate Chapters 1-6 (initial batch)
+    for (let i = 1; i <= 6; i++) {
       await updateGenerationProgress(storyId, {
         bible_complete: true,
         arc_complete: true,
@@ -906,12 +906,12 @@ async function orchestratePreGeneration(storyId, userId) {
       await generateChapter(storyId, i, userId);
 
       // 1-second pause between chapters to avoid rate limits
-      if (i < 8) {
+      if (i < 6) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
-    // Mark story as active
+    // Mark story as active (with 6 chapters ready)
     await supabaseAdmin
       .from('stories')
       .update({
@@ -919,14 +919,14 @@ async function orchestratePreGeneration(storyId, userId) {
         generation_progress: {
           bible_complete: true,
           arc_complete: true,
-          chapters_generated: 8,
-          current_step: 'complete',
+          chapters_generated: 6,
+          current_step: 'awaiting_chapter_3_feedback',
           last_updated: new Date().toISOString()
         }
       })
       .eq('id', storyId);
 
-    console.log(`Pre-generation complete for story ${storyId}`);
+    console.log(`Pre-generation complete for story ${storyId} - 6 chapters ready`);
   } catch (error) {
     console.error(`Pre-generation failed for story ${storyId}:`, error);
 
@@ -943,12 +943,303 @@ async function orchestratePreGeneration(storyId, userId) {
   }
 }
 
+/**
+ * Extract book context for sequel generation
+ * Analyzes final chapters to understand character states, world changes, etc.
+ */
+async function extractBookContext(storyId, userId) {
+  console.log(`📊 Extracting context from Book ${storyId} for sequel generation...`);
+
+  // Get final chapters (10-12) to understand ending state
+  const { data: finalChapters, error: chaptersError } = await supabaseAdmin
+    .from('chapters')
+    .select('*')
+    .eq('story_id', storyId)
+    .gte('chapter_number', 10)
+    .lte('chapter_number', 12)
+    .order('chapter_number', { ascending: true });
+
+  if (chaptersError || !finalChapters || finalChapters.length === 0) {
+    throw new Error(`Failed to fetch final chapters: ${chaptersError?.message || 'No chapters found'}`);
+  }
+
+  // Get the bible for character info
+  const { data: bible, error: bibleError } = await supabaseAdmin
+    .from('story_bibles')
+    .select('*')
+    .eq('story_id', storyId)
+    .single();
+
+  if (bibleError || !bible) {
+    throw new Error(`Failed to fetch bible: ${bibleError?.message}`);
+  }
+
+  // Use Claude to analyze the ending
+  const analysisPrompt = `You are analyzing the final chapters of a children's book to extract context for generating a sequel.
+
+BOOK BIBLE (Original Setup):
+${JSON.stringify(bible, null, 2)}
+
+FINAL CHAPTERS (10-12):
+${finalChapters.map(ch => `
+CHAPTER ${ch.chapter_number}: ${ch.title}
+${ch.content}
+`).join('\n\n')}
+
+TASK: Extract structured data about how this book ended:
+
+1. CHARACTER STATES:
+   - How has the protagonist grown/changed from the beginning?
+   - What new skills/abilities did they gain?
+   - What's their emotional state at story's end?
+   - Where are they physically/emotionally?
+   - How have supporting characters evolved?
+
+2. RELATIONSHIPS:
+   - What friendships/bonds were formed or strengthened?
+   - How did key relationships evolve?
+   - Any new mentors, allies, or rivals?
+
+3. ACCOMPLISHMENTS:
+   - What major challenges were overcome?
+   - What was achieved/resolved?
+   - What victories did the protagonist earn?
+
+4. WORLD STATE:
+   - How did the world change from the beginning?
+   - What's different about their community/location?
+   - Any new magical/technological/social changes?
+
+5. KEY EVENTS (for future reference):
+   - List 3-5 major events that a sequel might reference
+   - Format: "The Battle of [Place]", "Discovery of [Thing]"
+
+6. LOOSE THREADS:
+   - Any unresolved mysteries?
+   - Hints at future adventures?
+   - Characters or plot points left open?
+
+Return ONLY a JSON object:
+{
+  "character_states": {
+    "protagonist": {
+      "growth": "brief summary of character arc",
+      "skills_gained": ["skill1", "skill2"],
+      "emotional_state": "description",
+      "current_location": "where they are",
+      "confidence_level": "description"
+    },
+    "supporting": [
+      {
+        "name": "character name",
+        "relationship": "relationship to protagonist",
+        "status": "where they ended up"
+      }
+    ]
+  },
+  "relationships": {
+    "protagonist + character": "nature of relationship"
+  },
+  "accomplishments": ["accomplishment1", "accomplishment2"],
+  "world_state": ["change1", "change2"],
+  "key_events": ["event1", "event2"],
+  "loose_threads": ["thread1", "thread2"]
+}`;
+
+  const { response: contextJson, inputTokens, outputTokens } = await callClaudeWithRetry(
+    [{ role: 'user', content: analysisPrompt }],
+    4000
+  );
+
+  await logApiCost(userId, 'extract_book_context', inputTokens, outputTokens, {
+    storyId
+  });
+
+  const context = parseAndValidateJSON(contextJson, [
+    'character_states',
+    'relationships',
+    'accomplishments',
+    'world_state',
+    'key_events'
+  ]);
+
+  console.log(`✅ Extracted context:`, JSON.stringify(context, null, 2).substring(0, 500));
+
+  return context;
+}
+
+/**
+ * Generate sequel bible with continuity from Book 1
+ */
+async function generateSequelBible(book1StoryId, userPreferences, userId) {
+  console.log(`📚 Generating sequel bible for story ${book1StoryId}...`);
+
+  // Get Book 1 bible
+  const { data: book1Bible, error: bibleError } = await supabaseAdmin
+    .from('story_bibles')
+    .select('*')
+    .eq('story_id', book1StoryId)
+    .single();
+
+  if (bibleError || !book1Bible) {
+    throw new Error(`Failed to fetch Book 1 bible: ${bibleError?.message}`);
+  }
+
+  // Get Book 1 context from series_context table (should have been stored)
+  const { data: book1Story } = await supabaseAdmin
+    .from('stories')
+    .select('series_id, book_number')
+    .eq('id', book1StoryId)
+    .single();
+
+  let book1Context;
+  const { data: storedContext } = await supabaseAdmin
+    .from('story_series_context')
+    .select('*')
+    .eq('series_id', book1Story.series_id)
+    .eq('book_number', book1Story.book_number)
+    .single();
+
+  if (storedContext) {
+    book1Context = {
+      character_states: storedContext.character_states,
+      relationships: storedContext.relationships,
+      accomplishments: storedContext.accomplishments,
+      world_state: storedContext.world_state,
+      key_events: storedContext.key_events
+    };
+  } else {
+    // Extract if not stored
+    book1Context = await extractBookContext(book1StoryId, userId);
+  }
+
+  // Generate Book 2 bible with strong continuity
+  const sequelPrompt = `You are creating BOOK 2 in a series for ages 8-12.
+
+CRITICAL: This is a SEQUEL. You must preserve continuity.
+
+═══════════════════════════════════════════════════════
+BOOK 1 FOUNDATION (MUST HONOR):
+═══════════════════════════════════════════════════════
+
+TITLE: "${book1Bible.title}"
+GENRE: ${book1Bible.content.characters.protagonist.name}'s adventures - ${JSON.stringify(book1Bible.themes)} ← SAME GENRE/THEMES REQUIRED
+
+PROTAGONIST (as they ENDED Book 1):
+Name: ${book1Bible.content.characters.protagonist.name}
+Age: ${book1Bible.content.characters.protagonist.age}
+Growth in Book 1: ${book1Context.character_states.protagonist.growth}
+Skills Gained: ${book1Context.character_states.protagonist.skills_gained.join(', ')}
+Emotional State: ${book1Context.character_states.protagonist.emotional_state}
+Current Location: ${book1Context.character_states.protagonist.current_location}
+
+⚠️ Book 2 protagonist MUST:
+- Be the SAME character
+- START more capable than Book 1 beginning (they've grown!)
+- RETAIN all skills/growth from Book 1
+- Remember and reference Book 1 events naturally
+
+WORLD RULES (MUST PRESERVE):
+${JSON.stringify(book1Bible.world_rules, null, 2)}
+
+World Changes from Book 1:
+${book1Context.world_state.join('\n- ')}
+
+RELATIONSHIPS ESTABLISHED:
+${JSON.stringify(book1Context.relationships, null, 2)}
+
+BOOK 1 ACCOMPLISHMENTS:
+${book1Context.accomplishments.join('\n- ')}
+
+KEY EVENTS FROM BOOK 1:
+${book1Context.key_events.join('\n- ')}
+
+═══════════════════════════════════════════════════════
+READER'S PREFERENCES FOR BOOK 2:
+═══════════════════════════════════════════════════════
+
+${userPreferences ? JSON.stringify(userPreferences, null, 2) : 'Continue the adventure naturally'}
+
+═══════════════════════════════════════════════════════
+BOOK 2 REQUIREMENTS:
+═══════════════════════════════════════════════════════
+
+Create a NEW adventure that:
+
+1. CONTINUITY:
+   - Takes place 3-6 months after Book 1
+   - Character is MORE experienced than Book 1 start
+   - References Book 1 events naturally
+   - Relationships continue/evolve
+   - World reflects Book 1 changes
+
+2. NEW CONFLICT:
+   - DIFFERENT type than Book 1 main conflict
+   - Bigger stakes (protagonist more capable)
+   - Requires NEW skills (not just Book 1 skills)
+   - Introduces new locations while honoring established ones
+
+3. SAME THEMES but evolved
+4. AGE-APPROPRIATE: 8-12 years old
+5. INCORPORATE reader preferences where appropriate
+
+Return Book 2 Bible in this EXACT format:
+{
+  "title": "Book 2 Title (continuing from ${book1Bible.title})",
+  "world_rules": { /* same as Book 1 */ },
+  "characters": {
+    "protagonist": {
+      "name": "${book1Bible.content.characters.protagonist.name}",
+      "age": ${book1Bible.content.characters.protagonist.age + 1},
+      "personality": "evolved from Book 1",
+      "strengths": ["include Book 1 skills", "new skills"],
+      "flaws": ["new challenges to overcome"],
+      "goals": "new goal for Book 2",
+      "fears": "new or evolved fears"
+    },
+    "antagonist": { /* NEW antagonist or evolved threat */ },
+    "supporting": [ /* mix of returning and new characters */ ]
+  },
+  "central_conflict": { /* NEW conflict */ },
+  "stakes": { /* higher stakes */ },
+  "themes": ${JSON.stringify(book1Bible.themes)},
+  "key_locations": [ /* mix of new and familiar */ ],
+  "timeline": { /* Book 2 timeframe */ }
+}`;
+
+  const { response: bibleJson, inputTokens, outputTokens } = await callClaudeWithRetry(
+    [{ role: 'user', content: sequelPrompt }],
+    8000
+  );
+
+  await logApiCost(userId, 'generate_sequel_bible', inputTokens, outputTokens, {
+    parentStoryId: book1StoryId
+  });
+
+  const parsed = parseAndValidateJSON(bibleJson, [
+    'title',
+    'world_rules',
+    'characters',
+    'central_conflict',
+    'stakes',
+    'themes',
+    'key_locations',
+    'timeline'
+  ]);
+
+  console.log(`✅ Generated sequel bible: "${parsed.title}"`);
+
+  return parsed;
+}
+
 module.exports = {
   generatePremises,
   generateStoryBible,
   generateArcOutline,
   generateChapter,
   orchestratePreGeneration,
+  extractBookContext,
+  generateSequelBible,
   // Export utilities for testing
   calculateCost,
   parseAndValidateJSON

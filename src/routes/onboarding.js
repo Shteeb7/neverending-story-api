@@ -177,7 +177,7 @@ router.post('/generate-premises', authenticateUser, asyncHandler(async (req, res
 
 /**
  * GET /onboarding/premises/:userId
- * Retrieve generated premises for a user
+ * Retrieve UNUSED premises for a user (filters out already selected premises)
  */
 router.get('/premises/:userId', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req.params;
@@ -199,21 +199,80 @@ router.get('/premises/:userId', authenticateUser, asyncHandler(async (req, res) 
 
   console.log('✅ Authorization passed');
 
-  const { data, error } = await supabaseAdmin
+  // Step 1: Fetch ALL premise sets for this user (not just latest)
+  const { data: premiseSets, error: premisesError } = await supabaseAdmin
     .from('story_premises')
-    .select('*')
+    .select('id, premises, generated_at')
     .eq('user_id', userId)
-    .order('generated_at', { ascending: false })
-    .limit(1)
-    .single();
+    .order('generated_at', { ascending: false });
 
-  if (error) {
-    throw new Error(`Failed to retrieve premises: ${error.message}`);
+  if (premisesError) {
+    throw new Error(`Failed to retrieve premises: ${premisesError.message}`);
   }
+
+  if (!premiseSets || premiseSets.length === 0) {
+    console.log('📭 No premises found for user');
+    return res.json({
+      success: true,
+      premises: [],
+      allPremisesUsed: false,
+      needsNewInterview: true
+    });
+  }
+
+  // Step 2: Get all stories created by this user to find which premises were used
+  const { data: stories, error: storiesError } = await supabaseAdmin
+    .from('stories')
+    .select('id, title, premise_id')
+    .eq('user_id', userId);
+
+  if (storiesError) {
+    console.log('⚠️ Error fetching stories:', storiesError);
+    // Continue anyway - if we can't fetch stories, show all premises
+  }
+
+  // Step 3: Build a set of used premise IDs from stories
+  // Note: Stories store the parent story_premises record ID, but we need individual premise UUIDs
+  // We need to look at which individual premises within each set have been used
+  const usedPremiseIds = new Set();
+
+  if (stories && stories.length > 0) {
+    console.log(`📚 User has ${stories.length} existing stories`);
+
+    // For each story, find which specific premise was used
+    for (const story of stories) {
+      // Search through all premise sets to find matching premises by title
+      for (const premiseSet of premiseSets) {
+        if (Array.isArray(premiseSet.premises)) {
+          const matchedPremise = premiseSet.premises.find(p => p.title === story.title);
+          if (matchedPremise) {
+            usedPremiseIds.add(matchedPremise.id);
+            console.log(`   ✓ Premise used: "${matchedPremise.title}" (${matchedPremise.id})`);
+          }
+        }
+      }
+    }
+  }
+
+  console.log(`🔍 Found ${usedPremiseIds.size} used premises`);
+
+  // Step 4: Collect all unused premises from ALL premise sets
+  const allUnusedPremises = [];
+
+  for (const premiseSet of premiseSets) {
+    if (Array.isArray(premiseSet.premises)) {
+      const unusedInThisSet = premiseSet.premises.filter(p => !usedPremiseIds.has(p.id));
+      allUnusedPremises.push(...unusedInThisSet);
+    }
+  }
+
+  console.log(`✅ Returning ${allUnusedPremises.length} unused premises`);
 
   res.json({
     success: true,
-    premises: data?.premises || []
+    premises: allUnusedPremises,
+    allPremisesUsed: allUnusedPremises.length === 0,
+    needsNewInterview: allUnusedPremises.length === 0
   });
 }));
 

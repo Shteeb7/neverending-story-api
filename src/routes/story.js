@@ -289,4 +289,170 @@ router.get('/:storyId/current-state', authenticateUser, asyncHandler(async (req,
   });
 }));
 
+/**
+ * POST /story/:storyId/generate-sequel
+ * Generate the next book in a series after completing Book 1
+ */
+router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (req, res) => {
+  const { storyId } = req.params;
+  const { userId } = req;
+  const { userPreferences } = req.body;
+
+  console.log(`📖 Generating sequel for story ${storyId}...`);
+
+  // Verify story belongs to user and is complete
+  const { data: book1Story, error: storyError } = await supabaseAdmin
+    .from('stories')
+    .select('*')
+    .eq('id', storyId)
+    .eq('user_id', userId)
+    .single();
+
+  if (storyError || !book1Story) {
+    return res.status(404).json({
+      success: false,
+      error: 'Story not found'
+    });
+  }
+
+  // Check if chapters complete
+  const { count: chapterCount } = await supabaseAdmin
+    .from('chapters')
+    .select('*', { count: 'exact', head: true })
+    .eq('story_id', storyId);
+
+  if (chapterCount < 12) {
+    return res.status(400).json({
+      success: false,
+      error: 'Book 1 must be complete (12 chapters) before generating sequel'
+    });
+  }
+
+  // Generate series_id if this is the first sequel
+  const seriesId = book1Story.series_id || crypto.randomUUID();
+
+  // Update Book 1 with series_id if not set
+  if (!book1Story.series_id) {
+    await supabaseAdmin
+      .from('stories')
+      .update({
+        series_id: seriesId,
+        book_number: 1
+      })
+      .eq('id', storyId);
+  }
+
+  // Extract Book 1 context if not already done
+  const { extractBookContext, generateSequelBible, generateArcOutline, orchestratePreGeneration } = require('../services/generation');
+
+  let book1Context;
+  const { data: storedContext } = await supabaseAdmin
+    .from('story_series_context')
+    .select('*')
+    .eq('series_id', seriesId)
+    .eq('book_number', 1)
+    .single();
+
+  if (storedContext) {
+    console.log('✅ Using stored Book 1 context');
+    book1Context = storedContext;
+  } else {
+    console.log('📊 Extracting Book 1 context...');
+    const context = await extractBookContext(storyId, userId);
+
+    // Get bible_id for Book 1
+    const { data: book1Bible } = await supabaseAdmin
+      .from('story_bibles')
+      .select('id')
+      .eq('story_id', storyId)
+      .single();
+
+    // Store context for future use
+    await supabaseAdmin
+      .from('story_series_context')
+      .insert({
+        series_id: seriesId,
+        book_number: 1,
+        bible_id: book1Bible.id,
+        character_states: context.character_states,
+        world_state: context.world_state,
+        relationships: context.relationships,
+        accomplishments: context.accomplishments,
+        key_events: context.key_events,
+        reader_preferences: userPreferences || {}
+      });
+
+    book1Context = context;
+  }
+
+  console.log('📚 Generating Book 2 bible...');
+  const book2BibleContent = await generateSequelBible(storyId, userPreferences, userId);
+
+  // Create Book 2 story record
+  const { data: book2Story, error: book2Error } = await supabaseAdmin
+    .from('stories')
+    .insert({
+      user_id: userId,
+      series_id: seriesId,
+      book_number: 2,
+      parent_story_id: storyId,
+      title: book2BibleContent.title,
+      status: 'generating',
+      generation_progress: {
+        bible_complete: false,
+        arc_complete: false,
+        chapters_generated: 0,
+        current_step: 'generating_bible'
+      }
+    })
+    .select()
+    .single();
+
+  if (book2Error) {
+    throw new Error(`Failed to create Book 2 story: ${book2Error.message}`);
+  }
+
+  console.log(`✅ Created Book 2 story: ${book2Story.id}`);
+
+  // Store Book 2 bible
+  const { data: book2Bible, error: bibleError } = await supabaseAdmin
+    .from('story_bibles')
+    .insert({
+      user_id: userId,
+      story_id: book2Story.id,
+      content: book2BibleContent,
+      title: book2BibleContent.title,
+      world_rules: book2BibleContent.world_rules,
+      characters: book2BibleContent.characters,
+      central_conflict: book2BibleContent.central_conflict,
+      stakes: book2BibleContent.stakes,
+      themes: book2BibleContent.themes,
+      key_locations: book2BibleContent.key_locations,
+      timeline: book2BibleContent.timeline
+    })
+    .select()
+    .single();
+
+  if (bibleError) {
+    throw new Error(`Failed to store Book 2 bible: ${bibleError.message}`);
+  }
+
+  console.log('📐 Generating Book 2 arc...');
+  await generateArcOutline(book2Story.id, userId);
+
+  console.log('📝 Starting Book 2 chapter generation (1-6)...');
+
+  // Start pre-generation in background (6 chapters)
+  orchestratePreGeneration(book2Story.id, userId).catch(error => {
+    console.error('Book 2 pre-generation failed:', error);
+  });
+
+  res.json({
+    success: true,
+    book2: book2Story,
+    seriesId,
+    message: 'Book 2 is being generated. Check back soon for the first chapters!'
+  });
+}));
+
 module.exports = router;

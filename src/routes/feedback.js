@@ -1,137 +1,40 @@
 const express = require('express');
 const { supabaseAdmin } = require('../config/supabase');
-const { openai } = require('../config/ai-clients');
 const { asyncHandler } = require('../middleware/error-handler');
 const { authenticateUser } = require('../middleware/auth');
 
 const router = express.Router();
 
 /**
- * POST /feedback/quick-tap
- * Record abandonment feedback (quick tap when user stops reading)
+ * POST /feedback/checkpoint
+ * Submit reader feedback at chapter checkpoints (3, 6, 9)
  */
-router.post('/quick-tap', authenticateUser, asyncHandler(async (req, res) => {
+router.post('/checkpoint', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req;
-  const { storyId, chapterId, reason, timestamp } = req.body;
+  const { storyId, checkpoint, response, followUpAction, voiceTranscript, voiceSessionId } = req.body;
 
-  if (!storyId) {
+  if (!storyId || !checkpoint || !response) {
     return res.status(400).json({
       success: false,
-      error: 'storyId is required'
+      error: 'storyId, checkpoint, and response are required'
     });
   }
 
-  // Store quick feedback
+  console.log(`📊 Feedback: story=${storyId}, checkpoint=${checkpoint}, response=${response}`);
+
+  // Store feedback
   const { data, error } = await supabaseAdmin
-    .from('feedback')
-    .insert({
+    .from('story_feedback')
+    .upsert({
       user_id: userId,
       story_id: storyId,
-      chapter_id: chapterId,
-      feedback_type: 'quick_tap',
-      reason,
-      timestamp: timestamp || new Date().toISOString(),
-      created_at: new Date().toISOString()
-    })
-    .select()
-    .single();
-
-  if (error) {
-    throw new Error(`Failed to record feedback: ${error.message}`);
-  }
-
-  res.json({
-    success: true,
-    feedbackId: data.id,
-    message: 'Feedback recorded'
-  });
-}));
-
-/**
- * POST /feedback/voice-session
- * Start voice conversation session for arc-complete story feedback
- */
-router.post('/voice-session', authenticateUser, asyncHandler(async (req, res) => {
-  const { userId } = req;
-  const { storyId } = req.body;
-
-  if (!storyId) {
-    return res.status(400).json({
-      success: false,
-      error: 'storyId is required'
-    });
-  }
-
-  // TODO: Initialize OpenAI Realtime API session for feedback conversation
-  const sessionId = `feedback_${Date.now()}_${userId}_${storyId}`;
-
-  // Store session record
-  const { data, error } = await supabaseAdmin
-    .from('feedback_sessions')
-    .insert({
-      user_id: userId,
-      story_id: storyId,
-      session_id: sessionId,
-      status: 'active',
-      started_at: new Date().toISOString()
-    })
-    .select()
-    .single();
-
-  if (error) {
-    throw new Error(`Failed to create feedback session: ${error.message}`);
-  }
-
-  res.json({
-    success: true,
-    sessionId,
-    feedbackSessionId: data.id,
-    message: 'Feedback session initialized',
-    websocketUrl: `wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01`
-  });
-}));
-
-/**
- * POST /feedback/process-conversation
- * Process feedback conversation and extract insights
- */
-router.post('/process-conversation', authenticateUser, asyncHandler(async (req, res) => {
-  const { userId } = req;
-  const { sessionId, transcript, storyId } = req.body;
-
-  if (!transcript || !storyId) {
-    return res.status(400).json({
-      success: false,
-      error: 'transcript and storyId are required'
-    });
-  }
-
-  // TODO: Use Claude to analyze feedback conversation and extract:
-  // - What user liked/disliked
-  // - Specific plot points or characters mentioned
-  // - Suggestions for improvement
-  // - Emotional response to the story
-
-  // Mock extracted insights for now
-  const insights = {
-    liked: ['character development', 'plot twists', 'descriptive language'],
-    disliked: ['pacing in chapter 3', 'predictable ending'],
-    suggestions: ['more dialogue', 'deeper backstory for antagonist'],
-    emotionalResponse: 'positive',
-    overallSatisfaction: 8
-  };
-
-  // Store processed feedback
-  const { data, error } = await supabaseAdmin
-    .from('feedback')
-    .insert({
-      user_id: userId,
-      story_id: storyId,
-      feedback_type: 'voice_conversation',
-      session_id: sessionId,
-      transcript,
-      insights,
-      created_at: new Date().toISOString()
+      checkpoint,
+      response,
+      follow_up_action: followUpAction || null,
+      voice_transcript: voiceTranscript || null,
+      voice_session_id: voiceSessionId || null
+    }, {
+      onConflict: 'user_id,story_id,checkpoint'
     })
     .select()
     .single();
@@ -140,20 +43,99 @@ router.post('/process-conversation', authenticateUser, asyncHandler(async (req, 
     throw new Error(`Failed to store feedback: ${error.message}`);
   }
 
-  // Update feedback session status
-  await supabaseAdmin
-    .from('feedback_sessions')
-    .update({
-      status: 'completed',
-      completed_at: new Date().toISOString()
-    })
-    .eq('session_id', sessionId);
+  // Trigger chapter generation if appropriate
+  let chaptersToGenerate = [];
+
+  if (checkpoint === 'chapter_3' && (response === 'Great' || response === 'Fantastic' || followUpAction === 'keep_reading')) {
+    chaptersToGenerate = [7, 8, 9];
+  } else if (checkpoint === 'chapter_6' && (response === 'Great' || response === 'Fantastic' || followUpAction === 'keep_reading')) {
+    chaptersToGenerate = [10, 11, 12];
+  }
+
+  if (chaptersToGenerate.length > 0) {
+    console.log(`🚀 Triggering generation of chapters ${chaptersToGenerate.join(', ')}`);
+    const { generateChapter } = require('../services/generation');
+
+    (async () => {
+      try {
+        for (const chapterNum of chaptersToGenerate) {
+          await generateChapter(storyId, chapterNum, userId);
+          if (chapterNum !== chaptersToGenerate[chaptersToGenerate.length - 1]) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+        console.log(`✅ Generated chapters ${chaptersToGenerate.join(', ')}`);
+      } catch (error) {
+        console.error(`❌ Failed to generate chapters: ${error.message}`);
+      }
+    })();
+  }
 
   res.json({
     success: true,
-    feedbackId: data.id,
-    insights,
-    message: 'Feedback processed successfully'
+    feedback: data,
+    generatingChapters: chaptersToGenerate
+  });
+}));
+
+/**
+ * GET /feedback/status/:storyId/:checkpoint
+ */
+router.get('/status/:storyId/:checkpoint', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { storyId, checkpoint } = req.params;
+
+  const { data } = await supabaseAdmin
+    .from('story_feedback')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('story_id', storyId)
+    .eq('checkpoint', checkpoint)
+    .maybeSingle();
+
+  res.json({
+    success: true,
+    hasFeedback: !!data,
+    feedback: data || null
+  });
+}));
+
+/**
+ * POST /feedback/completion-interview
+ */
+router.post('/completion-interview', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { storyId, transcript, sessionId, preferences } = req.body;
+
+  const { data: story } = await supabaseAdmin
+    .from('stories')
+    .select('series_id, book_number')
+    .eq('id', storyId)
+    .single();
+
+  const { data, error } = await supabaseAdmin
+    .from('book_completion_interviews')
+    .upsert({
+      user_id: userId,
+      story_id: storyId,
+      series_id: story?.series_id,
+      book_number: story?.book_number || 1,
+      transcript,
+      session_id: sessionId || null,
+      preferences_extracted: preferences || null
+    }, {
+      onConflict: 'user_id,story_id'
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to store interview: ${error.message}`);
+  }
+
+  res.json({
+    success: true,
+    interview: data
   });
 }));
 
