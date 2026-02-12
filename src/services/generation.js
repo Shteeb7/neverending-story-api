@@ -928,7 +928,8 @@ Return ONLY a JSON object in this exact format:
 }
 
 /**
- * Orchestrate complete pre-generation: Bible -> Arc -> Chapters 1-8
+ * Orchestrate complete pre-generation: Bible -> Arc -> Chapters 1-6
+ * (Chapters 7-9 and 10-12 are generated based on reader feedback)
  */
 async function orchestratePreGeneration(storyId, userId) {
   try {
