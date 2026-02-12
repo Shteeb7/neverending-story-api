@@ -19,7 +19,8 @@ const {
   generateArcOutline,
   generateChapter,
   orchestratePreGeneration,
-  calculateCost
+  calculateCost,
+  mapAgeRange
 } = require('../src/services/generation');
 
 const TEST_USER_ID = '00000000-0000-0000-0000-000000000001'; // Mock UUID for testing
@@ -28,9 +29,42 @@ async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Test 1: Cost Calculation
+// Test 1: Age Range Mapping
+function testAgeRangeMapping() {
+  console.log('\n🎂 Test 1: Age Range Mapping');
+  console.log('─'.repeat(50));
+
+  const tests = [
+    { input: 'child', expected: '8-12' },
+    { input: 'teen', expected: '13-17' },
+    { input: 'young-adult', expected: '18-25' },
+    { input: 'adult', expected: '25+' },
+    { input: '8-12', expected: '8-12' },  // Already literal
+    { input: 'invalid', expected: '25+' }, // Default to adult
+    { input: null, expected: '25+' },      // Default to adult
+  ];
+
+  let passed = 0;
+  let failed = 0;
+
+  tests.forEach(test => {
+    const result = mapAgeRange(test.input);
+    const match = result === test.expected;
+    console.log(`${match ? '✅' : '❌'} "${test.input}" → "${result}" (expected: "${test.expected}")`);
+    match ? passed++ : failed++;
+  });
+
+  console.log(`\nResults: ${passed}/${tests.length} passed`);
+  if (failed === 0) {
+    console.log('✅ All age range mappings correct');
+  } else {
+    console.log(`❌ ${failed} age range mappings failed`);
+  }
+}
+
+// Test 2: Cost Calculation
 function testCostCalculation() {
-  console.log('\n📊 Test 1: Cost Calculation');
+  console.log('\n📊 Test 2: Cost Calculation');
   console.log('─'.repeat(50));
 
   const inputTokens = 1000;
@@ -51,16 +85,17 @@ function testCostCalculation() {
   }
 }
 
-// Test 2: Generate Premises
+// Test 3: Generate Premises
 async function testGeneratePremises() {
-  console.log('\n📚 Test 2: Generate Premises');
+  console.log('\n📚 Test 3: Generate Premises');
   console.log('─'.repeat(50));
 
   const preferences = {
     favorite_series: ['Harry Potter', 'Percy Jackson'],
     favorite_genres: ['fantasy', 'adventure'],
     loved_elements: ['magic', 'friendship', 'quests', 'dragons'],
-    disliked_elements: ['excessive violence', 'dark themes']
+    disliked_elements: ['excessive violence', 'dark themes'],
+    ageRange: 'child'  // Categorical format: 'child' (8-12), 'teen' (13-17), 'young-adult' (18-25), or 'adult' (25+)
   };
 
   console.log('Generating premises with preferences:');
@@ -96,9 +131,9 @@ async function testGeneratePremises() {
   }
 }
 
-// Test 3: Generate Story Bible
+// Test 4: Generate Story Bible
 async function testGenerateStoryBible(premiseId) {
-  console.log('\n📖 Test 3: Generate Story Bible');
+  console.log('\n📖 Test 4: Generate Story Bible');
   console.log('─'.repeat(50));
 
   try {
@@ -136,9 +171,9 @@ async function testGenerateStoryBible(premiseId) {
   }
 }
 
-// Test 4: Generate Arc Outline
+// Test 5: Generate Arc Outline
 async function testGenerateArcOutline(storyId) {
-  console.log('\n📋 Test 4: Generate Arc Outline');
+  console.log('\n📋 Test 5: Generate Arc Outline');
   console.log('─'.repeat(50));
 
   try {
@@ -172,9 +207,9 @@ async function testGenerateArcOutline(storyId) {
   }
 }
 
-// Test 5: Generate Single Chapter
+// Test 6: Generate Single Chapter
 async function testGenerateChapter(storyId, chapterNumber = 1) {
-  console.log(`\n✍️  Test 5: Generate Chapter ${chapterNumber}`);
+  console.log(`\n✍️  Test 6: Generate Chapter ${chapterNumber}`);
   console.log('─'.repeat(50));
 
   try {
@@ -229,9 +264,9 @@ async function testGenerateChapter(storyId, chapterNumber = 1) {
   }
 }
 
-// Test 6: Full Pre-Generation (SLOW - 10-15 minutes)
+// Test 7: Full Pre-Generation (SLOW - 10-15 minutes)
 async function testFullPreGeneration(storyId) {
-  console.log('\n🚀 Test 6: Full Pre-Generation (Bible + Arc + 8 Chapters)');
+  console.log('\n🚀 Test 7: Full Pre-Generation (Bible + Arc + 6 Chapters)');
   console.log('─'.repeat(50));
   console.log('⚠️  This will take 10-15 minutes and cost ~$8.45');
   console.log('Starting in 3 seconds...\n');
@@ -262,7 +297,7 @@ async function testFullPreGeneration(storyId) {
     console.log(`Chapters Generated: ${story.chapters?.length || 0}`);
     console.log(`Progress: ${JSON.stringify(story.generation_progress, null, 2)}`);
 
-    if (story.status === 'active' && story.chapters?.length === 8) {
+    if (story.status === 'active' && story.chapters?.length === 6) {
       console.log('\n✅ Pre-generation verification passed');
     } else {
       console.log('\n❌ Pre-generation verification failed');
@@ -282,22 +317,25 @@ async function runTests() {
   const runFullTest = process.argv.includes('--full');
 
   try {
-    // Test 1: Cost calculation
+    // Test 1: Age range mapping
+    testAgeRangeMapping();
+
+    // Test 2: Cost calculation
     testCostCalculation();
 
-    // Test 2: Generate premises
+    // Test 3: Generate premises
     const { premisesId, premises } = await testGeneratePremises();
 
-    // Test 3: Generate bible (creates story)
+    // Test 4: Generate bible (creates story)
     const { storyId } = await testGenerateStoryBible(premisesId);
 
-    // Test 4: Generate arc
+    // Test 5: Generate arc
     await testGenerateArcOutline(storyId);
 
-    // Test 5: Generate single chapter
+    // Test 6: Generate single chapter
     await testGenerateChapter(storyId, 1);
 
-    // Test 6: Full pre-generation (optional - very slow)
+    // Test 7: Full pre-generation (optional - very slow)
     if (runFullTest) {
       await testFullPreGeneration(storyId);
     } else {

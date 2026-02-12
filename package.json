@@ -8,7 +8,13 @@
     "dev": "node --watch src/server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["api", "ai", "story-generation", "claude", "openai"],
+  "keywords": [
+    "api",
+    "ai",
+    "story-generation",
+    "claude",
+    "openai"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
@@ -17,6 +23,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.3",
     "openai": "^4.77.3"
   },
   "engines": {

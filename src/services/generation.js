@@ -2,6 +2,34 @@ const { anthropic } = require('../config/ai-clients');
 const { supabaseAdmin } = require('../config/supabase');
 const crypto = require('crypto');
 
+/**
+ * Map categorical age range to literal age range for prompts
+ * @param {string} ageCategory - 'child', 'teen', 'young-adult', or 'adult'
+ * @returns {string} Literal age range like '8-12', '13-17', etc.
+ */
+function mapAgeRange(ageCategory) {
+  const ageMap = {
+    'child': '8-12',
+    'teen': '13-17',
+    'young-adult': '18-25',
+    'adult': '25+'
+  };
+
+  // If input is null/undefined, default to adult
+  if (!ageCategory) {
+    return ageMap['adult'];
+  }
+
+  // If it's already a literal range (e.g., "8-12" or "25+"), return as-is
+  // Check for pattern: digits-digits or digits+
+  if (/^\d+-\d+$/.test(ageCategory) || /^\d+\+$/.test(ageCategory)) {
+    return ageCategory;
+  }
+
+  // Map category to range, default to adult
+  return ageMap[ageCategory] || ageMap['adult'];
+}
+
 // Claude Opus 4.6 pricing (per million tokens)
 const PRICING = {
   INPUT_PER_MILLION: 15,
@@ -197,8 +225,11 @@ async function generatePremises(userId, preferences) {
     dislikedElements = [],
     characterTypes = 'varied',
     name = 'Reader',
-    ageRange = '8-12'
+    ageRange: rawAgeRange = 'adult'  // Changed: default to 'adult' category not '8-12'
   } = preferences;
+
+  // Map categorical age to literal range for prompts
+  const ageRange = mapAgeRange(rawAgeRange);
 
   console.log('📊 Generating premises with user preferences:');
   console.log(`   Genres: ${genres.join(', ') || 'None specified'}`);
@@ -206,6 +237,7 @@ async function generatePremises(userId, preferences) {
   console.log(`   Mood: ${mood}`);
   console.log(`   Character Types: ${characterTypes}`);
   console.log(`   Disliked: ${dislikedElements.join(', ') || 'None specified'}`);
+  console.log(`   Age Range: ${rawAgeRange} → ${ageRange}`);
 
   // Build dynamic prompt based on actual preferences
   const genreList = genres.length > 0 ? genres.join(', ') : 'varied fiction';
@@ -342,6 +374,11 @@ async function generateStoryBible(premiseId, userId) {
 
   const premise = selectedPremise;
 
+  // Extract and map age range from preferences
+  const rawAgeRange = preferencesUsed?.ageRange || 'adult';
+  const ageRange = mapAgeRange(rawAgeRange);
+  console.log(`📊 Bible generation - Age Range: ${rawAgeRange} → ${ageRange}`);
+
   const prompt = `You are an expert world-builder and story architect for children's fiction.
 
 Create a comprehensive story bible for this premise:
@@ -364,7 +401,7 @@ The story bible should include:
 6. KEY LOCATIONS: 3-5 important settings with descriptions
 7. TIMELINE: Story timeframe and key events
 
-Create a rich, consistent world that will support a 12-chapter story for ages 8-12.
+Create a rich, consistent world that will support a 12-chapter story for ages ${ageRange}.
 
 Return ONLY a JSON object in this exact format:
 {
@@ -540,6 +577,22 @@ async function generateArcOutline(storyId, userId) {
     throw new Error(`Bible not found for story ${storyId}: ${bibleError?.message || 'No bible returned'}`);
   }
 
+  // Fetch preferences from story_premises to get age range
+  let ageRange = '25+'; // default to adult
+  if (story.premise_id) {
+    const { data: premiseRecord } = await supabaseAdmin
+      .from('story_premises')
+      .select('preferences_used')
+      .eq('id', story.premise_id)
+      .single();
+
+    if (premiseRecord?.preferences_used?.ageRange) {
+      const rawAgeRange = premiseRecord.preferences_used.ageRange;
+      ageRange = mapAgeRange(rawAgeRange);
+      console.log(`📊 Arc generation - Age Range: ${rawAgeRange} → ${ageRange}`);
+    }
+  }
+
   const prompt = `You are an expert story structure designer for children's fiction.
 
 Using this story bible, create a detailed 12-chapter outline following a classic 3-act structure:
@@ -561,7 +614,7 @@ Create a 12-chapter outline that:
 - Follows 3-act structure (Setup: Ch 1-4, Confrontation: Ch 5-9, Resolution: Ch 10-12)
 - Each chapter builds tension and advances the plot
 - Includes character development moments
-- Has appropriate pacing for ages 8-12
+- Has appropriate pacing for ages ${ageRange}
 - Each chapter is 2500-3500 words
 
 Return ONLY a JSON object in this exact format:
@@ -658,6 +711,22 @@ async function generateChapter(storyId, chapterNumber, userId) {
     .eq('story_id', storyId)
     .single();
 
+  // Fetch preferences from story_premises to get age range
+  let ageRange = '25+'; // default to adult
+  if (story.premise_id) {
+    const { data: premiseRecord } = await supabaseAdmin
+      .from('story_premises')
+      .select('preferences_used')
+      .eq('id', story.premise_id)
+      .single();
+
+    if (premiseRecord?.preferences_used?.ageRange) {
+      const rawAgeRange = premiseRecord.preferences_used.ageRange;
+      ageRange = mapAgeRange(rawAgeRange);
+      console.log(`📊 Chapter ${chapterNumber} generation - Age Range: ${rawAgeRange} → ${ageRange}`);
+    }
+  }
+
   // Get last 3 chapters for context
   const { data: previousChapters } = await supabaseAdmin
     .from('chapters')
@@ -703,7 +772,7 @@ ${previousContext}
 
 Write a compelling chapter that:
 - Is 2500-3500 words
-- Uses vivid, engaging prose appropriate for ages 8-12
+- Uses vivid, engaging prose appropriate for ages ${ageRange}
 - Includes dialogue that sounds natural for the characters
 - Has clear scene structure with strong opening and closing hooks
 - Advances the plot while developing characters
@@ -763,12 +832,12 @@ CHAPTER:
 ${JSON.stringify(chapter, null, 2)}
 
 STORY CONTEXT:
-Target Age: 8-12 years
+Target Age: ${ageRange} years
 Genre: ${bible.themes.join(', ')}
 Protagonist: ${bible.characters.protagonist.name}
 
 Score each criterion (1-10):
-1. Age-appropriateness: Language and content suitable for 8-12 year olds
+1. Age-appropriateness: Language and content suitable for ${ageRange} year olds
 2. Engagement: Compelling and maintains reader interest
 3. Pacing: Good balance of action, dialogue, and description
 4. Character Consistency: Characters act consistently with their established traits
@@ -1088,7 +1157,7 @@ async function generateSequelBible(book1StoryId, userPreferences, userId) {
   // Get Book 1 context from series_context table (should have been stored)
   const { data: book1Story } = await supabaseAdmin
     .from('stories')
-    .select('series_id, book_number')
+    .select('series_id, book_number, premise_id')
     .eq('id', book1StoryId)
     .single();
 
@@ -1113,8 +1182,24 @@ async function generateSequelBible(book1StoryId, userPreferences, userId) {
     book1Context = await extractBookContext(book1StoryId, userId);
   }
 
+  // Fetch age range from Book 1's preferences
+  let ageRange = '25+'; // default to adult
+  if (book1Story.premise_id) {
+    const { data: premiseRecord } = await supabaseAdmin
+      .from('story_premises')
+      .select('preferences_used')
+      .eq('id', book1Story.premise_id)
+      .single();
+
+    if (premiseRecord?.preferences_used?.ageRange) {
+      const rawAgeRange = premiseRecord.preferences_used.ageRange;
+      ageRange = mapAgeRange(rawAgeRange);
+      console.log(`📊 Sequel bible generation - Age Range: ${rawAgeRange} → ${ageRange}`);
+    }
+  }
+
   // Generate Book 2 bible with strong continuity
-  const sequelPrompt = `You are creating BOOK 2 in a series for ages 8-12.
+  const sequelPrompt = `You are creating BOOK 2 in a series for ages ${ageRange}.
 
 CRITICAL: This is a SEQUEL. You must preserve continuity.
 
@@ -1180,7 +1265,7 @@ Create a NEW adventure that:
    - Introduces new locations while honoring established ones
 
 3. SAME THEMES but evolved
-4. AGE-APPROPRIATE: 8-12 years old
+4. AGE-APPROPRIATE: ${ageRange} years old
 5. INCORPORATE reader preferences where appropriate
 
 Return Book 2 Bible in this EXACT format:
@@ -1242,5 +1327,6 @@ module.exports = {
   generateSequelBible,
   // Export utilities for testing
   calculateCost,
-  parseAndValidateJSON
+  parseAndValidateJSON,
+  mapAgeRange
 };
