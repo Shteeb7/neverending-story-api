@@ -155,7 +155,7 @@ router.post('/generate-premises', authenticateUser, asyncHandler(async (req, res
     console.log('❌ No user preferences found for user:', userId);
     return res.status(400).json({
       success: false,
-      error: 'User preferences not found. Complete onboarding first.'
+      error: 'Creative instincts not yet captured. Complete onboarding first.'
     });
   }
 
@@ -171,7 +171,7 @@ router.post('/generate-premises', authenticateUser, asyncHandler(async (req, res
     success: true,
     premises,
     premisesId,
-    message: 'Story premises generated successfully'
+    message: 'Story premises conjured successfully'
   });
 }));
 

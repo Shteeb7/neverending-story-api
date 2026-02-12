@@ -180,7 +180,7 @@ router.post('/:storyId/generate-next', authenticateUser, asyncHandler(async (req
   if (story.status === 'generating') {
     return res.status(400).json({
       success: false,
-      error: 'Story is still in initial generation. Please wait.'
+      error: 'Story is still being conjured. Please wait.'
     });
   }
 
@@ -207,7 +207,7 @@ router.post('/:storyId/generate-next', authenticateUser, asyncHandler(async (req
 
   res.json({
     success: true,
-    message: `Generated ${count} chapter(s)`,
+    message: `Conjured ${count} chapter(s)`,
     chapters: generatedChapters
   });
 }));
@@ -324,7 +324,7 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
   if (chapterCount < 12) {
     return res.status(400).json({
       success: false,
-      error: 'Book 1 must be complete (12 chapters) before generating sequel'
+      error: 'Book 1 must be complete (12 chapters) before conjuring a sequel'
     });
   }
 
@@ -451,7 +451,7 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
     success: true,
     book2: book2Story,
     seriesId,
-    message: 'Book 2 is being generated. Check back soon for the first chapters!'
+    message: 'Book 2 is being conjured. Check back soon for the first chapters!'
   });
 }));
 
