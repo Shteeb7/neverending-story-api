@@ -25,18 +25,24 @@ router.post('/select-premise', authenticateUser, asyncHandler(async (req, res) =
   const { generateStoryBible, orchestratePreGeneration } = require('../services/generation');
   const { storyId } = await generateStoryBible(premiseId, userId);
 
+  // Fetch the complete story record to return to iOS
+  const { data: story, error: storyFetchError } = await supabaseAdmin
+    .from('stories')
+    .select('*')
+    .eq('id', storyId)
+    .single();
+
+  if (storyFetchError || !story) {
+    throw new Error('Failed to fetch created story');
+  }
+
   // Start orchestration asynchronously (non-blocking)
   orchestratePreGeneration(storyId, userId).catch(error => {
     console.error('Pre-generation failed:', error);
   });
 
-  res.json({
-    success: true,
-    storyId,
-    status: 'generating',
-    message: 'Story generation started. Check status with GET /story/generation-status/:storyId',
-    estimatedTime: '10-15 minutes'
-  });
+  // Return the full story object that iOS expects
+  res.json(story);
 }));
 
 /**
