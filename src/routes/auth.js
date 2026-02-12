@@ -32,6 +32,23 @@ router.post('/google', asyncHandler(async (req, res) => {
     });
   }
 
+  // Ensure user exists in public.users table (for foreign key constraints)
+  const { error: userError } = await supabaseAdmin
+    .from('users')
+    .upsert({
+      id: data.user.id,
+      email: data.user.email,
+      created_at: data.user.created_at
+    }, {
+      onConflict: 'id',
+      ignoreDuplicates: false
+    });
+
+  if (userError) {
+    console.error('Failed to create user record:', userError);
+    // Don't fail auth, just log the error
+  }
+
   res.json({
     success: true,
     user: data.user,
@@ -65,6 +82,23 @@ router.post('/apple', asyncHandler(async (req, res) => {
       success: false,
       error: error.message
     });
+  }
+
+  // Ensure user exists in public.users table (for foreign key constraints)
+  const { error: userError } = await supabaseAdmin
+    .from('users')
+    .upsert({
+      id: data.user.id,
+      email: data.user.email,
+      created_at: data.user.created_at
+    }, {
+      onConflict: 'id',
+      ignoreDuplicates: false
+    });
+
+  if (userError) {
+    console.error('Failed to create user record:', userError);
+    // Don't fail auth, just log the error
   }
 
   res.json({
