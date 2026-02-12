@@ -774,6 +774,217 @@ Return ONLY a JSON object in this exact format:
 }
 
 /**
+ * Analyze user's feedback patterns to learn writing preferences
+ * Requires at least 2 completed stories to run analysis
+ */
+async function analyzeUserPreferences(userId) {
+  // Step 1: Count completed stories (stories with 12 chapters)
+  const { data: stories } = await supabaseAdmin
+    .from('stories')
+    .select('id, title')
+    .eq('user_id', userId);
+
+  if (!stories || stories.length === 0) {
+    return { ready: false, reason: 'No stories found' };
+  }
+
+  // Check which stories have 12 chapters
+  const completedStories = [];
+  for (const story of stories) {
+    const { count } = await supabaseAdmin
+      .from('chapters')
+      .select('*', { count: 'exact', head: true })
+      .eq('story_id', story.id);
+
+    if (count === 12) {
+      completedStories.push(story);
+    }
+  }
+
+  if (completedStories.length < 2) {
+    return {
+      ready: false,
+      reason: `Need at least 2 completed stories (found ${completedStories.length})`
+    };
+  }
+
+  console.log(`📊 Analyzing preferences for user ${userId} across ${completedStories.length} completed stories`);
+
+  // Step 2: Fetch all story_feedback rows
+  const { data: feedbackRows } = await supabaseAdmin
+    .from('story_feedback')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  // Step 3: Fetch all book_completion_interviews
+  const { data: interviewRows } = await supabaseAdmin
+    .from('book_completion_interviews')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  // Step 4: Fetch quality_review data from chapters for all user's stories
+  const storyIds = stories.map(s => s.id);
+  const { data: qualityData } = await supabaseAdmin
+    .from('chapters')
+    .select('story_id, chapter_number, quality_score, quality_review')
+    .in('story_id', storyIds)
+    .not('quality_review', 'is', null)
+    .order('story_id', { ascending: true })
+    .order('chapter_number', { ascending: true });
+
+  // Step 5: Build analysis prompt
+  const feedbackSummary = feedbackRows?.map(f =>
+    `Story: ${f.story_id.slice(0, 8)}..., Checkpoint: ${f.checkpoint}, Response: ${f.response}${f.follow_up_action ? `, Action: ${f.follow_up_action}` : ''}`
+  ).join('\n') || 'No checkpoint feedback';
+
+  const interviewSummary = interviewRows?.map(i =>
+    `Story: ${i.story_id.slice(0, 8)}..., Book ${i.book_number || 1}\nTranscript: ${i.transcript?.substring(0, 500) || 'N/A'}...\nPreferences: ${JSON.stringify(i.preferences_extracted || {})}`
+  ).join('\n\n') || 'No completion interviews';
+
+  const qualitySummary = qualityData?.map(q => {
+    const criteriaScores = q.quality_review?.criteria_scores
+      ? Object.entries(q.quality_review.criteria_scores).map(([key, val]) =>
+          `${key}: ${val.score || 'N/A'}`
+        ).join(', ')
+      : 'N/A';
+    return `Story: ${q.story_id.slice(0, 8)}..., Ch${q.chapter_number}, Overall: ${q.quality_score || 'N/A'}, Criteria: [${criteriaScores}]`;
+  }).join('\n') || 'No quality data';
+
+  const analysisPrompt = `You are analyzing a reader's feedback patterns across multiple stories to learn their preferences.
+
+<feedback_data>
+${feedbackSummary}
+</feedback_data>
+
+<interview_data>
+${interviewSummary}
+</interview_data>
+
+<quality_scores>
+${qualitySummary}
+</quality_scores>
+
+Based on this data, identify this reader's preferences:
+
+PACING: Do they prefer action-dense or character-focused stories? Fast or deliberate?
+DIALOGUE: Do they respond better to snappy/humorous or serious/emotional dialogue?
+COMPLEXITY: What vocabulary and sentence complexity level works best?
+THEMES: What themes/elements consistently appear in their highly-rated content?
+WHAT TO AVOID: Are there patterns in what they dislike or rate as "Meh"?
+CUSTOM INSTRUCTIONS: Generate 3-5 specific writing instructions that would make future stories better for THIS reader.
+AVOID PATTERNS: Generate 2-3 specific things to avoid for this reader.
+
+Return ONLY a JSON object:
+{
+  "preferred_pacing": {
+    "action_density": 0.0-1.0,
+    "description_ratio": 0.0-1.0,
+    "summary": "one sentence"
+  },
+  "preferred_dialogue_style": {
+    "style": "snappy|balanced|literary",
+    "humor_level": 0.0-1.0,
+    "summary": "one sentence"
+  },
+  "preferred_complexity": {
+    "vocabulary_grade_level": number,
+    "sentence_variation": 0.0-1.0,
+    "summary": "one sentence"
+  },
+  "character_voice_preferences": {
+    "summary": "one sentence about what character types they like"
+  },
+  "custom_instructions": ["instruction1", "instruction2", "instruction3"],
+  "avoid_patterns": ["pattern1", "pattern2"],
+  "confidence": 0.0-1.0,
+  "analysis_summary": "2-3 sentence summary of this reader's taste"
+}`;
+
+  // Step 6: Call Claude to analyze
+  const startTime = Date.now();
+  const response = await anthropic.messages.create({
+    model: GENERATION_MODEL,
+    max_tokens: 4000,
+    messages: [{ role: 'user', content: analysisPrompt }]
+  });
+
+  const duration = Date.now() - startTime;
+  const inputTokens = response.usage.input_tokens;
+  const outputTokens = response.usage.output_tokens;
+
+  console.log(`✅ Preference analysis complete (${duration}ms, ${inputTokens + outputTokens} tokens)`);
+
+  // Step 7: Parse response
+  const parsed = parseAndValidateJSON(response.content[0].text, [
+    'preferred_pacing',
+    'preferred_dialogue_style',
+    'preferred_complexity',
+    'character_voice_preferences',
+    'custom_instructions',
+    'avoid_patterns',
+    'confidence',
+    'analysis_summary'
+  ]);
+
+  // Step 8: Upsert into user_writing_preferences
+  const { data: upserted, error: upsertError } = await supabaseAdmin
+    .from('user_writing_preferences')
+    .upsert({
+      user_id: userId,
+      preferred_pacing: parsed.preferred_pacing,
+      preferred_dialogue_style: parsed.preferred_dialogue_style,
+      preferred_complexity: parsed.preferred_complexity,
+      character_voice_preferences: parsed.character_voice_preferences,
+      custom_instructions: parsed.custom_instructions,
+      avoid_patterns: parsed.avoid_patterns,
+      stories_analyzed: completedStories.length,
+      feedback_data_points: (feedbackRows?.length || 0) + (interviewRows?.length || 0),
+      confidence_score: Math.round(parsed.confidence * 100) / 100, // Round to 2 decimals
+      analysis_summary: parsed.analysis_summary,
+      last_updated: new Date().toISOString()
+    }, {
+      onConflict: 'user_id'
+    })
+    .select()
+    .single();
+
+  if (upsertError) {
+    throw new Error(`Failed to store preferences: ${upsertError.message}`);
+  }
+
+  // Step 9: Log API cost
+  await logApiCost(userId, 'analyze_preferences', inputTokens, outputTokens, {
+    stories_analyzed: completedStories.length,
+    confidence: parsed.confidence
+  });
+
+  return {
+    ready: true,
+    preferences: upserted,
+    stats: {
+      stories_analyzed: completedStories.length,
+      feedback_points: (feedbackRows?.length || 0) + (interviewRows?.length || 0),
+      confidence: parsed.confidence
+    }
+  };
+}
+
+/**
+ * Get user's learned writing preferences
+ */
+async function getUserWritingPreferences(userId) {
+  const { data } = await supabaseAdmin
+    .from('user_writing_preferences')
+    .select('*')
+    .eq('user_id', userId)
+    .single();
+
+  return data; // null if no preferences yet
+}
+
+/**
  * Generate a single chapter with quality review
  */
 async function generateChapter(storyId, chapterNumber, userId) {
@@ -839,6 +1050,28 @@ async function generateChapter(storyId, chapterNumber, userId) {
         `Chapter ${ch.chapter_number}: ${ch.title}\nKey events: ${ch.key_events?.join(', ') || 'N/A'}`
       ).join('\n\n')
     : 'This is the first chapter.';
+
+  // Fetch learned reader preferences (if available)
+  const writingPrefs = await getUserWritingPreferences(userId);
+  let learnedPreferencesBlock = '';
+
+  if (writingPrefs && writingPrefs.stories_analyzed >= 2 && writingPrefs.confidence_score >= 0.5) {
+    console.log(`📚 Injecting learned preferences (confidence: ${writingPrefs.confidence_score})`);
+    learnedPreferencesBlock = `
+
+<learned_reader_preferences>
+  This reader's past feedback shows specific preferences. Incorporate naturally:
+
+  ${writingPrefs.custom_instructions?.map(i => `• ${i}`).join('\n  ') || ''}
+
+  This reader tends to dislike:
+  ${writingPrefs.avoid_patterns?.map(p => `• ${p}`).join('\n  ') || ''}
+
+  Pacing preference: ${writingPrefs.preferred_pacing?.summary || 'No data'}
+  Dialogue preference: ${writingPrefs.preferred_dialogue_style?.summary || 'No data'}
+  Complexity: ${writingPrefs.preferred_complexity?.summary || 'No data'}
+</learned_reader_preferences>`;
+  }
 
   const generatePrompt = `You are an award-winning fiction author known for prose that shows instead of tells, vivid character work, and compulsive page-turning narratives.
 
@@ -996,6 +1229,7 @@ ${previousContext}
 
   Adjust vocabulary complexity, sentence structure, and thematic sophistication to match this age range. For children (8-12), keep sentences varied but accessible, avoid abstract philosophical digressions, and ground emotions in concrete physical experience. For teens (13-17), you can explore more complex interior conflict and moral ambiguity. For adults (18+), full range of vocabulary and thematic depth.
 </target_age_range>
+${learnedPreferencesBlock}
 
 Return ONLY a JSON object in this exact format:
 {
@@ -1649,6 +1883,8 @@ module.exports = {
   orchestratePreGeneration,
   extractBookContext,
   generateSequelBible,
+  analyzeUserPreferences,
+  getUserWritingPreferences,
   // Export utilities for testing
   calculateCost,
   parseAndValidateJSON,

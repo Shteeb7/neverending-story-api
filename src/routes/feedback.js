@@ -133,9 +133,53 @@ router.post('/completion-interview', authenticateUser, asyncHandler(async (req, 
     throw new Error(`Failed to store interview: ${error.message}`);
   }
 
+  // Non-blocking: trigger preference analysis in background
+  const { analyzeUserPreferences } = require('../services/generation');
+  (async () => {
+    try {
+      const result = await analyzeUserPreferences(userId);
+      console.log(`📊 Preference analysis: ${result.ready ? 'Updated' : result.reason}`);
+    } catch (err) {
+      console.error('Preference analysis failed (non-blocking):', err.message);
+    }
+  })();
+
   res.json({
     success: true,
     interview: data
+  });
+}));
+
+/**
+ * POST /feedback/analyze-preferences
+ * Trigger preference analysis for a user (called after completing a story)
+ */
+router.post('/analyze-preferences', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { analyzeUserPreferences } = require('../services/generation');
+
+  const result = await analyzeUserPreferences(userId);
+
+  res.json({
+    success: true,
+    ...result
+  });
+}));
+
+/**
+ * GET /feedback/writing-preferences
+ * Get the user's learned writing preferences
+ */
+router.get('/writing-preferences', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { getUserWritingPreferences } = require('../services/generation');
+
+  const preferences = await getUserWritingPreferences(userId);
+
+  res.json({
+    success: true,
+    hasPreferences: !!preferences,
+    preferences: preferences || null
   });
 }));
 
