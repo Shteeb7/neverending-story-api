@@ -834,6 +834,38 @@ async function analyzeUserPreferences(userId) {
     .order('story_id', { ascending: true })
     .order('chapter_number', { ascending: true });
 
+  // Step 4.5: Fetch reading analytics (chapter_reading_stats)
+  const { data: readingStats } = await supabaseAdmin
+    .from('chapter_reading_stats')
+    .select('*')
+    .eq('user_id', userId)
+    .in('story_id', storyIds)
+    .order('story_id', { ascending: true })
+    .order('chapter_number', { ascending: true });
+
+  // Build reading behavior summary
+  let readingBehaviorSummary = 'No reading analytics';
+  if (readingStats && readingStats.length > 0) {
+    const avgReadingTime = Math.round(
+      readingStats.reduce((sum, s) => sum + (s.total_reading_time_seconds || 0), 0) / readingStats.length
+    );
+
+    const skimmedChapters = readingStats.filter(s =>
+      s.total_reading_time_seconds > 0 && s.total_reading_time_seconds < 120 // < 2 min
+    );
+
+    const rereadChapters = readingStats.filter(s => s.session_count > 1);
+
+    const abandonedChapters = readingStats.filter(s => !s.completed && s.max_scroll_progress < 90);
+
+    readingBehaviorSummary = `
+Average reading time per chapter: ${Math.floor(avgReadingTime / 60)} min ${avgReadingTime % 60} sec
+Chapters likely skimmed (< 2 min): ${skimmedChapters.length} chapters (${skimmedChapters.map(s => `Ch${s.chapter_number}`).join(', ')})
+Chapters re-read (multiple sessions): ${rereadChapters.length} chapters (${rereadChapters.map(s => `Ch${s.chapter_number} (${s.session_count}x)`).join(', ')})
+Abandoned chapters (not completed): ${abandonedChapters.length} chapters (${abandonedChapters.map(s => `Ch${s.chapter_number} (${s.max_scroll_progress.toFixed(0)}%)`).join(', ')})
+    `.trim();
+  }
+
   // Step 5: Build analysis prompt
   const feedbackSummary = feedbackRows?.map(f =>
     `Story: ${f.story_id.slice(0, 8)}..., Checkpoint: ${f.checkpoint}, Response: ${f.response}${f.follow_up_action ? `, Action: ${f.follow_up_action}` : ''}`
@@ -865,6 +897,10 @@ ${interviewSummary}
 <quality_scores>
 ${qualitySummary}
 </quality_scores>
+
+<reading_behavior>
+${readingBehaviorSummary}
+</reading_behavior>
 
 Based on this data, identify this reader's preferences:
 
