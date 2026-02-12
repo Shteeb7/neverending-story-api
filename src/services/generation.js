@@ -307,7 +307,7 @@ async function generateStoryBible(premiseId, userId) {
   // Fetch all premise records for this user (premises are stored as arrays)
   const { data: premiseRecords, error: premiseError } = await supabaseAdmin
     .from('story_premises')
-    .select('premises, preferences_used')
+    .select('id, premises, preferences_used')
     .eq('user_id', userId)
     .order('generated_at', { ascending: false });
 
@@ -319,6 +319,7 @@ async function generateStoryBible(premiseId, userId) {
   // Find the specific premise by ID within the arrays
   let selectedPremise = null;
   let preferencesUsed = null;
+  let storyPremisesRecordId = null; // Parent record ID for FK
 
   for (const record of premiseRecords) {
     if (Array.isArray(record.premises)) {
@@ -326,7 +327,9 @@ async function generateStoryBible(premiseId, userId) {
       if (found) {
         selectedPremise = found;
         preferencesUsed = record.preferences_used;
+        storyPremisesRecordId = record.id; // Capture parent record ID
         console.log(`✅ Found premise: "${found.title}"`);
+        console.log(`📝 Parent story_premises record ID: ${record.id}`);
         break;
       }
     }
@@ -438,7 +441,7 @@ Return ONLY a JSON object in this exact format:
     .from('stories')
     .insert({
       user_id: userId,
-      premise_id: premiseId,
+      premise_id: storyPremisesRecordId, // Use parent record ID, not individual premise UUID
       title: parsed.title,
       status: 'active',  // Use 'active' - generation_progress tracks actual status
       generation_progress: {
