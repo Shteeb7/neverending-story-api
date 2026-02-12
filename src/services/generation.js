@@ -379,29 +379,54 @@ async function generateStoryBible(premiseId, userId) {
   const ageRange = mapAgeRange(rawAgeRange);
   console.log(`📊 Bible generation - Age Range: ${rawAgeRange} → ${ageRange}`);
 
-  const prompt = `You are an expert world-builder and story architect for children's fiction.
+  const prompt = `You are an expert world-builder and story architect creating a foundation for compelling fiction.
 
 Create a comprehensive story bible for this premise:
 
-Title: ${premise.title}
-Description: ${premise.description}
-Genre: ${premise.genre}
-Themes: ${premise.themes.join(', ')}
+<premise>
+  <title>${premise.title}</title>
+  <description>${premise.description}</description>
+  <genre>${premise.genre}</genre>
+  <themes>${premise.themes.join(', ')}</themes>
+  <target_age>${ageRange}</target_age>
+</premise>
 
 The story bible should include:
 
 1. WORLD RULES: The fundamental rules of this story's world (magic systems, technology, society structure)
-2. CHARACTERS:
-   - Protagonist: Name, age, personality, strengths, flaws, goals, fears
-   - Antagonist: Name, motivation, methods, backstory
-   - Supporting Characters: 2-3 key supporting characters with roles and personalities
-3. CENTRAL CONFLICT: The main problem/challenge the protagonist must overcome
-4. STAKES: What happens if the protagonist fails? What's at risk?
-5. THEMES: Core themes to explore throughout the story
-6. KEY LOCATIONS: 3-5 important settings with descriptions
-7. TIMELINE: Story timeframe and key events
 
-Create a rich, consistent world that will support a 12-chapter story for ages ${ageRange}.
+2. PROTAGONIST (Deep Psychology Required):
+   - Name, age, personality, strengths, flaws, goals, fears
+   - INTERNAL CONTRADICTION: What opposing forces war inside them? (e.g., "craves independence but fears abandonment")
+   - THE LIE THEY BELIEVE: What false belief about themselves holds them back? (e.g., "I'm not brave enough", "I have to do everything alone")
+   - DEEPEST FEAR vs. STATED FEAR: What they're REALLY afraid of vs. what they say/think they fear
+   - VOICE NOTES: How do they speak? Vocabulary level, sentence rhythm, verbal tics?
+
+3. ANTAGONIST (Sympathetic Depth Required):
+   - Name, motivation, methods, backstory
+   - WHY THEY BELIEVE THEY'RE RIGHT: The antagonist should think they're justified. What's their moral framework?
+   - WHAT WOULD MAKE READERS ALMOST SYMPATHIZE: What wound or belief drives them? What makes them human, not evil?
+   - POINT OF NO RETURN: What event locked them into this path?
+
+4. SUPPORTING CHARACTERS (2-3 key characters):
+   - Name, role, personality
+   - RELATIONSHIP DYNAMIC WITH PROTAGONIST: Not just "friend" or "mentor"—how do they challenge/complement/frustrate the protagonist? What's the emotional texture of their bond?
+   - THEIR OWN GOAL: Supporting characters aren't props. What do THEY want?
+
+5. CENTRAL CONFLICT: The main problem/challenge the protagonist must overcome
+
+6. STAKES: What happens if the protagonist fails? What's at risk?
+
+7. THEMES: Core themes to explore throughout the story
+
+8. KEY LOCATIONS (3-5 settings):
+   - Name, visual description, significance
+   - SENSORY DETAILS: What does this place SOUND like? SMELL like? FEEL like (temperature, texture, atmosphere)?
+   - Not just what it looks like—make it visceral and immersive
+
+9. TIMELINE: Story timeframe and key events
+
+Create a rich, psychologically complex world that will support a 12-chapter story for ages ${ageRange}. Every character should feel like they have an interior life. The world should feel tangible and lived-in.
 
 Return ONLY a JSON object in this exact format:
 {
@@ -420,19 +445,28 @@ Return ONLY a JSON object in this exact format:
       "strengths": ["strength1", "strength2"],
       "flaws": ["flaw1", "flaw2"],
       "goals": "string",
-      "fears": "string"
+      "fears": "string",
+      "internal_contradiction": "opposing forces within them",
+      "lie_they_believe": "false belief holding them back",
+      "deepest_fear": "what they're REALLY afraid of (vs. what they say)",
+      "voice_notes": "how they speak—vocabulary, rhythm, quirks"
     },
     "antagonist": {
       "name": "string",
       "motivation": "string",
       "methods": "string",
-      "backstory": "string"
+      "backstory": "string",
+      "why_they_believe_theyre_right": "their moral justification",
+      "sympathetic_element": "what makes them human/wounded",
+      "point_of_no_return": "event that locked them on this path"
     },
     "supporting": [
       {
         "name": "string",
         "role": "string",
-        "personality": "string"
+        "personality": "string",
+        "relationship_dynamic": "how they interact with protagonist—not just 'friend' but emotional texture",
+        "their_own_goal": "what THEY want (supporting chars aren't props)"
       }
     ]
   },
@@ -451,7 +485,12 @@ Return ONLY a JSON object in this exact format:
     {
       "name": "string",
       "description": "string",
-      "significance": "string"
+      "significance": "string",
+      "sensory_details": {
+        "sounds": "what you hear here",
+        "smells": "what you smell",
+        "tactile": "temperature, texture, atmospheric feel"
+      }
     }
   ],
   "timeline": {
@@ -593,29 +632,57 @@ async function generateArcOutline(storyId, userId) {
     }
   }
 
-  const prompt = `You are an expert story structure designer for children's fiction.
+  const prompt = `You are an expert story structure designer creating a detailed roadmap for compelling fiction.
 
 Using this story bible, create a detailed 12-chapter outline following a classic 3-act structure:
 
-TITLE: ${bible.title}
+<story_bible_summary>
+  <title>${bible.title}</title>
 
-PROTAGONIST: ${bible.characters.protagonist.name}, age ${bible.characters.protagonist.age}
-Goals: ${bible.characters.protagonist.goals}
-Fears: ${bible.characters.protagonist.fears}
+  <protagonist>
+    <name>${bible.characters.protagonist.name}</name>
+    <age>${bible.characters.protagonist.age}</age>
+    <goals>${bible.characters.protagonist.goals}</goals>
+    <fears>${bible.characters.protagonist.fears}</fears>
+    <internal_contradiction>${bible.characters.protagonist.internal_contradiction || 'N/A'}</internal_contradiction>
+    <lie_they_believe>${bible.characters.protagonist.lie_they_believe || 'N/A'}</lie_they_believe>
+  </protagonist>
 
-ANTAGONIST: ${bible.characters.antagonist.name}
-Motivation: ${bible.characters.antagonist.motivation}
+  <antagonist>
+    <name>${bible.characters.antagonist.name}</name>
+    <motivation>${bible.characters.antagonist.motivation}</motivation>
+  </antagonist>
 
-CENTRAL CONFLICT: ${bible.central_conflict.description}
+  <central_conflict>${bible.central_conflict.description}</central_conflict>
 
-STAKES: ${bible.stakes.personal}
+  <stakes>${bible.stakes.personal}</stakes>
+
+  <themes>${bible.themes.join(', ')}</themes>
+
+  <target_age>${ageRange}</target_age>
+</story_bible_summary>
 
 Create a 12-chapter outline that:
 - Follows 3-act structure (Setup: Ch 1-4, Confrontation: Ch 5-9, Resolution: Ch 10-12)
 - Each chapter builds tension and advances the plot
-- Includes character development moments
+- Tracks character growth milestones across chapters
+- Develops subplots alongside main plot
 - Has appropriate pacing for ages ${ageRange}
 - Each chapter is 2500-3500 words
+
+FOR EACH CHAPTER, specify:
+1. Title and events summary
+2. Character focus
+3. Tension level (low/medium/high)
+4. EMOTIONAL ARC: What emotional state does the READER start in? What state do they end in? (e.g., "Start: curious, End: dread" or "Start: hopeful, End: devastated")
+5. KEY DIALOGUE MOMENT: The most important conversation/exchange in this chapter (1 sentence description)
+6. CHAPTER HOOK: What specific moment/question/cliffhanger makes the reader turn to the next chapter?
+7. Key revelations
+8. Word count target
+
+ALSO specify:
+- SUBPLOT TRACKING: Identify 2-3 subplots and note which chapters advance each subplot
+- CHARACTER GROWTH MILESTONES: Map the protagonist's arc to specific chapters (e.g., Ch 3: First taste of confidence, Ch 7: Major failure/setback, Ch 11: Realization of truth)
 
 Return ONLY a JSON object in this exact format:
 {
@@ -626,6 +693,12 @@ Return ONLY a JSON object in this exact format:
       "events_summary": "2-3 sentence summary of what happens",
       "character_focus": "Which character(s) are featured",
       "tension_level": "low/medium/high",
+      "emotional_arc": {
+        "reader_start": "emotion/state reader starts in",
+        "reader_end": "emotion/state reader ends in"
+      },
+      "key_dialogue_moment": "The most important conversation in this chapter",
+      "chapter_hook": "What makes the reader turn to the next chapter",
       "key_revelations": ["revelation1", "revelation2"],
       "word_count_target": 3000
     }
@@ -633,7 +706,19 @@ Return ONLY a JSON object in this exact format:
   "pacing_notes": "Overall pacing strategy",
   "story_threads": {
     "main_plot": "description",
-    "subplots": ["subplot1", "subplot2"]
+    "subplots": [
+      {
+        "name": "Subplot name/description",
+        "chapters": [1, 3, 5, 8, 12],
+        "resolution": "How this subplot resolves"
+      }
+    ]
+  },
+  "character_growth_milestones": {
+    "chapter_3": "First milestone in protagonist's arc",
+    "chapter_6": "Second milestone",
+    "chapter_9": "Major turning point",
+    "chapter_12": "Final transformation"
   }
 }`;
 
@@ -750,34 +835,156 @@ async function generateChapter(storyId, chapterNumber, userId) {
       ).join('\n\n')
     : 'This is the first chapter.';
 
-  const generatePrompt = `You are an award-winning children's book author.
+  const generatePrompt = `You are an award-winning fiction author known for prose that shows instead of tells, vivid character work, and compulsive page-turning narratives.
 
-Write Chapter ${chapterNumber} of "${bible.title}" following this outline:
+Write Chapter ${chapterNumber} of "${bible.title}" following this outline and craft rules.
 
-CHAPTER OUTLINE:
-Title: ${chapterOutline.title}
-Events: ${chapterOutline.events_summary}
-Character Focus: ${chapterOutline.character_focus}
-Tension Level: ${chapterOutline.tension_level}
-Word Count Target: ${chapterOutline.word_count_target}
+<story_context>
+  <protagonist>
+    <name>${bible.characters.protagonist.name}</name>
+    <age>${bible.characters.protagonist.age}</age>
+    <personality>${bible.characters.protagonist.personality}</personality>
+    <strengths>${bible.characters.protagonist.strengths?.join(', ') || 'N/A'}</strengths>
+    <flaws>${bible.characters.protagonist.flaws?.join(', ') || 'N/A'}</flaws>
+    <goals>${bible.characters.protagonist.goals}</goals>
+    <fears>${bible.characters.protagonist.fears}</fears>
+  </protagonist>
 
-STORY BIBLE:
-Protagonist: ${bible.characters.protagonist.name} - ${bible.characters.protagonist.personality}
-Antagonist: ${bible.characters.antagonist.name} - ${bible.characters.antagonist.motivation}
-Central Conflict: ${bible.central_conflict.description}
-World Rules: ${JSON.stringify(bible.world_rules)}
+  <antagonist>
+    <name>${bible.characters.antagonist.name}</name>
+    <motivation>${bible.characters.antagonist.motivation}</motivation>
+    <methods>${bible.characters.antagonist.methods || 'N/A'}</methods>
+  </antagonist>
 
-PREVIOUS CHAPTERS CONTEXT:
+  <supporting_characters>
+    ${bible.characters.supporting?.map(sc => `<character name="${sc.name}" role="${sc.role}">${sc.personality}</character>`).join('\n    ') || 'None'}
+  </supporting_characters>
+
+  <world_rules>
+    ${JSON.stringify(bible.world_rules)}
+  </world_rules>
+
+  <central_conflict>${bible.central_conflict.description}</central_conflict>
+
+  <stakes>
+    <personal>${bible.stakes.personal}</personal>
+    <broader>${bible.stakes.broader || 'N/A'}</broader>
+  </stakes>
+
+  <key_locations>
+    ${bible.key_locations?.map(loc => `<location name="${loc.name}">${loc.description}</location>`).join('\n    ') || 'None'}
+  </key_locations>
+</story_context>
+
+<chapter_outline>
+  <chapter_number>${chapterNumber}</chapter_number>
+  <title>${chapterOutline.title}</title>
+  <events_summary>${chapterOutline.events_summary}</events_summary>
+  <character_focus>${chapterOutline.character_focus}</character_focus>
+  <tension_level>${chapterOutline.tension_level}</tension_level>
+  <word_count_target>${chapterOutline.word_count_target}</word_count_target>
+</chapter_outline>
+
+<previous_chapters>
 ${previousContext}
+</previous_chapters>
 
-Write a compelling chapter that:
-- Is 2500-3500 words
-- Uses vivid, engaging prose appropriate for ages ${ageRange}
-- Includes dialogue that sounds natural for the characters
-- Has clear scene structure with strong opening and closing hooks
-- Advances the plot while developing characters
-- Maintains consistency with the world rules and previous chapters
-- Avoids overly complex vocabulary but doesn't talk down to readers
+<writing_craft_rules>
+
+  <show_dont_tell>
+    NEVER name an emotion directly. Show it through physical sensation, action, dialogue, or metaphor.
+
+    If you write a sentence containing "felt", "was", or "seemed" followed by an emotion word, DELETE IT and rewrite.
+
+    EXAMPLES:
+    ❌ "She felt angry"
+    ✅ "Her hands curled into fists, jaw clenched so tight her teeth ached"
+
+    ❌ "The forest was scary"
+    ✅ "Branches clawed at the sky like skeletal fingers, and something rustled in the undergrowth"
+
+    ❌ "He was brave"
+    ✅ "His knees wobbled, but he stepped forward anyway"
+
+    ❌ "They were best friends"
+    ✅ "She shoved him with her shoulder and he shoved back, both grinning"
+
+    ❌ "The magic was powerful"
+    ✅ "The spell hit like a thunderclap—the ground split, and blue light poured from the cracks"
+
+    ❌ "She was nervous about the test"
+    ✅ "Her pencil tapped against the desk. Tap-tap-tap. She couldn't make it stop."
+
+    ❌ "The room felt cold and unwelcoming"
+    ✅ "Frost crept up the windows in jagged patterns. Each breath hung in the air like a ghost."
+  </show_dont_tell>
+
+  <dialogue_quality>
+    • Each character MUST sound distinct through vocabulary, sentence length, speech patterns, and concerns
+    • NO adverb dialogue tags ("said angrily", "whispered softly")—use action beats instead
+    • Dialogue must do double duty: reveal character AND advance plot simultaneously
+    • Include subtext—characters don't always say what they mean, especially in conflict
+    • Beats between dialogue lines (physical actions, observations, internal reactions)
+    • No more than 3 consecutive lines of dialogue without a beat or action
+
+    EXAMPLE of good dialogue with beats:
+    "I didn't take your stupid necklace." Maya crossed her arms, but her eyes flicked to the drawer.
+    "Then why won't you look at me?"
+    She kicked at the rug. "Because you always blame me for everything."
+
+    NOT this:
+    "I didn't take your necklace," Maya said defensively.
+    "Then why won't you look at me?" her sister asked suspiciously.
+    "Because you always blame me," Maya replied angrily.
+  </dialogue_quality>
+
+  <pacing_and_structure>
+    • Vary sentence length: short punchy sentences for tension, longer flowing ones for atmosphere
+    • Open every chapter with action, dialogue, or intrigue—NEVER pure description
+    • End every chapter with a hook that compels the reader forward
+    • Target balance: ~40% action/dialogue, ~30% character moments, ~30% world/atmosphere
+    • Scene transitions should be crisp, not padded with unnecessary "meanwhile" or "later that day"
+    • Use white space—paragraph breaks create rhythm and breathing room
+  </pacing_and_structure>
+
+  <things_to_avoid>
+    FORBIDDEN CONSTRUCTIONS (AI tells):
+    • Purple prose and flowery over-description
+    • Explaining emotions instead of showing them
+    • "Not X, but Y" sentence structure (e.g., "It wasn't fear, but excitement")
+    • Rhetorical questions as filler ("What could go wrong?", "How hard could it be?")
+    • Em dash overuse (max 2 per chapter)
+    • Repeating the same sentence structure more than twice in a row
+    • Starting consecutive paragraphs the same way
+    • Adverbs modifying "said" (said quickly, said nervously, said hopefully)
+    • "Letting out a breath they didn't know they were holding"
+    • "A mixture of X and Y" emotion descriptions
+    • Any form of "little did they know"
+    • "Their heart pounded in their chest" (where else would it pound?)
+    • Over-reliance on character names—use pronouns naturally
+  </things_to_avoid>
+
+</writing_craft_rules>
+
+<style_example>
+  This is the prose standard you're aiming for:
+
+  The door stood open. Not kicked in, not broken—just open, like an invitation written in silence. Mira's pulse kicked up. She pressed her back against the hallway wall, felt the rough brick bite through her jacket, and counted to three. No sound from inside. No movement.
+
+  She slipped through. The apartment looked wrong. Not ransacked-wrong, but rearranged-wrong. Someone had been careful. The couch cushions sat perfectly straight. The stack of mail on the counter lined up like soldiers. Her breath came shallow now. Whoever did this wanted her to know they'd been here. Wanted her to feel it.
+</style_example>
+
+<word_count>
+  STRICT REQUIREMENT: This chapter must be between 2500 and 3500 words. Not a guideline—a hard constraint. Count carefully.
+
+  If you approach 3500 words and haven't completed the chapter arc, condense. If you finish the chapter arc before 2500 words, expand scenes with richer detail, more character interiority, or stronger sensory grounding.
+</word_count>
+
+<target_age_range>
+  Age Range: ${ageRange}
+
+  Adjust vocabulary complexity, sentence structure, and thematic sophistication to match this age range. For children (8-12), keep sentences varied but accessible, avoid abstract philosophical digressions, and ground emotions in concrete physical experience. For teens (13-17), you can explore more complex interior conflict and moral ambiguity. For adults (18+), full range of vocabulary and thematic depth.
+</target_age_range>
 
 Return ONLY a JSON object in this exact format:
 {
@@ -824,42 +1031,144 @@ Return ONLY a JSON object in this exact format:
     chapter = parsed.chapter;
 
     // Quality review pass
-    const reviewPrompt = `You are an expert editor for children's fiction.
+    const reviewPrompt = `You are an expert editor for fiction with deep knowledge of show-don't-tell craft, dialogue quality, and prose technique.
 
-Review this chapter and score it on the following criteria (1-10 scale):
+Review this chapter against the same writing craft standards it was supposed to follow.
 
-CHAPTER:
+<chapter_to_review>
 ${JSON.stringify(chapter, null, 2)}
+</chapter_to_review>
 
-STORY CONTEXT:
+<story_context>
 Target Age: ${ageRange} years
 Genre: ${bible.themes.join(', ')}
 Protagonist: ${bible.characters.protagonist.name}
+</story_context>
 
-Score each criterion (1-10):
-1. Age-appropriateness: Language and content suitable for ${ageRange} year olds
-2. Engagement: Compelling and maintains reader interest
-3. Pacing: Good balance of action, dialogue, and description
-4. Character Consistency: Characters act consistently with their established traits
-5. Arc Alignment: Chapter follows the outline and advances the plot
-6. Writing Quality: Strong prose, vivid descriptions, natural dialogue
+<writing_craft_standards>
+
+SHOW DON'T TELL:
+• NEVER name emotions directly ("felt angry", "was scared", "seemed happy")
+• Show through physical sensation, action, dialogue, metaphor
+• Examples:
+  ❌ "She felt angry" → ✅ "Her hands curled into fists, jaw clenched so tight her teeth ached"
+  ❌ "The forest was scary" → ✅ "Branches clawed at the sky like skeletal fingers"
+  ❌ "He was brave" → ✅ "His knees wobbled, but he stepped forward anyway"
+
+DIALOGUE QUALITY:
+• Each character sounds distinct through vocabulary, rhythm, concerns
+• NO adverb dialogue tags ("said angrily")—use action beats instead
+• Dialogue advances plot AND reveals character simultaneously
+• Include subtext—characters don't always say what they mean
+• No more than 3 lines of dialogue without a beat or action
+
+PACING & STRUCTURE:
+• Vary sentence length (short = tension, longer = atmosphere)
+• Strong opening hook (action/dialogue/intrigue, NOT description)
+• Compelling chapter-ending hook
+• Balance: ~40% action/dialogue, ~30% character, ~30% world/atmosphere
+• Crisp scene transitions
+
+THINGS TO AVOID (AI tells):
+• Purple prose and flowery over-description
+• "Not X, but Y" constructions
+• Rhetorical questions as filler
+• Em dash overuse (max 2 per chapter)
+• Repeating sentence structures 3+ times in a row
+• Starting consecutive paragraphs identically
+• "Letting out a breath they didn't know they were holding"
+• "A mixture of X and Y" emotion descriptions
+• "Little did they know"
+
+</writing_craft_standards>
+
+<weighted_rubric>
+
+Score each criterion (1-10), provide evidence quotes, and suggest fixes if score < 7.
+
+1. SHOW DON'T TELL (Weight: 25%)
+   - Does the chapter show emotions through action/sensation/dialogue rather than naming them?
+   - Quote any instances of emotion-telling
+   - Are abstract states made concrete?
+
+2. DIALOGUE QUALITY (Weight: 20%)
+   - Do characters sound distinct?
+   - Are there action beats instead of adverb tags?
+   - Does dialogue advance plot and reveal character?
+   - Quote any generic or flat dialogue
+
+3. PACING & ENGAGEMENT (Weight: 20%)
+   - Does the chapter pull the reader forward?
+   - Strong opening? Compelling ending hook?
+   - Varied sentence rhythm?
+   - Good balance of action/character/world?
+
+4. AGE APPROPRIATENESS (Weight: 15%)
+   - Is vocabulary and complexity right for ${ageRange}?
+   - Natural voice without talking down?
+   - Themes handled appropriately?
+
+5. CHARACTER CONSISTENCY (Weight: 10%)
+   - Do character decisions flow from established traits, fears, goals?
+   - Any out-of-character moments?
+   - Does this chapter develop the character arc?
+
+6. PROSE QUALITY (Weight: 10%)
+   - Clean writing free of AI tells ("not X but Y", rhetorical questions, etc.)?
+   - No purple prose or clichés?
+   - Varied sentence structure?
+
+</weighted_rubric>
+
+Calculate weighted_score = sum of (criterion_score × weight).
+
+Pass threshold: weighted_score >= 7.5
 
 Return ONLY a JSON object in this exact format:
 {
   "quality_review": {
-    "score": average score (1-10),
+    "weighted_score": number (calculated sum of score × weight),
     "criteria_scores": {
-      "age_appropriateness": score,
-      "engagement": score,
-      "pacing": score,
-      "character_consistency": score,
-      "arc_alignment": score,
-      "writing_quality": score
+      "show_dont_tell": {
+        "score": number (1-10),
+        "weight": 0.25,
+        "quotes": ["quote1 showing issue or strength", "quote2"],
+        "fix": "actionable fix if score < 7, else empty string"
+      },
+      "dialogue_quality": {
+        "score": number (1-10),
+        "weight": 0.20,
+        "quotes": ["quote1", "quote2"],
+        "fix": "actionable fix or empty"
+      },
+      "pacing_engagement": {
+        "score": number (1-10),
+        "weight": 0.20,
+        "quotes": ["quote1", "quote2"],
+        "fix": "actionable fix or empty"
+      },
+      "age_appropriateness": {
+        "score": number (1-10),
+        "weight": 0.15,
+        "quotes": ["quote1", "quote2"],
+        "fix": "actionable fix or empty"
+      },
+      "character_consistency": {
+        "score": number (1-10),
+        "weight": 0.10,
+        "quotes": ["quote1", "quote2"],
+        "fix": "actionable fix or empty"
+      },
+      "prose_quality": {
+        "score": number (1-10),
+        "weight": 0.10,
+        "quotes": ["quote1", "quote2"],
+        "fix": "actionable fix or empty"
+      }
     },
-    "strengths": ["strength1", "strength2"],
-    "issues": ["issue1", "issue2"],
-    "revision_notes": "Specific suggestions for improvement",
-    "pass": true/false (pass if score >= 7)
+    "top_strengths": ["strength1 (specific)", "strength2", "strength3"],
+    "priority_fixes": ["fix1 (most important)", "fix2", "fix3"],
+    "pass": true/false (pass if weighted_score >= 7.5)
   }
 }`;
 
@@ -880,15 +1189,18 @@ Return ONLY a JSON object in this exact format:
     const reviewParsed = parseAndValidateJSON(reviewResponse, ['quality_review']);
     qualityReview = reviewParsed.quality_review;
 
-    if (qualityReview.score >= 7) {
+    // Use weighted_score with new 7.5 threshold
+    const scoreToCheck = qualityReview.weighted_score !== undefined ? qualityReview.weighted_score : qualityReview.score;
+    if (scoreToCheck >= 7.5) {
       passedQuality = true;
     } else {
       regenerationCount++;
-      console.log(`Chapter ${chapterNumber} quality score: ${qualityReview.score}. Regenerating (attempt ${regenerationCount}/2)...`);
+      console.log(`Chapter ${chapterNumber} quality score: ${scoreToCheck.toFixed(2)}. Regenerating (attempt ${regenerationCount}/2)...`);
     }
   }
 
   // Store chapter in database
+  const finalScore = qualityReview.weighted_score !== undefined ? qualityReview.weighted_score : qualityReview.score;
   const { data: storedChapter, error: chapterError } = await supabaseAdmin
     .from('chapters')
     .insert({
@@ -898,7 +1210,7 @@ Return ONLY a JSON object in this exact format:
       title: chapter.title,
       content: chapter.content,
       word_count: chapter.word_count,
-      quality_score: Math.round(qualityReview.score),
+      quality_score: Math.round(finalScore * 10) / 10,  // Store with 1 decimal place
       quality_review: qualityReview,
       quality_pass_completed: true,
       regeneration_count: regenerationCount,
