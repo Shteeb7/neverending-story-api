@@ -152,13 +152,21 @@ router.post('/generate-premises', authenticateUser, asyncHandler(async (req, res
 router.get('/premises/:userId', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req.params;
 
+  console.log('🔍 GET /premises/:userId - Authorization check:');
+  console.log(`   req.userId (from token): "${req.userId}"`);
+  console.log(`   userId (from URL): "${userId}"`);
+  console.log(`   Match: ${req.userId === userId}`);
+
   // Verify requesting user matches or is admin
   if (req.userId !== userId) {
+    console.log('❌ Authorization FAILED - user IDs do not match');
     return res.status(403).json({
       success: false,
       error: 'Unauthorized access'
     });
   }
+
+  console.log('✅ Authorization passed');
 
   const { data, error } = await supabaseAdmin
     .from('story_premises')
