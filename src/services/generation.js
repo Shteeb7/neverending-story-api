@@ -189,34 +189,64 @@ async function updateGenerationProgress(storyId, progressData) {
  * Generate 3 story premises from user preferences
  */
 async function generatePremises(userId, preferences) {
-  const { favorite_series = [], favorite_genres = [], loved_elements = [], disliked_elements = [] } = preferences;
+  // Extract preferences with correct field names from normalization
+  const {
+    genres = [],
+    themes = [],
+    mood = 'varied',
+    dislikedElements = [],
+    characterTypes = 'varied',
+    name = 'Reader',
+    ageRange = '8-12'
+  } = preferences;
 
-  const prompt = `You are an expert children's book author specializing in creating engaging stories for ages 8-12.
+  console.log('📊 Generating premises with user preferences:');
+  console.log(`   Genres: ${genres.join(', ') || 'None specified'}`);
+  console.log(`   Themes: ${themes.join(', ') || 'None specified'}`);
+  console.log(`   Mood: ${mood}`);
+  console.log(`   Character Types: ${characterTypes}`);
+  console.log(`   Disliked: ${dislikedElements.join(', ') || 'None specified'}`);
 
-Based on the following user preferences, generate 3 unique and compelling story premises:
+  // Build dynamic prompt based on actual preferences
+  const genreList = genres.length > 0 ? genres.join(', ') : 'varied fiction';
+  const themeList = themes.length > 0 ? themes.join(', ') : 'engaging themes';
 
-Favorite Series: ${favorite_series.join(', ') || 'None specified'}
-Favorite Genres: ${favorite_genres.join(', ') || 'None specified'}
-Loved Elements: ${loved_elements.join(', ') || 'None specified'}
-Elements to Avoid: ${disliked_elements.join(', ') || 'None specified'}
+  const prompt = `You are an expert author who creates compelling stories tailored to reader preferences.
 
-Create 3 distinct story premises that:
-1. Incorporate the loved elements naturally
-2. Avoid all disliked elements
-3. Are appropriate for ages 8-12
-4. Have strong hooks that grab attention
-5. Are different from each other in tone and setting
+Based on the following reader preferences, generate 3 unique and compelling story premises:
+
+READER NAME: ${name}
+PREFERRED GENRES: ${genreList}
+PREFERRED THEMES: ${themeList}
+DESIRED MOOD/TONE: ${mood}
+CHARACTER PREFERENCES: ${characterTypes}
+ELEMENTS TO AVOID: ${dislikedElements.join(', ') || 'None specified'}
+TARGET AGE RANGE: ${ageRange}
+
+CRITICAL REQUIREMENTS:
+1. Generate stories that STRONGLY align with the preferred genres (${genreList})
+2. Incorporate the preferred themes naturally (${themeList})
+3. Match the desired mood/tone (${mood})
+4. Feature ${characterTypes} characters
+5. ABSOLUTELY AVOID all disliked elements
+6. Each premise should be distinct from the others in setting and approach
+7. Create compelling hooks that make the reader want to start immediately
+
+If the reader prefers Romance, create ROMANCE stories with romantic relationships as the central plot.
+If the reader prefers Fantasy, create magical/fantastical worlds.
+If the reader prefers Science Fiction, create futuristic/sci-fi settings.
+Always prioritize the reader's stated genre preferences above all else.
 
 Return ONLY a JSON object in this exact format:
 {
   "premises": [
     {
       "title": "Story Title",
-      "description": "2-3 sentence compelling description of the story",
-      "hook": "One sentence that makes kids want to read it",
-      "genre": "primary genre",
+      "description": "2-3 sentence compelling description that highlights the genre and themes",
+      "hook": "One sentence that captures the essence and makes them want to read",
+      "genre": "primary genre from user preferences",
       "themes": ["theme1", "theme2", "theme3"],
-      "age_range": "8-12"
+      "age_range": "${ageRange}"
     }
   ]
 }`;
