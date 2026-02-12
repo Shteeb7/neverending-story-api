@@ -156,9 +156,10 @@ router.get('/premises/:userId', authenticateUser, asyncHandler(async (req, res) 
   console.log(`   req.userId (from token): "${req.userId}"`);
   console.log(`   userId (from URL): "${userId}"`);
   console.log(`   Match: ${req.userId === userId}`);
+  console.log(`   Match (lowercase): ${req.userId?.toLowerCase() === userId?.toLowerCase()}`);
 
-  // Verify requesting user matches or is admin
-  if (req.userId !== userId) {
+  // Verify requesting user matches or is admin (case-insensitive UUID comparison)
+  if (req.userId?.toLowerCase() !== userId?.toLowerCase()) {
     console.log('❌ Authorization FAILED - user IDs do not match');
     return res.status(403).json({
       success: false,
