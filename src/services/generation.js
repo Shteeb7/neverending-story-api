@@ -225,7 +225,7 @@ Return ONLY a JSON object in this exact format:
 
   const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
     messages,
-    64000,
+    4000, // Reduced from 64000 - only need ~1000 tokens per premise
     { operation: 'generate_premises', userId }
   );
 

@@ -135,7 +135,7 @@ if (missingEnvVars.length > 0) {
 }
 
 // Start server
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('\n=================================');
   console.log('🚀 Neverending Story API Server');
   console.log('=================================');
@@ -155,6 +155,11 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('   ... and more');
   console.log('=================================\n');
 });
+
+// Set server timeout to 5 minutes for AI generation endpoints
+server.timeout = 300000; // 5 minutes
+server.keepAliveTimeout = 310000; // Slightly longer than timeout
+console.log('⏱️  Server timeout set to 5 minutes for AI operations');
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
