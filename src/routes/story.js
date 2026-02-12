@@ -24,21 +24,30 @@ router.post('/select-premise', authenticateUser, asyncHandler(async (req, res) =
   // CRITICAL: Ensure user exists in public.users (for FK constraint)
   // This handles users who signed in before the auth route fix was deployed
   console.log('🔧 Ensuring user exists in public.users before story creation...');
-  const { error: userUpsertError } = await supabaseAdmin
-    .from('users')
-    .upsert({
-      id: userId,
-      created_at: new Date().toISOString()
-    }, {
-      onConflict: 'id',
-      ignoreDuplicates: true
-    });
 
-  if (userUpsertError) {
-    console.error('❌ Failed to ensure user exists:', userUpsertError);
-    // Don't fail - try to continue anyway
+  // Get user email from auth.users
+  const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.getUserById(userId);
+
+  if (!authError && authUser) {
+    const { error: userUpsertError } = await supabaseAdmin
+      .from('users')
+      .upsert({
+        id: userId,
+        email: authUser.user.email,
+        created_at: new Date().toISOString()
+      }, {
+        onConflict: 'id',
+        ignoreDuplicates: false  // Update if exists
+      });
+
+    if (userUpsertError) {
+      console.error('❌ Failed to ensure user exists:', userUpsertError);
+      // Don't fail - try to continue anyway
+    } else {
+      console.log('✅ User record ensured in public.users');
+    }
   } else {
-    console.log('✅ User record ensured in public.users');
+    console.error('❌ Failed to fetch auth user:', authError);
   }
 
   // Generate story bible which creates the story record
