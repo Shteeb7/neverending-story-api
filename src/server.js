@@ -38,9 +38,32 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Request logging middleware (always enabled for debugging)
+// Request/Response logging middleware (always enabled for debugging)
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  const start = Date.now();
+  const requestTime = new Date().toISOString();
+
+  console.log(`[${requestTime}] ${req.method} ${req.path}`);
+
+  // Log request body for POST/PUT
+  if ((req.method === 'POST' || req.method === 'PUT') && req.body) {
+    console.log(`   Body: ${JSON.stringify(req.body).substring(0, 200)}`);
+  }
+
+  // Capture response
+  const originalSend = res.send;
+  res.send = function(data) {
+    const duration = Date.now() - start;
+    console.log(`[${requestTime}] ${req.method} ${req.path} → ${res.statusCode} (${duration}ms)`);
+
+    // Log response body if error
+    if (res.statusCode >= 400) {
+      console.log(`   Error Response: ${typeof data === 'string' ? data.substring(0, 200) : JSON.stringify(data).substring(0, 200)}`);
+    }
+
+    originalSend.call(this, data);
+  };
+
   next();
 });
 

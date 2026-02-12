@@ -9,6 +9,7 @@ async function authenticateUser(req, res, next) {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      console.log('❌ Auth failed: Missing or invalid authorization header');
       return res.status(401).json({
         success: false,
         error: 'Missing or invalid authorization header'
@@ -21,6 +22,8 @@ async function authenticateUser(req, res, next) {
     const { data: { user }, error } = await supabaseClient.auth.getUser(token);
 
     if (error || !user) {
+      console.log('❌ Auth failed: Invalid or expired token');
+      console.log(`   Error: ${error?.message || 'No user found'}`);
       return res.status(401).json({
         success: false,
         error: 'Invalid or expired token'
@@ -31,9 +34,10 @@ async function authenticateUser(req, res, next) {
     req.user = user;
     req.userId = user.id;
 
+    console.log(`✅ Auth success: User ${user.id}`);
     next();
   } catch (error) {
-    console.error('Authentication error:', error);
+    console.error('❌ Authentication error:', error);
     return res.status(500).json({
       success: false,
       error: 'Authentication failed'
