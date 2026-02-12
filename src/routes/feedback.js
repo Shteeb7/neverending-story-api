@@ -6,6 +6,51 @@ const { authenticateUser } = require('../middleware/auth');
 const router = express.Router();
 
 /**
+ * POST /feedback
+ * Submit simple feedback (e.g., library exit reasons)
+ * Called by FeedbackModalView when a reader leaves a story
+ */
+router.post('/', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { storyId, feedback } = req.body;
+
+  if (!storyId || !feedback) {
+    return res.status(400).json({
+      success: false,
+      error: 'storyId and feedback are required'
+    });
+  }
+
+  console.log(`📊 Library feedback: story=${storyId}, reason="${feedback}"`);
+
+  // Store in story_feedback table with checkpoint='library_exit'
+  const { data, error } = await supabaseAdmin
+    .from('story_feedback')
+    .upsert({
+      user_id: userId,
+      story_id: storyId,
+      checkpoint: 'library_exit',
+      response: feedback,
+      follow_up_action: null,
+      voice_transcript: null,
+      voice_session_id: null
+    }, {
+      onConflict: 'user_id,story_id,checkpoint'
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to store feedback: ${error.message}`);
+  }
+
+  res.json({
+    success: true,
+    feedback: data
+  });
+}));
+
+/**
  * POST /feedback/checkpoint
  * Submit reader feedback at chapter checkpoints (3, 6, 9)
  */
