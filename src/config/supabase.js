@@ -13,9 +13,16 @@ const supabaseAdmin = createClient(
 );
 
 // Initialize Supabase client with anon key for user-scoped operations
+// CRITICAL: In server environments, must disable session persistence
 const supabaseClient = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  process.env.SUPABASE_ANON_KEY,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  }
 );
 
 module.exports = {

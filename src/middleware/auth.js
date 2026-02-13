@@ -1,4 +1,4 @@
-const { supabaseClient } = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 
 /**
  * Middleware to verify authentication token
@@ -18,8 +18,8 @@ async function authenticateUser(req, res, next) {
 
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
 
-    // Verify token with Supabase
-    const { data: { user }, error } = await supabaseClient.auth.getUser(token);
+    // Verify token with Supabase (use admin client for server-side token validation)
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
 
     if (error || !user) {
       console.log('❌ Auth failed: Invalid or expired token');
@@ -54,7 +54,7 @@ async function optionalAuth(req, res, next) {
 
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7);
-      const { data: { user } } = await supabaseClient.auth.getUser(token);
+      const { data: { user } } = await supabaseAdmin.auth.getUser(token);
 
       if (user) {
         req.user = user;
