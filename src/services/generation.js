@@ -379,6 +379,35 @@ async function generateStoryBible(premiseId, userId) {
 
   const premise = selectedPremise;
 
+  // ✅ CREATE STORY RECORD IMMEDIATELY (BEFORE Claude API call)
+  // This prevents race condition where users can select the same premise twice
+  // during the 30-60 second bible generation window
+  const { data: story, error: storyError } = await supabaseAdmin
+    .from('stories')
+    .insert({
+      user_id: userId,
+      premise_id: storyPremisesRecordId,
+      title: premise.title,  // Use premise.title (already known)
+      status: 'active',
+      generation_progress: {
+        bible_complete: false,
+        arc_complete: false,
+        chapters_generated: 0,
+        current_step: 'generating_bible',
+        last_updated: new Date().toISOString()
+      },
+      created_at: new Date().toISOString()
+    })
+    .select()
+    .single();
+
+  if (storyError) {
+    throw new Error(`Failed to create story record: ${storyError.message}`);
+  }
+
+  const storyId = story.id;
+  console.log(`✅ Story record created immediately: ${storyId} - "${premise.title}"`);
+
   // Extract and map age range from preferences
   const rawAgeRange = preferencesUsed?.ageRange || 'adult';
   const ageRange = mapAgeRange(rawAgeRange);
@@ -506,48 +535,48 @@ Return ONLY a JSON object in this exact format:
 
   const messages = [{ role: 'user', content: prompt }];
 
-  const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
-    messages,
-    64000,
-    { operation: 'generate_bible', userId, premiseId }
-  );
+  // Wrap Claude API call in try-catch to handle failures gracefully
+  let response, inputTokens, outputTokens, parsed;
+  try {
+    const apiResult = await callClaudeWithRetry(
+      messages,
+      64000,
+      { operation: 'generate_bible', userId, premiseId }
+    );
+    response = apiResult.response;
+    inputTokens = apiResult.inputTokens;
+    outputTokens = apiResult.outputTokens;
 
-  const parsed = parseAndValidateJSON(response, [
-    'title', 'world_rules', 'characters', 'central_conflict',
-    'stakes', 'themes', 'key_locations', 'timeline'
-  ]);
-
-  // Step 1: Create story record FIRST (bible table requires story_id foreign key)
-  const { data: story, error: storyError } = await supabaseAdmin
-    .from('stories')
-    .insert({
-      user_id: userId,
-      premise_id: storyPremisesRecordId, // Use parent record ID, not individual premise UUID
-      title: parsed.title,
-      status: 'active',  // Use 'active' - generation_progress tracks actual status
-      generation_progress: {
-        bible_complete: false,
-        arc_complete: false,
-        chapters_generated: 0,
-        current_step: 'generating_bible',
-        last_updated: new Date().toISOString()
-      },
-      created_at: new Date().toISOString()
-    })
-    .select()
-    .single();
-
-  if (storyError) {
-    throw new Error(`Failed to create story: ${storyError.message}`);
+    parsed = parseAndValidateJSON(response, [
+      'title', 'world_rules', 'characters', 'central_conflict',
+      'stakes', 'themes', 'key_locations', 'timeline'
+    ]);
+  } catch (apiError) {
+    // If Claude API fails, update story record with error and re-throw
+    console.error(`❌ Bible generation failed for story ${storyId}:`, apiError);
+    await supabaseAdmin
+      .from('stories')
+      .update({
+        generation_progress: {
+          bible_complete: false,
+          arc_complete: false,
+          chapters_generated: 0,
+          current_step: 'bible_generation_failed',
+          last_updated: new Date().toISOString(),
+          error: apiError.message
+        }
+      })
+      .eq('id', storyId);
+    throw apiError;
   }
 
-  // Step 2: Store bible in database with story_id
+  // Store bible in database with story_id (story record was created above)
   const { data: bible, error: bibleError } = await supabaseAdmin
     .from('story_bibles')
     .insert({
       user_id: userId,
       // premise_id removed - FK references generated_premises, not story_premises
-      story_id: story.id,  // Required NOT NULL
+      story_id: storyId,  // Use storyId from story record created above
       content: parsed,  // Required NOT NULL - JSONB type, store structured data
       title: parsed.title,
       world_rules: parsed.world_rules,
@@ -565,7 +594,7 @@ Return ONLY a JSON object in this exact format:
     throw new Error(`Failed to store bible: ${bibleError.message}`);
   }
 
-  // Step 3: Update story with bible_id now that bible is created
+  // Update story with bible_id now that bible is created
   const { error: updateError } = await supabaseAdmin
     .from('stories')
     .update({
@@ -578,20 +607,20 @@ Return ONLY a JSON object in this exact format:
         last_updated: new Date().toISOString()
       }
     })
-    .eq('id', story.id);
+    .eq('id', storyId);
 
   if (updateError) {
     throw new Error(`Failed to update story with bible_id: ${updateError.message}`);
   }
 
   await logApiCost(userId, 'generate_bible', inputTokens, outputTokens, {
-    storyId: story.id,
+    storyId: storyId,
     premiseId
   });
 
   return {
     bible: parsed,
-    storyId: story.id
+    storyId: storyId
   };
 }
 
