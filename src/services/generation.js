@@ -625,6 +625,263 @@ Return ONLY a JSON object in this exact format:
 }
 
 /**
+ * Generate story bible for an EXISTING story record
+ * Used by POST /select-premise to generate bible after story record already exists
+ * This allows the API to return immediately while generation happens in background
+ */
+async function generateStoryBibleForExistingStory(storyId, premiseId, userId) {
+  console.log(`📚 Generating bible for existing story ${storyId}...`);
+
+  // Fetch all premise records for this user (premises are stored as arrays)
+  const { data: premiseRecords, error: premiseError } = await supabaseAdmin
+    .from('story_premises')
+    .select('id, premises, preferences_used')
+    .eq('user_id', userId)
+    .order('generated_at', { ascending: false });
+
+  if (premiseError || !premiseRecords || premiseRecords.length === 0) {
+    console.log('❌ No premise records found for user');
+    throw new Error('Premise not found');
+  }
+
+  // Find the specific premise by ID within the arrays
+  let selectedPremise = null;
+  let preferencesUsed = null;
+
+  for (const record of premiseRecords) {
+    if (Array.isArray(record.premises)) {
+      const found = record.premises.find(p => p.id === premiseId);
+      if (found) {
+        selectedPremise = found;
+        preferencesUsed = record.preferences_used;
+        console.log(`✅ Found premise: "${found.title}"`);
+        break;
+      }
+    }
+  }
+
+  if (!selectedPremise) {
+    console.log('❌ Premise ID not found in any records');
+    throw new Error(`Premise with ID ${premiseId} not found`);
+  }
+
+  const premise = selectedPremise;
+
+  // Extract and map age range from preferences
+  const rawAgeRange = preferencesUsed?.ageRange || 'adult';
+  const ageRange = mapAgeRange(rawAgeRange);
+  console.log(`📊 Bible generation - Age Range: ${rawAgeRange} → ${ageRange}`);
+
+  const prompt = `You are an expert world-builder and story architect creating a foundation for compelling fiction.
+
+Create a comprehensive story bible for this premise:
+
+<premise>
+  <title>${premise.title}</title>
+  <description>${premise.description}</description>
+  <genre>${premise.genre}</genre>
+  <themes>${premise.themes.join(', ')}</themes>
+  <target_age>${ageRange}</target_age>
+</premise>
+
+The story bible should include:
+
+1. WORLD RULES: The fundamental rules of this story's world (magic systems, technology, society structure)
+
+2. PROTAGONIST (Deep Psychology Required):
+   - Name, age, personality, strengths, flaws, goals, fears
+   - INTERNAL CONTRADICTION: What opposing forces war inside them? (e.g., "craves independence but fears abandonment")
+   - THE LIE THEY BELIEVE: What false belief about themselves holds them back? (e.g., "I'm not brave enough", "I have to do everything alone")
+   - DEEPEST FEAR vs. STATED FEAR: What they're REALLY afraid of vs. what they say/think they fear
+   - VOICE NOTES: How do they speak? Vocabulary level, sentence rhythm, verbal tics?
+
+3. ANTAGONIST (Sympathetic Depth Required):
+   - Name, motivation, methods, backstory
+   - WHY THEY BELIEVE THEY'RE RIGHT: The antagonist should think they're justified. What's their moral framework?
+   - WHAT WOULD MAKE READERS ALMOST SYMPATHIZE: What wound or belief drives them? What makes them human, not evil?
+   - POINT OF NO RETURN: What event locked them into this path?
+
+4. SUPPORTING CHARACTERS (2-3 key characters):
+   - Name, role, personality
+   - RELATIONSHIP DYNAMIC WITH PROTAGONIST: Not just "friend" or "mentor"—how do they challenge/complement/frustrate the protagonist? What's the emotional texture of their bond?
+   - THEIR OWN GOAL: Supporting characters aren't props. What do THEY want?
+
+5. CENTRAL CONFLICT: The main problem/challenge the protagonist must overcome
+
+6. STAKES: What happens if the protagonist fails? What's at risk?
+
+7. THEMES: Core themes to explore throughout the story
+
+8. KEY LOCATIONS (3-5 settings):
+   - Name, visual description, significance
+   - SENSORY DETAILS: What does this place SOUND like? SMELL like? FEEL like (temperature, texture, atmosphere)?
+   - Not just what it looks like—make it visceral and immersive
+
+9. TIMELINE: Story timeframe and key events
+
+Create a rich, psychologically complex world that will support a 12-chapter story for ages ${ageRange}. Every character should feel like they have an interior life. The world should feel tangible and lived-in.
+
+Return ONLY a JSON object in this exact format:
+{
+  "title": "${premise.title}",
+  "world_rules": {
+    "magic_system": "description if applicable",
+    "technology_level": "description",
+    "society_structure": "description",
+    "unique_rules": ["rule1", "rule2"]
+  },
+  "characters": {
+    "protagonist": {
+      "name": "string",
+      "age": number,
+      "personality": "string",
+      "strengths": ["strength1", "strength2"],
+      "flaws": ["flaw1", "flaw2"],
+      "goals": "string",
+      "fears": "string",
+      "internal_contradiction": "opposing forces within them",
+      "lie_they_believe": "false belief holding them back",
+      "deepest_fear": "what they're REALLY afraid of (vs. what they say)",
+      "voice_notes": "how they speak—vocabulary, rhythm, quirks"
+    },
+    "antagonist": {
+      "name": "string",
+      "motivation": "string",
+      "methods": "string",
+      "backstory": "string",
+      "why_they_believe_theyre_right": "their moral justification",
+      "sympathetic_element": "what makes them human/wounded",
+      "point_of_no_return": "event that locked them on this path"
+    },
+    "supporting": [
+      {
+        "name": "string",
+        "role": "string",
+        "personality": "string",
+        "relationship_dynamic": "how they interact with protagonist—not just 'friend' but emotional texture",
+        "their_own_goal": "what THEY want (supporting chars aren't props)"
+      }
+    ]
+  },
+  "central_conflict": {
+    "description": "string",
+    "inciting_incident": "string",
+    "complications": ["complication1", "complication2"]
+  },
+  "stakes": {
+    "personal": "string",
+    "broader": "string",
+    "emotional": "string"
+  },
+  "themes": ["theme1", "theme2", "theme3"],
+  "key_locations": [
+    {
+      "name": "string",
+      "description": "string",
+      "significance": "string",
+      "sensory_details": {
+        "sounds": "what you hear here",
+        "smells": "what you smell",
+        "tactile": "temperature, texture, atmospheric feel"
+      }
+    }
+  ],
+  "timeline": {
+    "total_duration": "string",
+    "key_milestones": ["milestone1", "milestone2"]
+  }
+}`;
+
+  const messages = [{ role: 'user', content: prompt }];
+
+  // Wrap Claude API call in try-catch to handle failures gracefully
+  let response, inputTokens, outputTokens, parsed;
+  try {
+    const apiResult = await callClaudeWithRetry(
+      messages,
+      64000,
+      { operation: 'generate_bible', userId, premiseId }
+    );
+    response = apiResult.response;
+    inputTokens = apiResult.inputTokens;
+    outputTokens = apiResult.outputTokens;
+
+    parsed = parseAndValidateJSON(response, [
+      'title', 'world_rules', 'characters', 'central_conflict',
+      'stakes', 'themes', 'key_locations', 'timeline'
+    ]);
+  } catch (apiError) {
+    // If Claude API fails, update story record with error and re-throw
+    console.error(`❌ Bible generation failed for story ${storyId}:`, apiError);
+    await supabaseAdmin
+      .from('stories')
+      .update({
+        generation_progress: {
+          bible_complete: false,
+          arc_complete: false,
+          chapters_generated: 0,
+          current_step: 'bible_generation_failed',
+          last_updated: new Date().toISOString(),
+          error: apiError.message
+        }
+      })
+      .eq('id', storyId);
+    throw apiError;
+  }
+
+  // Store bible in database with story_id (story record already exists)
+  const { data: bible, error: bibleError } = await supabaseAdmin
+    .from('story_bibles')
+    .insert({
+      user_id: userId,
+      story_id: storyId,
+      content: parsed,
+      title: parsed.title,
+      world_rules: parsed.world_rules,
+      characters: parsed.characters,
+      central_conflict: parsed.central_conflict,
+      stakes: parsed.stakes,
+      themes: parsed.themes,
+      key_locations: parsed.key_locations,
+      timeline: parsed.timeline
+    })
+    .select()
+    .single();
+
+  if (bibleError) {
+    throw new Error(`Failed to store bible: ${bibleError.message}`);
+  }
+
+  // Update story with bible_id now that bible is created
+  const { error: updateError } = await supabaseAdmin
+    .from('stories')
+    .update({
+      bible_id: bible.id,
+      generation_progress: {
+        bible_complete: true,
+        arc_complete: false,
+        chapters_generated: 0,
+        current_step: 'bible_created',
+        last_updated: new Date().toISOString()
+      }
+    })
+    .eq('id', storyId);
+
+  if (updateError) {
+    throw new Error(`Failed to update story with bible_id: ${updateError.message}`);
+  }
+
+  await logApiCost(userId, 'generate_bible', inputTokens, outputTokens, {
+    storyId: storyId,
+    premiseId
+  });
+
+  console.log(`✅ Bible generation complete for story ${storyId}`);
+
+  return { storyId };
+}
+
+/**
  * Generate 12-chapter arc outline
  */
 async function generateArcOutline(storyId, userId) {
@@ -2054,6 +2311,7 @@ async function resumeStalledGenerations() {
 module.exports = {
   generatePremises,
   generateStoryBible,
+  generateStoryBibleForExistingStory,
   generateArcOutline,
   generateChapter,
   orchestratePreGeneration,

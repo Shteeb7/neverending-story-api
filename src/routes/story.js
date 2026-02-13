@@ -9,6 +9,7 @@ const router = express.Router();
 /**
  * POST /story/select-premise
  * User selects a premise and triggers pre-generation of first chapters
+ * FAST RETURN: Creates story record and returns immediately (1-2s), then generates in background
  */
 router.post('/select-premise', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req;
@@ -22,10 +23,8 @@ router.post('/select-premise', authenticateUser, asyncHandler(async (req, res) =
   }
 
   // CRITICAL: Ensure user exists in public.users (for FK constraint)
-  // This handles users who signed in before the auth route fix was deployed
   console.log('🔧 Ensuring user exists in public.users before story creation...');
 
-  // Get user email from auth.users
   const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.getUserById(userId);
 
   if (!authError && authUser) {
@@ -37,12 +36,11 @@ router.post('/select-premise', authenticateUser, asyncHandler(async (req, res) =
         created_at: new Date().toISOString()
       }, {
         onConflict: 'id',
-        ignoreDuplicates: false  // Update if exists
+        ignoreDuplicates: false
       });
 
     if (userUpsertError) {
       console.error('❌ Failed to ensure user exists:', userUpsertError);
-      // Don't fail - try to continue anyway
     } else {
       console.log('✅ User record ensured in public.users');
     }
@@ -50,27 +48,89 @@ router.post('/select-premise', authenticateUser, asyncHandler(async (req, res) =
     console.error('❌ Failed to fetch auth user:', authError);
   }
 
-  // Generate story bible which creates the story record
-  const { generateStoryBible, orchestratePreGeneration } = require('../services/generation');
-  const { storyId } = await generateStoryBible(premiseId, userId);
+  // Step 1: Look up the premise to get its title (quick DB query)
+  const { data: premiseRecords, error: premiseError } = await supabaseAdmin
+    .from('story_premises')
+    .select('id, premises')
+    .eq('user_id', userId)
+    .order('generated_at', { ascending: false });
 
-  // Fetch the complete story record to return to iOS
-  const { data: story, error: storyFetchError } = await supabaseAdmin
-    .from('stories')
-    .select('*')
-    .eq('id', storyId)
-    .single();
-
-  if (storyFetchError || !story) {
-    throw new Error('Failed to fetch created story');
+  if (premiseError || !premiseRecords || premiseRecords.length === 0) {
+    return res.status(404).json({ success: false, error: 'Premise not found' });
   }
 
-  // Start orchestration asynchronously (non-blocking)
-  orchestratePreGeneration(storyId, userId).catch(error => {
-    console.error('Pre-generation failed:', error);
-  });
+  let selectedPremise = null;
+  let storyPremisesRecordId = null;
 
-  // Return the full story object that iOS expects
+  for (const record of premiseRecords) {
+    if (Array.isArray(record.premises)) {
+      const found = record.premises.find(p => p.id === premiseId);
+      if (found) {
+        selectedPremise = found;
+        storyPremisesRecordId = record.id;
+        break;
+      }
+    }
+  }
+
+  if (!selectedPremise) {
+    return res.status(404).json({ success: false, error: 'Premise not found' });
+  }
+
+  // Step 2: Create story record IMMEDIATELY (prevents race condition)
+  const { data: story, error: storyError } = await supabaseAdmin
+    .from('stories')
+    .insert({
+      user_id: userId,
+      premise_id: storyPremisesRecordId,
+      title: selectedPremise.title,
+      status: 'active',
+      generation_progress: {
+        bible_complete: false,
+        arc_complete: false,
+        chapters_generated: 0,
+        current_step: 'generating_bible',
+        last_updated: new Date().toISOString()
+      },
+      created_at: new Date().toISOString()
+    })
+    .select()
+    .single();
+
+  if (storyError) {
+    throw new Error(`Failed to create story record: ${storyError.message}`);
+  }
+
+  console.log(`✅ Story record created immediately: ${story.id} - "${selectedPremise.title}"`);
+
+  // Step 3: Fire entire generation pipeline async (non-blocking)
+  const { generateStoryBibleForExistingStory, orchestratePreGeneration } = require('../services/generation');
+
+  generateStoryBibleForExistingStory(story.id, premiseId, userId)
+    .then(() => {
+      console.log(`📚 Bible generated for story ${story.id}, starting chapter generation...`);
+      return orchestratePreGeneration(story.id, userId);
+    })
+    .catch(error => {
+      console.error(`❌ Generation pipeline failed for story ${story.id}:`, error);
+      // Update story progress to indicate failure
+      supabaseAdmin
+        .from('stories')
+        .update({
+          generation_progress: {
+            bible_complete: false,
+            arc_complete: false,
+            chapters_generated: 0,
+            current_step: 'generation_failed',
+            last_updated: new Date().toISOString(),
+            error: error.message
+          }
+        })
+        .eq('id', story.id)
+        .then(() => console.log('Updated story with error status'));
+    });
+
+  // Step 4: Return immediately (1-2 seconds total, not 60)
   res.json(story);
 }));
 
