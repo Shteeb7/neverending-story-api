@@ -307,6 +307,27 @@ async function updateGenerationProgress(storyId, progressData) {
 }
 
 /**
+ * Clear recovery lock after generation completes or fails
+ */
+async function clearRecoveryLock(storyId) {
+  const { data: story } = await supabaseAdmin
+    .from('stories')
+    .select('generation_progress')
+    .eq('id', storyId)
+    .single();
+
+  if (story?.generation_progress) {
+    const progress = { ...story.generation_progress };
+    delete progress.recovery_started;  // Remove the lock
+
+    await supabaseAdmin
+      .from('stories')
+      .update({ generation_progress: progress })
+      .eq('id', storyId);
+  }
+}
+
+/**
  * Retry a generation step with backoff and progress tracking
  */
 async function retryGenerationStep(stepName, storyId, stepFn, maxRetries = 2) {
@@ -935,86 +956,68 @@ Return ONLY a JSON object in this exact format:
 
   const messages = [{ role: 'user', content: prompt }];
 
-  // Wrap Claude API call in try-catch to handle failures gracefully
-  let response, inputTokens, outputTokens, parsed;
-  try {
+  // Wrap bible generation in retryGenerationStep for immediate retry on failure
+  const result = await retryGenerationStep('Bible generation', storyId, async () => {
+    // Call Claude API
     const apiResult = await callClaudeWithRetry(
       messages,
       64000,
       { operation: 'generate_bible', userId, premiseId }
     );
-    response = apiResult.response;
-    inputTokens = apiResult.inputTokens;
-    outputTokens = apiResult.outputTokens;
 
-    parsed = parseAndValidateJSON(response, [
+    const parsed = parseAndValidateJSON(apiResult.response, [
       'title', 'world_rules', 'characters', 'central_conflict',
       'stakes', 'themes', 'key_locations', 'timeline'
     ]);
-  } catch (apiError) {
-    // If Claude API fails, update story record with error and re-throw
-    console.error(`❌ Bible generation failed for story ${storyId}:`, apiError);
-    await supabaseAdmin
+
+    // Store bible in database with story_id (story record already exists)
+    const { data: bible, error: bibleError } = await supabaseAdmin
+      .from('story_bibles')
+      .insert({
+        user_id: userId,
+        story_id: storyId,
+        content: parsed,
+        title: parsed.title,
+        world_rules: parsed.world_rules,
+        characters: parsed.characters,
+        central_conflict: parsed.central_conflict,
+        stakes: parsed.stakes,
+        themes: parsed.themes,
+        key_locations: parsed.key_locations,
+        timeline: parsed.timeline
+      })
+      .select()
+      .single();
+
+    if (bibleError) {
+      throw new Error(`Failed to store bible: ${bibleError.message}`);
+    }
+
+    // Update story with bible_id now that bible is created
+    const { error: updateError } = await supabaseAdmin
       .from('stories')
       .update({
+        bible_id: bible.id,
         generation_progress: {
-          bible_complete: false,
+          bible_complete: true,
           arc_complete: false,
           chapters_generated: 0,
-          current_step: 'bible_generation_failed',
-          last_updated: new Date().toISOString(),
-          error: apiError.message
+          current_step: 'bible_created',
+          last_updated: new Date().toISOString()
         }
       })
       .eq('id', storyId);
-    throw apiError;
-  }
 
-  // Store bible in database with story_id (story record already exists)
-  const { data: bible, error: bibleError } = await supabaseAdmin
-    .from('story_bibles')
-    .insert({
-      user_id: userId,
-      story_id: storyId,
-      content: parsed,
-      title: parsed.title,
-      world_rules: parsed.world_rules,
-      characters: parsed.characters,
-      central_conflict: parsed.central_conflict,
-      stakes: parsed.stakes,
-      themes: parsed.themes,
-      key_locations: parsed.key_locations,
-      timeline: parsed.timeline
-    })
-    .select()
-    .single();
+    if (updateError) {
+      throw new Error(`Failed to update story with bible_id: ${updateError.message}`);
+    }
 
-  if (bibleError) {
-    throw new Error(`Failed to store bible: ${bibleError.message}`);
-  }
+    await logApiCost(userId, 'generate_bible', apiResult.inputTokens, apiResult.outputTokens, {
+      storyId: storyId,
+      premiseId
+    });
 
-  // Update story with bible_id now that bible is created
-  const { error: updateError } = await supabaseAdmin
-    .from('stories')
-    .update({
-      bible_id: bible.id,
-      generation_progress: {
-        bible_complete: true,
-        arc_complete: false,
-        chapters_generated: 0,
-        current_step: 'bible_created',
-        last_updated: new Date().toISOString()
-      }
-    })
-    .eq('id', storyId);
-
-  if (updateError) {
-    throw new Error(`Failed to update story with bible_id: ${updateError.message}`);
-  }
-
-  await logApiCost(userId, 'generate_bible', inputTokens, outputTokens, {
-    storyId: storyId,
-    premiseId
+    return { bible, inputTokens: apiResult.inputTokens, outputTokens: apiResult.outputTokens };
   });
 
   console.log(`✅ Bible generation complete for story ${storyId}`);
@@ -2036,6 +2039,9 @@ async function orchestratePreGeneration(storyId, userId) {
       })
       .eq('id', storyId);
 
+    // Clear recovery lock on success
+    await clearRecoveryLock(storyId);
+
     console.log(`✅ Pre-generation complete for story ${storyId} - 6 chapters ready`);
   } catch (error) {
     console.error(`❌ Pre-generation failed for story ${storyId}:`, error);
@@ -2057,6 +2063,9 @@ async function orchestratePreGeneration(storyId, userId) {
         })
         .eq('id', storyId);
     }
+
+    // Clear recovery lock on final failure
+    await clearRecoveryLock(storyId);
 
     throw error;
   }
@@ -2402,6 +2411,16 @@ async function resumeStalledGenerations() {
       const progress = story.generation_progress;
       if (!progress) return false;
 
+      // CONCURRENCY LOCK: Skip if recovery already in progress
+      // (recovery_started within last 20 minutes)
+      if (progress.recovery_started) {
+        const recoveryStartTime = new Date(progress.recovery_started);
+        const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
+        if (recoveryStartTime > twentyMinutesAgo) {
+          return false; // Recovery already in progress, don't spawn duplicate
+        }
+      }
+
       // Check if story has been retried too many times (max 3 health-check retries)
       const healthCheckRetries = progress.health_check_retries || 0;
       if (healthCheckRetries >= 3) {
@@ -2450,11 +2469,12 @@ async function resumeStalledGenerations() {
       console.log(`   Health check retry: ${healthCheckRetries + 1}/3`);
 
       try {
-        // Increment health check retry counter
+        // Increment health check retry counter and set recovery lock
         const updatedProgress = {
           ...progress,
           health_check_retries: healthCheckRetries + 1,
-          last_health_check: new Date().toISOString()
+          last_health_check: new Date().toISOString(),
+          recovery_started: new Date().toISOString()  // CONCURRENCY LOCK
         };
 
         // Reset story to active status for retry
@@ -2494,9 +2514,11 @@ async function resumeStalledGenerations() {
               .eq('id', story.id);
 
             // Run orchestratePreGeneration — it should detect bible exists and skip to arc
-            orchestratePreGeneration(story.id, story.user_id).catch(err => {
-              console.error(`   ❌ Recovery failed for ${story.id}:`, err.message);
-            });
+            orchestratePreGeneration(story.id, story.user_id)
+              .catch(err => {
+                console.error(`   ❌ Recovery failed for ${story.id}:`, err.message);
+              })
+              .finally(() => clearRecoveryLock(story.id));
           } else {
             console.log('   📖 Bible missing — restarting full generation');
             // Need full re-generation — call the existing pipeline
@@ -2507,23 +2529,29 @@ async function resumeStalledGenerations() {
               .single();
 
             if (storyFull?.premise_id) {
-              generateStoryBibleForExistingStory(story.id, storyFull.premise_id, story.user_id).catch(err => {
-                console.error(`   ❌ Bible re-generation failed for ${story.id}:`, err.message);
-              });
+              generateStoryBibleForExistingStory(story.id, storyFull.premise_id, story.user_id)
+                .catch(err => {
+                  console.error(`   ❌ Bible re-generation failed for ${story.id}:`, err.message);
+                })
+                .finally(() => clearRecoveryLock(story.id));
             }
           }
         } else if (!hasArc) {
           console.log('   🗺️ Bible complete, retrying arc generation');
           // Re-run from arc generation onward
-          orchestratePreGeneration(story.id, story.user_id).catch(err => {
-            console.error(`   ❌ Arc recovery failed for ${story.id}:`, err.message);
-          });
+          orchestratePreGeneration(story.id, story.user_id)
+            .catch(err => {
+              console.error(`   ❌ Arc recovery failed for ${story.id}:`, err.message);
+            })
+            .finally(() => clearRecoveryLock(story.id));
         } else if (chaptersGenerated < 6) {
           console.log(`   📝 Arc complete, resuming from chapter ${chaptersGenerated + 1}`);
           // Resume chapter generation
-          orchestratePreGeneration(story.id, story.user_id).catch(err => {
-            console.error(`   ❌ Chapter recovery failed for ${story.id}:`, err.message);
-          });
+          orchestratePreGeneration(story.id, story.user_id)
+            .catch(err => {
+              console.error(`   ❌ Chapter recovery failed for ${story.id}:`, err.message);
+            })
+            .finally(() => clearRecoveryLock(story.id));
         } else {
           console.log('   ✅ Story appears complete, marking as active');
         }
