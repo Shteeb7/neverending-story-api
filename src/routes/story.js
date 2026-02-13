@@ -215,6 +215,7 @@ router.post('/:storyId/generate-next', authenticateUser, asyncHandler(async (req
 /**
  * POST /story/:storyId/progress
  * Update user's reading position in a story
+ * Expects: chapterNumber (int), scrollPosition (double)
  */
 router.post('/:storyId/progress', authenticateUser, asyncHandler(async (req, res) => {
   const { storyId } = req.params;
