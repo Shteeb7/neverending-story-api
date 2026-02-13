@@ -174,16 +174,16 @@ resumeStalledGenerations().catch(error => {
   console.error('❌ Startup health check failed:', error);
 });
 
-// Run every 30 minutes thereafter
-const THIRTY_MINUTES = 30 * 60 * 1000;
+// Run every 5 minutes thereafter
+const FIVE_MINUTES = 5 * 60 * 1000;
 setInterval(() => {
   console.log('\n🔧 Running scheduled health check for stalled generations...');
   resumeStalledGenerations().catch(error => {
     console.error('❌ Scheduled health check failed:', error);
   });
-}, THIRTY_MINUTES);
+}, FIVE_MINUTES);
 
-console.log('🔄 Self-healing enabled: checks every 30 minutes for stalled generations');
+console.log('🔄 Self-healing enabled: checks every 5 minutes for stalled generations');
 console.log('=================================\n');
 
 // Graceful shutdown

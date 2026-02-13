@@ -84,8 +84,80 @@ async function logApiCost(userId, operation, inputTokens, outputTokens, metadata
  * Parse and validate JSON response from Claude
  * Handles both raw JSON and markdown-wrapped JSON (```json ... ```)
  */
+/**
+ * Attempt to repair common JSON issues (truncation, unclosed strings, etc.)
+ */
+function attemptJsonRepair(jsonString) {
+  let repaired = jsonString;
+
+  // 1. Remove any trailing content after the last complete top-level closing brace
+  // Find the last } that could be the root object close
+  let braceDepth = 0;
+  let lastValidClose = -1;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = 0; i < repaired.length; i++) {
+    if (escapeNext) { escapeNext = false; continue; }
+    if (repaired[i] === '\\') { escapeNext = true; continue; }
+    if (repaired[i] === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (repaired[i] === '{') braceDepth++;
+    if (repaired[i] === '}') {
+      braceDepth--;
+      if (braceDepth === 0) { lastValidClose = i; break; }
+    }
+  }
+
+  if (lastValidClose > 0 && lastValidClose < repaired.length - 1) {
+    console.log(`🔧 JSON repair: Truncating ${repaired.length - lastValidClose - 1} chars after root close`);
+    repaired = repaired.substring(0, lastValidClose + 1);
+  }
+
+  // 2. If braces never balanced, try to close open structures
+  if (lastValidClose === -1) {
+    // Count unclosed braces and brackets
+    braceDepth = 0;
+    let bracketDepth = 0;
+    inString = false;
+    escapeNext = false;
+
+    for (let i = 0; i < repaired.length; i++) {
+      if (escapeNext) { escapeNext = false; continue; }
+      if (repaired[i] === '\\') { escapeNext = true; continue; }
+      if (repaired[i] === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (repaired[i] === '{') braceDepth++;
+      if (repaired[i] === '}') braceDepth--;
+      if (repaired[i] === '[') bracketDepth++;
+      if (repaired[i] === ']') bracketDepth--;
+    }
+
+    // If we're inside a string, close it
+    if (inString) {
+      console.log('🔧 JSON repair: Closing unclosed string');
+      repaired += '"';
+    }
+
+    // Close any open brackets and braces
+    for (let i = 0; i < bracketDepth; i++) repaired += ']';
+    for (let i = 0; i < braceDepth; i++) repaired += '}';
+
+    if (braceDepth > 0 || bracketDepth > 0) {
+      console.log(`🔧 JSON repair: Closed ${bracketDepth} brackets and ${braceDepth} braces`);
+    }
+  }
+
+  // 3. Fix trailing commas before } or ]
+  repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+
+  return repaired;
+}
+
 function parseAndValidateJSON(jsonString, requiredFields = []) {
   let parsed;
+  let extractedContent = null;
+  let originalError = null;
 
   // DEBUG: Log raw input details
   console.log('🔍 DEBUG parseAndValidateJSON:');
@@ -102,6 +174,7 @@ function parseAndValidateJSON(jsonString, requiredFields = []) {
     parsed = JSON.parse(trimmed);
     console.log('   ✅ Direct JSON.parse() succeeded');
   } catch (e) {
+    originalError = e;
     console.log(`   ❌ Direct JSON.parse() failed: ${e.message}`);
 
     // Step 3: Try to extract JSON from markdown code blocks
@@ -118,20 +191,32 @@ function parseAndValidateJSON(jsonString, requiredFields = []) {
 
     if (codeBlockMatch && codeBlockMatch[1]) {
       // Step 4: Parse the extracted JSON content
-      const extracted = codeBlockMatch[1].trim();
-      console.log(`   Attempting to parse extracted content (${extracted.length} chars)...`);
+      extractedContent = codeBlockMatch[1].trim();
+      console.log(`   Attempting to parse extracted content (${extractedContent.length} chars)...`);
 
       try {
-        parsed = JSON.parse(extracted);
+        parsed = JSON.parse(extractedContent);
         console.log('   ✅ Markdown extraction and parse succeeded');
       } catch (e2) {
         console.log(`   ❌ Failed to parse extracted JSON: ${e2.message}`);
-        throw new Error(`Failed to parse JSON from markdown block: ${e2.message}`);
+        // Don't throw yet - will try repair next
       }
-    } else {
-      // No markdown block found, throw original error
-      console.log('   ❌ No markdown block found, throwing error');
-      throw new Error(`Failed to parse JSON: ${e.message}`);
+    }
+
+    // Step 5: If both attempts failed, try JSON repair
+    if (!parsed) {
+      const contentToRepair = extractedContent || trimmed;
+      console.log('🔧 Attempting JSON repair...');
+      const repaired = attemptJsonRepair(contentToRepair);
+
+      try {
+        parsed = JSON.parse(repaired);
+        console.log('✅ JSON repair succeeded!');
+      } catch (repairError) {
+        console.error('❌ JSON repair also failed:', repairError.message);
+        // NOW throw the original error
+        throw new Error(`Failed to parse JSON even after repair: ${originalError.message}`);
+      }
     }
   }
 
@@ -151,15 +236,16 @@ function parseAndValidateJSON(jsonString, requiredFields = []) {
 /**
  * Call Claude API with retry logic
  */
-async function callClaudeWithRetry(messages, maxTokens, metadata = {}, attempts = 3) {
+async function callClaudeWithRetry(messages, maxTokens, metadata = {}) {
+  const maxAttempts = 4;
   let lastError;
-  const delays = [0, 1000, 2000]; // Exponential backoff: 0s, 1s, 2s
+  const delays = [2000, 10000, 30000]; // More aggressive backoff: 2s, 10s, 30s
 
-  for (let i = 0; i < attempts; i++) {
+  for (let i = 0; i < maxAttempts; i++) {
     try {
       // Wait before retry (except first attempt)
-      if (i > 0 && delays[i]) {
-        await new Promise(resolve => setTimeout(resolve, delays[i]));
+      if (i > 0 && delays[i - 1]) {
+        await new Promise(resolve => setTimeout(resolve, delays[i - 1]));
       }
 
       const response = await anthropic.messages.create({
@@ -184,15 +270,17 @@ async function callClaudeWithRetry(messages, maxTokens, metadata = {}, attempts 
       // Retry on rate limits, overloaded errors, or network timeouts
       const shouldRetry =
         error.status === 529 ||
+        error.status === 429 ||
         error.type === 'overloaded_error' ||
+        error.type === 'rate_limit_error' ||
         error.code === 'ETIMEDOUT' ||
         error.code === 'ECONNRESET';
 
-      if (!shouldRetry || i === attempts - 1) {
+      if (!shouldRetry || i === maxAttempts - 1) {
         throw error;
       }
 
-      console.log(`Claude API call failed (attempt ${i + 1}/${attempts}):`, error.message);
+      console.log(`Claude API call failed (attempt ${i + 1}/${maxAttempts}):`, error.message);
     }
   }
 
@@ -215,6 +303,59 @@ async function updateGenerationProgress(storyId, progressData) {
 
   if (error) {
     console.error('Failed to update generation progress:', error);
+  }
+}
+
+/**
+ * Retry a generation step with backoff and progress tracking
+ */
+async function retryGenerationStep(stepName, storyId, stepFn, maxRetries = 2) {
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    try {
+      return await stepFn();
+    } catch (error) {
+      const isLastAttempt = attempt > maxRetries;
+      console.error(`❌ ${stepName} failed (attempt ${attempt}/${maxRetries + 1}):`, error.message);
+
+      // Update progress with retry info
+      const { data: story } = await supabaseAdmin
+        .from('stories')
+        .select('generation_progress')
+        .eq('id', storyId)
+        .single();
+
+      const progress = story?.generation_progress || {};
+      progress.last_error = error.message;
+      progress.retry_count = (progress.retry_count || 0) + 1;
+      progress.last_retry = new Date().toISOString();
+      progress.last_updated = new Date().toISOString();
+
+      if (isLastAttempt) {
+        progress.current_step = 'generation_failed';
+        progress.error = error.message;
+
+        await supabaseAdmin
+          .from('stories')
+          .update({
+            generation_progress: progress,
+            status: 'error',
+            error_message: `${stepName} failed after ${maxRetries + 1} attempts: ${error.message}`
+          })
+          .eq('id', storyId);
+
+        throw error;
+      }
+
+      // Update progress and wait before retry
+      await supabaseAdmin
+        .from('stories')
+        .update({ generation_progress: progress })
+        .eq('id', storyId);
+
+      const backoffMs = attempt * 15000; // 15s, 30s
+      console.log(`⏳ Waiting ${backoffMs/1000}s before retry...`);
+      await new Promise(resolve => setTimeout(resolve, backoffMs));
+    }
   }
 }
 
@@ -1812,10 +1953,10 @@ Return ONLY a JSON object in this exact format:
  */
 async function orchestratePreGeneration(storyId, userId) {
   try {
-    // Step 1: Verify story and bible exist
+    // Step 1: Check current progress to determine where to resume
     const { data: story } = await supabaseAdmin
       .from('stories')
-      .select('*')
+      .select('generation_progress, bible_id, current_arc_id')
       .eq('id', storyId)
       .single();
 
@@ -1823,6 +1964,14 @@ async function orchestratePreGeneration(storyId, userId) {
       throw new Error('Story not found');
     }
 
+    const progress = story.generation_progress || {};
+    const chaptersAlreadyGenerated = progress.chapters_generated || 0;
+    const arcComplete = !!progress.arc_complete;
+    const bibleComplete = !!progress.bible_complete;
+
+    console.log(`📊 Resuming generation from: chapters=${chaptersAlreadyGenerated}, arc=${arcComplete}, bible=${bibleComplete}`);
+
+    // Verify bible exists
     const { data: bible } = await supabaseAdmin
       .from('story_bibles')
       .select('*')
@@ -1833,18 +1982,26 @@ async function orchestratePreGeneration(storyId, userId) {
       throw new Error('Bible not found');
     }
 
-    // Step 2: Generate Arc
-    await updateGenerationProgress(storyId, {
-      bible_complete: true,
-      arc_complete: false,
-      chapters_generated: 0,
-      current_step: 'generating_arc'
-    });
+    // Step 2: Generate Arc (skip if already complete)
+    if (!arcComplete) {
+      await updateGenerationProgress(storyId, {
+        bible_complete: true,
+        arc_complete: false,
+        chapters_generated: 0,
+        current_step: 'generating_arc'
+      });
 
-    await generateArcOutline(storyId, userId);
+      await retryGenerationStep('Arc generation', storyId, async () => {
+        return await generateArcOutline(storyId, userId);
+      });
 
-    // Step 3: Generate Chapters 1-6 (initial batch)
-    for (let i = 1; i <= 6; i++) {
+      console.log('✅ Arc generation complete');
+    } else {
+      console.log('⏭️ Skipping arc generation (already complete)');
+    }
+
+    // Step 3: Generate Chapters (resume from where we left off)
+    for (let i = chaptersAlreadyGenerated + 1; i <= 6; i++) {
       await updateGenerationProgress(storyId, {
         bible_complete: true,
         arc_complete: true,
@@ -1852,7 +2009,11 @@ async function orchestratePreGeneration(storyId, userId) {
         current_step: `generating_chapter_${i}`
       });
 
-      await generateChapter(storyId, i, userId);
+      await retryGenerationStep(`Chapter ${i} generation`, storyId, async () => {
+        return await generateChapter(storyId, i, userId);
+      });
+
+      console.log(`✅ Chapter ${i} generation complete`);
 
       // 1-second pause between chapters to avoid rate limits
       if (i < 6) {
@@ -1875,18 +2036,27 @@ async function orchestratePreGeneration(storyId, userId) {
       })
       .eq('id', storyId);
 
-    console.log(`Pre-generation complete for story ${storyId} - 6 chapters ready`);
+    console.log(`✅ Pre-generation complete for story ${storyId} - 6 chapters ready`);
   } catch (error) {
-    console.error(`Pre-generation failed for story ${storyId}:`, error);
+    console.error(`❌ Pre-generation failed for story ${storyId}:`, error);
 
-    // Update story with error status
-    await supabaseAdmin
+    // Error handling is now in retryGenerationStep, but catch any other errors
+    // Update story with error status if not already set
+    const { data: currentStory } = await supabaseAdmin
       .from('stories')
-      .update({
-        status: 'error',
-        error_message: error.message
-      })
-      .eq('id', storyId);
+      .select('status')
+      .eq('id', storyId)
+      .single();
+
+    if (currentStory?.status !== 'error') {
+      await supabaseAdmin
+        .from('stories')
+        .update({
+          status: 'error',
+          error_message: error.message
+        })
+        .eq('id', storyId);
+    }
 
     throw error;
   }
@@ -2202,107 +2372,169 @@ Return Book 2 Bible in this EXACT format:
  * Runs on server startup and every 30 minutes thereafter
  */
 async function resumeStalledGenerations() {
+  console.log('\n🔍 Checking for stalled/failed story generations...');
+
   const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
-  console.log('\n🔍 Checking for stalled story generations...');
-
   try {
-    // Find stories that are stuck in generation (last_updated > 10 minutes ago)
-    const { data: stalledStories, error } = await supabaseAdmin
+    // Query 1: Stalled stories (active but not updated recently)
+    const { data: stalledStories, error: stalledError } = await supabaseAdmin
       .from('stories')
       .select('id, user_id, title, generation_progress, status')
       .eq('status', 'active')
-      .lt('generation_progress->last_updated', tenMinutesAgo);
+      .not('generation_progress', 'is', null);
 
-    if (error) {
-      console.error('❌ Error querying for stalled stories:', error);
+    // Query 2: Failed stories eligible for retry
+    const { data: failedStories, error: failedError } = await supabaseAdmin
+      .from('stories')
+      .select('id, user_id, title, generation_progress, status')
+      .eq('status', 'error')
+      .not('generation_progress', 'is', null);
+
+    // Combine both sets
+    const allStories = [
+      ...(stalledStories || []),
+      ...(failedStories || [])
+    ];
+
+    // Filter to stories that actually need recovery
+    const needsRecovery = allStories.filter(story => {
+      const progress = story.generation_progress;
+      if (!progress) return false;
+
+      // Check if story has been retried too many times (max 3 health-check retries)
+      const healthCheckRetries = progress.health_check_retries || 0;
+      if (healthCheckRetries >= 3) {
+        return false; // Give up after 3 health-check level retries
+      }
+
+      // For stalled active stories: must be older than 10 minutes
+      if (story.status === 'active') {
+        const lastUpdated = new Date(progress.last_updated);
+        const isStalled = lastUpdated < new Date(tenMinutesAgo);
+        const isGenerating = progress.current_step?.startsWith('generating_');
+        return isStalled && isGenerating;
+      }
+
+      // For error'd stories: always eligible (up to retry limit)
+      if (story.status === 'error') {
+        return true;
+      }
+
+      // For stories with generation_failed step but still 'active' status
+      // (happens when DB constraint blocks the error status update)
+      if (progress.current_step === 'generation_failed') {
+        return true;
+      }
+
+      return false;
+    });
+
+    if (needsRecovery.length === 0) {
+      console.log('✅ No stalled or failed generations found');
       return;
     }
 
-    if (!stalledStories || stalledStories.length === 0) {
-      console.log('✅ No stalled generations found');
-      return;
-    }
+    console.log(`⚠️ Found ${needsRecovery.length} story generation(s) needing recovery`);
 
-    console.log(`⚠️  Found ${stalledStories.length} stalled story generation(s)`);
-
-    for (const story of stalledStories) {
-      const progress = story.generation_progress || {};
+    for (const story of needsRecovery) {
+      const progress = story.generation_progress;
       const currentStep = progress.current_step || 'unknown';
       const chaptersGenerated = progress.chapters_generated || 0;
+      const healthCheckRetries = progress.health_check_retries || 0;
 
-      console.log(`\n🔧 Resuming story: ${story.id} - "${story.title}"`);
-      console.log(`   Last step: ${currentStep}`);
-      console.log(`   Chapters generated: ${chaptersGenerated}/6`);
-      console.log(`   Last updated: ${progress.last_updated || 'unknown'}`);
+      console.log(`\n🔧 Recovering story: ${story.id} - "${story.title}"`);
+      console.log(`   Status: ${story.status}`);
+      console.log(`   Current step: ${currentStep}`);
+      console.log(`   Chapters: ${chaptersGenerated}/6`);
+      console.log(`   Health check retry: ${healthCheckRetries + 1}/3`);
 
       try {
-        // Determine what step to resume from
-        if (currentStep === 'generating_bible' || !progress.bible_complete) {
-          console.log('   ↻ Retrying bible generation...');
-          // Bible generation failed - need premise info to retry
-          const { data: storyWithPremise } = await supabaseAdmin
+        // Increment health check retry counter
+        const updatedProgress = {
+          ...progress,
+          health_check_retries: healthCheckRetries + 1,
+          last_health_check: new Date().toISOString()
+        };
+
+        // Reset story to active status for retry
+        await supabaseAdmin
+          .from('stories')
+          .update({
+            status: 'active',
+            error_message: null,
+            generation_progress: updatedProgress
+          })
+          .eq('id', story.id);
+
+        // Determine what needs to be retried based on progress
+        const hasBible = !!progress.bible_complete;
+        const hasArc = !!progress.arc_complete;
+
+        if (!hasBible) {
+          // Bible not complete — check if bible_id exists (bible was generated but progress wasn't updated)
+          const { data: storyData } = await supabaseAdmin
             .from('stories')
-            .select('premise_id')
+            .select('bible_id')
             .eq('id', story.id)
             .single();
 
-          if (storyWithPremise?.premise_id) {
-            // Delete the incomplete story record and let user retry from UI
-            console.log('   ⚠️  Bible generation incomplete - marking as failed');
+          if (storyData?.bible_id) {
+            console.log('   📖 Bible exists (bible_id found), skipping to arc generation');
+            // Bible exists, update progress and continue to arc
             await supabaseAdmin
               .from('stories')
               .update({
                 generation_progress: {
-                  ...progress,
-                  current_step: 'bible_generation_failed',
-                  last_updated: new Date().toISOString(),
-                  error: 'Generation interrupted - please try again'
+                  ...updatedProgress,
+                  bible_complete: true,
+                  current_step: 'generating_arc'
                 }
               })
               .eq('id', story.id);
-          }
-        } else if (currentStep === 'generating_arc' || !progress.arc_complete) {
-          console.log('   ↻ Retrying arc generation...');
-          await generateArcOutline(story.id, story.user_id);
-          console.log('   ✅ Arc generation resumed successfully');
 
-          // Continue to chapter generation
-          await orchestratePreGeneration(story.id, story.user_id);
-        } else if (currentStep === 'generating_chapters' && chaptersGenerated < 6) {
-          console.log(`   ↻ Resuming chapter generation from chapter ${chaptersGenerated + 1}...`);
-          await orchestratePreGeneration(story.id, story.user_id);
-          console.log('   ✅ Chapter generation resumed successfully');
-        } else {
-          console.log('   ℹ️  Story appears complete, updating status...');
-          await supabaseAdmin
-            .from('stories')
-            .update({
-              generation_progress: {
-                ...progress,
-                last_updated: new Date().toISOString()
-              }
-            })
-            .eq('id', story.id);
-        }
-      } catch (resumeError) {
-        console.error(`   ❌ Failed to resume story ${story.id}:`, resumeError.message);
-        // Update story with error info
-        await supabaseAdmin
-          .from('stories')
-          .update({
-            generation_progress: {
-              ...progress,
-              current_step: `${currentStep}_failed`,
-              last_updated: new Date().toISOString(),
-              error: resumeError.message
+            // Run orchestratePreGeneration — it should detect bible exists and skip to arc
+            orchestratePreGeneration(story.id, story.user_id).catch(err => {
+              console.error(`   ❌ Recovery failed for ${story.id}:`, err.message);
+            });
+          } else {
+            console.log('   📖 Bible missing — restarting full generation');
+            // Need full re-generation — call the existing pipeline
+            const { data: storyFull } = await supabaseAdmin
+              .from('stories')
+              .select('premise_id')
+              .eq('id', story.id)
+              .single();
+
+            if (storyFull?.premise_id) {
+              generateStoryBibleForExistingStory(story.id, storyFull.premise_id, story.user_id).catch(err => {
+                console.error(`   ❌ Bible re-generation failed for ${story.id}:`, err.message);
+              });
             }
-          })
-          .eq('id', story.id);
+          }
+        } else if (!hasArc) {
+          console.log('   🗺️ Bible complete, retrying arc generation');
+          // Re-run from arc generation onward
+          orchestratePreGeneration(story.id, story.user_id).catch(err => {
+            console.error(`   ❌ Arc recovery failed for ${story.id}:`, err.message);
+          });
+        } else if (chaptersGenerated < 6) {
+          console.log(`   📝 Arc complete, resuming from chapter ${chaptersGenerated + 1}`);
+          // Resume chapter generation
+          orchestratePreGeneration(story.id, story.user_id).catch(err => {
+            console.error(`   ❌ Chapter recovery failed for ${story.id}:`, err.message);
+          });
+        } else {
+          console.log('   ✅ Story appears complete, marking as active');
+        }
+
+        console.log(`   ✅ Recovery initiated for "${story.title}"`);
+      } catch (error) {
+        console.error(`   ❌ Failed to initiate recovery for ${story.id}:`, error.message);
       }
     }
 
-    console.log('\n✅ Stalled generation check complete\n');
+    console.log('\n✅ Stalled/failed generation check complete\n');
   } catch (error) {
     console.error('❌ Error in resumeStalledGenerations:', error);
   }
