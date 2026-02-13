@@ -1985,6 +1985,40 @@ async function orchestratePreGeneration(storyId, userId) {
       throw new Error('Bible not found');
     }
 
+    // Step 1.5: Generate cover image in background (non-blocking)
+    // Runs in parallel with arc/chapter generation
+    const { generateBookCover } = require('./cover-generation');
+
+    // Fetch reader's name from preferences
+    const { data: userPrefsData } = await supabaseAdmin
+      .from('user_preferences')
+      .select('preferences')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    const authorName = userPrefsData?.preferences?.name || 'Reader';
+
+    // Fetch story details for cover generation
+    const { data: storyData } = await supabaseAdmin
+      .from('stories')
+      .select('title, genre, description')
+      .eq('id', storyId)
+      .single();
+
+    // Fire cover generation without awaiting — it runs alongside arc + chapters
+    generateBookCover(storyId, {
+      title: storyData?.title || bible.title,
+      genre: storyData?.genre || 'fiction',
+      themes: bible.themes || [],
+      description: storyData?.description || bible.central_conflict?.description || ''
+    }, authorName).then(url => {
+      console.log(`🎨 Cover ready for story ${storyId}: ${url}`);
+    }).catch(err => {
+      console.error(`⚠️ Cover generation failed (non-blocking): ${err.message}`);
+    });
+
     // Step 2: Generate Arc (skip if already complete)
     if (!arcComplete) {
       await updateGenerationProgress(storyId, {
