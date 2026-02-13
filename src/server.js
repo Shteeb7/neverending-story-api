@@ -165,6 +165,27 @@ server.timeout = 300000; // 5 minutes
 server.keepAliveTimeout = 310000; // Slightly longer than timeout
 console.log('⏱️  Server timeout set to 5 minutes for AI operations');
 
+// Self-healing: Resume stalled story generations
+const { resumeStalledGenerations } = require('./services/generation');
+
+// Run on startup (catches stories interrupted by server restart)
+console.log('\n🔧 Running startup health check for stalled generations...');
+resumeStalledGenerations().catch(error => {
+  console.error('❌ Startup health check failed:', error);
+});
+
+// Run every 30 minutes thereafter
+const THIRTY_MINUTES = 30 * 60 * 1000;
+setInterval(() => {
+  console.log('\n🔧 Running scheduled health check for stalled generations...');
+  resumeStalledGenerations().catch(error => {
+    console.error('❌ Scheduled health check failed:', error);
+  });
+}, THIRTY_MINUTES);
+
+console.log('🔄 Self-healing enabled: checks every 30 minutes for stalled generations');
+console.log('=================================\n');
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully...');

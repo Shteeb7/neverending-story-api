@@ -1940,6 +1940,117 @@ Return Book 2 Bible in this EXACT format:
   return parsed;
 }
 
+/**
+ * Self-healing health check: Resume stalled story generations
+ * Runs on server startup and every 30 minutes thereafter
+ */
+async function resumeStalledGenerations() {
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+
+  console.log('\n🔍 Checking for stalled story generations...');
+
+  try {
+    // Find stories that are stuck in generation (last_updated > 10 minutes ago)
+    const { data: stalledStories, error } = await supabaseAdmin
+      .from('stories')
+      .select('id, user_id, title, generation_progress, status')
+      .eq('status', 'active')
+      .lt('generation_progress->last_updated', tenMinutesAgo);
+
+    if (error) {
+      console.error('❌ Error querying for stalled stories:', error);
+      return;
+    }
+
+    if (!stalledStories || stalledStories.length === 0) {
+      console.log('✅ No stalled generations found');
+      return;
+    }
+
+    console.log(`⚠️  Found ${stalledStories.length} stalled story generation(s)`);
+
+    for (const story of stalledStories) {
+      const progress = story.generation_progress || {};
+      const currentStep = progress.current_step || 'unknown';
+      const chaptersGenerated = progress.chapters_generated || 0;
+
+      console.log(`\n🔧 Resuming story: ${story.id} - "${story.title}"`);
+      console.log(`   Last step: ${currentStep}`);
+      console.log(`   Chapters generated: ${chaptersGenerated}/6`);
+      console.log(`   Last updated: ${progress.last_updated || 'unknown'}`);
+
+      try {
+        // Determine what step to resume from
+        if (currentStep === 'generating_bible' || !progress.bible_complete) {
+          console.log('   ↻ Retrying bible generation...');
+          // Bible generation failed - need premise info to retry
+          const { data: storyWithPremise } = await supabaseAdmin
+            .from('stories')
+            .select('premise_id')
+            .eq('id', story.id)
+            .single();
+
+          if (storyWithPremise?.premise_id) {
+            // Delete the incomplete story record and let user retry from UI
+            console.log('   ⚠️  Bible generation incomplete - marking as failed');
+            await supabaseAdmin
+              .from('stories')
+              .update({
+                generation_progress: {
+                  ...progress,
+                  current_step: 'bible_generation_failed',
+                  last_updated: new Date().toISOString(),
+                  error: 'Generation interrupted - please try again'
+                }
+              })
+              .eq('id', story.id);
+          }
+        } else if (currentStep === 'generating_arc' || !progress.arc_complete) {
+          console.log('   ↻ Retrying arc generation...');
+          await generateArcOutline(story.id, story.user_id);
+          console.log('   ✅ Arc generation resumed successfully');
+
+          // Continue to chapter generation
+          await orchestratePreGeneration(story.id, story.user_id);
+        } else if (currentStep === 'generating_chapters' && chaptersGenerated < 6) {
+          console.log(`   ↻ Resuming chapter generation from chapter ${chaptersGenerated + 1}...`);
+          await orchestratePreGeneration(story.id, story.user_id);
+          console.log('   ✅ Chapter generation resumed successfully');
+        } else {
+          console.log('   ℹ️  Story appears complete, updating status...');
+          await supabaseAdmin
+            .from('stories')
+            .update({
+              generation_progress: {
+                ...progress,
+                last_updated: new Date().toISOString()
+              }
+            })
+            .eq('id', story.id);
+        }
+      } catch (resumeError) {
+        console.error(`   ❌ Failed to resume story ${story.id}:`, resumeError.message);
+        // Update story with error info
+        await supabaseAdmin
+          .from('stories')
+          .update({
+            generation_progress: {
+              ...progress,
+              current_step: `${currentStep}_failed`,
+              last_updated: new Date().toISOString(),
+              error: resumeError.message
+            }
+          })
+          .eq('id', story.id);
+      }
+    }
+
+    console.log('\n✅ Stalled generation check complete\n');
+  } catch (error) {
+    console.error('❌ Error in resumeStalledGenerations:', error);
+  }
+}
+
 module.exports = {
   generatePremises,
   generateStoryBible,
@@ -1950,6 +2061,7 @@ module.exports = {
   generateSequelBible,
   analyzeUserPreferences,
   getUserWritingPreferences,
+  resumeStalledGenerations,
   // Export utilities for testing
   calculateCost,
   parseAndValidateJSON,
