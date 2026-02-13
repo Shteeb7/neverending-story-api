@@ -219,17 +219,18 @@ router.post('/:storyId/generate-next', authenticateUser, asyncHandler(async (req
 router.post('/:storyId/progress', authenticateUser, asyncHandler(async (req, res) => {
   const { storyId } = req.params;
   const { userId } = req;
-  const { chapterId, position, percentComplete } = req.body;
+  const { chapterNumber, scrollPosition } = req.body;
 
-  const { data, error } = await supabaseAdmin
+  const { data, error} = await supabaseAdmin
     .from('reading_progress')
     .upsert({
       user_id: userId,
       story_id: storyId,
-      chapter_id: chapterId,
-      position,
-      percent_complete: percentComplete,
+      chapter_number: chapterNumber,
+      scroll_position: scrollPosition,
       updated_at: new Date().toISOString()
+    }, {
+      onConflict: 'user_id,story_id'
     })
     .select()
     .single();
