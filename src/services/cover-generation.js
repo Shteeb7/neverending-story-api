@@ -49,11 +49,11 @@ async function generateBookCover(storyId, storyDetails, authorName) {
   const prompt = buildCoverPrompt(title, genre, themes, description, authorName);
 
   const response = await openai.images.generate({
-    model: 'gpt-image-1',
+    model: 'dall-e-3',
     prompt: prompt,
     n: 1,
-    size: '1024x1536', // Portrait aspect ratio for book covers
-    quality: 'medium'
+    size: '1024x1792', // Portrait aspect ratio for book covers (dall-e-3 supports 1024x1792)
+    quality: 'standard' // dall-e-3 uses 'standard' or 'hd', not 'medium'
   });
 
   const imageUrl = response.data[0].url;

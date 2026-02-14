@@ -16,7 +16,7 @@ async function backfillCovers() {
       id,
       title,
       user_id,
-      story_bibles (
+      story_bibles!stories_bible_id_fkey (
         title,
         themes,
         central_conflict
