@@ -52,33 +52,66 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
 
 /**
  * POST /feedback/checkpoint
- * Submit reader feedback at chapter checkpoints (3, 6, 9)
+ * Submit reader feedback at chapter checkpoints (2, 5, 8) with dimension-based feedback
+ *
+ * Accepts both new format (dimension fields) and old format (response field) for backward compatibility
  */
 router.post('/checkpoint', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req;
-  const { storyId, checkpoint, response, followUpAction, voiceTranscript, voiceSessionId } = req.body;
+  const {
+    storyId,
+    checkpoint,
+    // New dimension fields (Adaptive Reading Engine)
+    pacing,
+    tone,
+    character,
+    protagonistName,
+    // Old fields (backward compatibility)
+    response,
+    followUpAction,
+    voiceTranscript,
+    voiceSessionId
+  } = req.body;
 
-  if (!storyId || !checkpoint || !response) {
+  if (!storyId || !checkpoint) {
     return res.status(400).json({
       success: false,
-      error: 'storyId, checkpoint, and response are required'
+      error: 'storyId and checkpoint are required'
     });
   }
 
-  console.log(`📊 Feedback: story=${storyId}, checkpoint=${checkpoint}, response=${response}`);
+  // For backward compatibility: accept either dimension fields OR old response field
+  const hasDimensions = pacing || tone || character;
+  const hasOldFormat = response;
 
-  // Store feedback
+  if (!hasDimensions && !hasOldFormat) {
+    return res.status(400).json({
+      success: false,
+      error: 'Either dimension fields (pacing, tone, character) or response field is required'
+    });
+  }
+
+  console.log(`📊 Feedback: story=${storyId}, checkpoint=${checkpoint}, ${hasDimensions ? `dimensions={pacing:${pacing}, tone:${tone}, character:${character}}` : `response=${response}`}`);
+
+  // Store feedback with dimensions
+  const feedbackData = {
+    user_id: userId,
+    story_id: storyId,
+    checkpoint,
+    response: response || null, // Keep for backward compatibility
+    follow_up_action: followUpAction || null,
+    voice_transcript: voiceTranscript || null,
+    voice_session_id: voiceSessionId || null,
+    // New dimension fields
+    pacing_feedback: pacing || null,
+    tone_feedback: tone || null,
+    character_feedback: character || null,
+    protagonist_name: protagonistName || null
+  };
+
   const { data, error } = await supabaseAdmin
     .from('story_feedback')
-    .upsert({
-      user_id: userId,
-      story_id: storyId,
-      checkpoint,
-      response,
-      follow_up_action: followUpAction || null,
-      voice_transcript: voiceTranscript || null,
-      voice_session_id: voiceSessionId || null
-    }, {
+    .upsert(feedbackData, {
       onConflict: 'user_id,story_id,checkpoint'
     })
     .select()
@@ -88,38 +121,91 @@ router.post('/checkpoint', authenticateUser, asyncHandler(async (req, res) => {
     throw new Error(`Failed to store feedback: ${error.message}`);
   }
 
-  // Trigger chapter generation if appropriate
-  let chaptersToGenerate = [];
+  // New trigger logic: chapter_2 → 4-6, chapter_5 → 7-9, chapter_8 → 10-12
+  // Always generate (no satisfaction gate)
+  let startChapter = null;
+  let endChapter = null;
 
-  if (checkpoint === 'chapter_3' && (response === 'Great' || response === 'Fantastic' || followUpAction === 'keep_reading')) {
-    chaptersToGenerate = [7, 8, 9];
-  } else if (checkpoint === 'chapter_6' && (response === 'Great' || response === 'Fantastic' || followUpAction === 'keep_reading')) {
-    chaptersToGenerate = [10, 11, 12];
+  if (checkpoint === 'chapter_2') {
+    startChapter = 4;
+    endChapter = 6;
+  } else if (checkpoint === 'chapter_5') {
+    startChapter = 7;
+    endChapter = 9;
+  } else if (checkpoint === 'chapter_8') {
+    startChapter = 10;
+    endChapter = 12;
   }
 
-  if (chaptersToGenerate.length > 0) {
-    console.log(`🚀 Triggering generation of chapters ${chaptersToGenerate.join(', ')}`);
-    const { generateChapter } = require('../services/generation');
+  // For backward compatibility: also handle old checkpoint names (chapter_3, chapter_6)
+  if (checkpoint === 'chapter_3') {
+    startChapter = 7;
+    endChapter = 9;
+  } else if (checkpoint === 'chapter_6') {
+    startChapter = 10;
+    endChapter = 12;
+  }
+
+  const shouldGenerate = startChapter !== null && endChapter !== null;
+
+  if (shouldGenerate) {
+    console.log(`🚀 Triggering batch generation: chapters ${startChapter}-${endChapter}`);
+    const { buildCourseCorrections, generateBatch } = require('../services/generation');
 
     (async () => {
       try {
-        for (const chapterNum of chaptersToGenerate) {
-          await generateChapter(storyId, chapterNum, userId);
-          if (chapterNum !== chaptersToGenerate[chaptersToGenerate.length - 1]) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-          }
-        }
-        console.log(`✅ Generated chapters ${chaptersToGenerate.join(', ')}`);
+        // Fetch all previous checkpoint feedback for this story to build accumulated corrections
+        const { data: previousFeedback } = await supabaseAdmin
+          .from('story_feedback')
+          .select('checkpoint, pacing_feedback, tone_feedback, character_feedback, protagonist_name, created_at')
+          .eq('user_id', userId)
+          .eq('story_id', storyId)
+          .in('checkpoint', ['chapter_2', 'chapter_5', 'chapter_8', 'chapter_3', 'chapter_6', 'chapter_9']) // Include old checkpoint names
+          .order('created_at', { ascending: true });
+
+        const feedbackHistory = previousFeedback || [];
+
+        // Build course corrections from accumulated feedback
+        const courseCorrections = buildCourseCorrections(feedbackHistory);
+
+        console.log(`📝 Course corrections built from ${feedbackHistory.length} checkpoint(s)`);
+
+        // Generate batch with course corrections
+        await generateBatch(storyId, startChapter, endChapter, userId, courseCorrections);
+
+        console.log(`✅ Batch generation complete: chapters ${startChapter}-${endChapter}`);
       } catch (error) {
-        console.error(`❌ Failed to generate chapters: ${error.message}`);
+        console.error(`❌ Failed to generate batch: ${error.message}`);
       }
     })();
+  }
+
+  // Build human-readable course correction summary for response
+  let courseCorrectionsResponse = null;
+  if (hasDimensions) {
+    courseCorrectionsResponse = {};
+    if (pacing && pacing !== 'hooked') {
+      courseCorrectionsResponse.pacing = pacing === 'slow'
+        ? 'Increasing pace — entering scenes later, more hooks'
+        : 'Adding breathing room — more sensory detail, emotional reflection';
+    }
+    if (tone && tone !== 'right') {
+      courseCorrectionsResponse.tone = tone === 'serious'
+        ? 'Adding humor and levity through character interactions'
+        : 'Deepening emotional stakes and tension';
+    }
+    if (character && character !== 'love') {
+      courseCorrectionsResponse.character = character === 'warming'
+        ? 'Adding more interior thought and vulnerability'
+        : 'Increasing protagonist agency and competence';
+    }
   }
 
   res.json({
     success: true,
     feedback: data,
-    generatingChapters: chaptersToGenerate
+    generatingChapters: shouldGenerate ? Array.from({ length: endChapter - startChapter + 1 }, (_, i) => startChapter + i) : [],
+    courseCorrections: courseCorrectionsResponse
   });
 }));
 

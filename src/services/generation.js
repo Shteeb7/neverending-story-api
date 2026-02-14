@@ -1448,10 +1448,20 @@ Abandoned chapters (not completed): ${abandonedChapters.length} chapters (${aban
     `.trim();
   }
 
-  // Step 5: Build analysis prompt
-  const feedbackSummary = feedbackRows?.map(f =>
-    `Story: ${f.story_id.slice(0, 8)}..., Checkpoint: ${f.checkpoint}, Response: ${f.response}${f.follow_up_action ? `, Action: ${f.follow_up_action}` : ''}`
-  ).join('\n') || 'No checkpoint feedback';
+  // Step 5: Build analysis prompt (with Adaptive Reading Engine dimension data)
+  const feedbackSummary = feedbackRows?.map(f => {
+    // Include dimension feedback (Adaptive Reading Engine) alongside old response field
+    const dimensions = [];
+    if (f.pacing_feedback) dimensions.push(`Pacing: ${f.pacing_feedback}`);
+    if (f.tone_feedback) dimensions.push(`Tone: ${f.tone_feedback}`);
+    if (f.character_feedback) dimensions.push(`Character: ${f.character_feedback}`);
+
+    const dimensionStr = dimensions.length > 0 ? `, ${dimensions.join(', ')}` : '';
+    const responseStr = f.response ? `Response: ${f.response}` : 'Response: N/A';
+    const actionStr = f.follow_up_action ? `, Action: ${f.follow_up_action}` : '';
+
+    return `Story: ${f.story_id.slice(0, 8)}..., Checkpoint: ${f.checkpoint}, ${responseStr}${dimensionStr}${actionStr}`;
+  }).join('\n') || 'No checkpoint feedback';
 
   const interviewSummary = interviewRows?.map(i =>
     `Story: ${i.story_id.slice(0, 8)}..., Book ${i.book_number || 1}\nTranscript: ${i.transcript?.substring(0, 500) || 'N/A'}...\nPreferences: ${JSON.stringify(i.preferences_extracted || {})}`
@@ -1503,6 +1513,15 @@ WHAT TO AVOID: Are there patterns in what they dislike or rate as "Meh"?
 CUSTOM INSTRUCTIONS: Generate 3-5 specific writing instructions that would make future stories better for THIS reader.
 AVOID PATTERNS: Generate 2-3 specific things to avoid for this reader.
 DISCOVERY PATTERN: Based on premise_tier_history, does this reader tend toward comfort picks or do they embrace wildcards? Are they happier (better feedback, more engagement) with familiar or unfamiliar stories? Summarize in one sentence.
+
+DIMENSION FEEDBACK PATTERNS (Adaptive Reading Engine — HIGHEST WEIGHT):
+Look at the pacing_feedback, tone_feedback, and character_feedback columns across checkpoints. These are the STRONGEST signals because they're specific and structured:
+- If a reader consistently says "serious" for tone_feedback, STRONGLY weight humor_level HIGHER in custom_instructions (they want more humor)
+- If a reader consistently says "slow" for pacing_feedback, STRONGLY weight action_density HIGHER (they want faster pacing)
+- If a reader consistently says "fast" for pacing_feedback, weight description_ratio HIGHER (they want more breathing room)
+- If a reader consistently says "warming" or "not_clicking" for character_feedback, add custom_instructions about deeper character interiority and vulnerability
+- Checkpoint corrections that persisted across multiple checkpoints (e.g., "slow" at chapter_2 AND chapter_5) are the STRONGEST signal
+- Dimension feedback is MORE RELIABLE than old "Meh/Great/Fantastic" responses because it's granular and actionable
 
 Return ONLY a JSON object:
 {
@@ -1726,9 +1745,166 @@ async function updateDiscoveryTolerance(userId) {
 }
 
 /**
- * Generate a single chapter with quality review
+ * Build course correction XML block from checkpoint feedback history
+ * @param {Array} feedbackHistory - Array of checkpoint feedback objects with dimension fields
+ * @returns {string} Formatted course correction text for prompt injection
  */
-async function generateChapter(storyId, chapterNumber, userId) {
+function buildCourseCorrections(feedbackHistory) {
+  if (!feedbackHistory || feedbackHistory.length === 0) {
+    return '';
+  }
+
+  // Mapping dimension values to instruction text
+  const pacingInstructions = {
+    'hooked': 'Maintain current pacing parameters — reader is engaged',
+    'slow': 'Enter scenes later, leave earlier. Shorter paragraphs. More cliffhanger chapter endings. Reduce descriptive passages. Increase action-to-reflection ratio.',
+    'fast': 'Add sensory grounding moments. Longer scene transitions. More internal reflection. Let emotional beats land before moving on.'
+  };
+
+  const toneInstructions = {
+    'right': 'Maintain current tone parameters — reader finds it appropriate',
+    'serious': 'Add moments of humor through dialogue and character interactions. Give protagonist or a secondary character dry wit. Include at least one moment of comic relief per chapter. Lighter metaphors.',
+    'light': 'Deepen emotional stakes. More consequence to actions. Richer internal conflict. Reduce banter, increase tension.'
+  };
+
+  const characterInstructions = {
+    'love': 'Maintain current characterization — it\'s working',
+    'warming': 'Add more interior thought and vulnerability. Show relatable mundane moments alongside the extraordinary. Reveal backstory through action, not exposition.',
+    'not_clicking': 'Increase protagonist agency and decisiveness. Show more competence. Add moments where they surprise the reader. Lean into their unique voice.'
+  };
+
+  // Single checkpoint case
+  if (feedbackHistory.length === 1) {
+    const fb = feedbackHistory[0];
+    let sections = [];
+
+    if (fb.pacing_feedback && pacingInstructions[fb.pacing_feedback]) {
+      const instruction = fb.pacing_feedback === 'hooked'
+        ? pacingInstructions[fb.pacing_feedback]
+        : `PACING (reader said: ${fb.pacing_feedback}):\n  - ${pacingInstructions[fb.pacing_feedback].split('. ').join('\n  - ')}`;
+      sections.push(instruction);
+    }
+
+    if (fb.tone_feedback && toneInstructions[fb.tone_feedback]) {
+      const instruction = fb.tone_feedback === 'right'
+        ? toneInstructions[fb.tone_feedback]
+        : `TONE (reader said: too ${fb.tone_feedback}):\n  - ${toneInstructions[fb.tone_feedback].split('. ').join('\n  - ')}`;
+      sections.push(instruction);
+    }
+
+    if (fb.character_feedback && characterInstructions[fb.character_feedback]) {
+      const instruction = fb.character_feedback === 'love'
+        ? characterInstructions[fb.character_feedback]
+        : `CHARACTER (reader said: ${fb.character_feedback.replace('_', ' ')}):\n  - ${characterInstructions[fb.character_feedback].split('. ').join('\n  - ')}`;
+      sections.push(instruction);
+    }
+
+    if (sections.length === 0) return '';
+
+    return `The reader has provided feedback on the story so far. Adjust your writing
+to address these preferences while maintaining the story bible and arc:
+
+${sections.join('\n\n')}
+
+IMPORTANT: These are adjustments to HOW the story is told, not WHAT happens.
+The story bible, arc outline, and plot events remain exactly as planned.
+Only the craft of the telling changes.`;
+  }
+
+  // Multiple checkpoints case - show trajectory and accumulated corrections
+  const checkpointLabels = {
+    'chapter_2': 'CHECKPOINT 1 (after Ch 2)',
+    'chapter_5': 'CHECKPOINT 2 (after Ch 5)',
+    'chapter_8': 'CHECKPOINT 3 (after Ch 8)'
+  };
+
+  let history = feedbackHistory.map(fb => {
+    const label = checkpointLabels[fb.checkpoint] || fb.checkpoint;
+    const pacing = fb.pacing_feedback ? `Pacing: ${fb.pacing_feedback}` : null;
+    const tone = fb.tone_feedback ? `Tone: ${fb.tone_feedback}` : null;
+    const character = fb.character_feedback ? `Character: ${fb.character_feedback}` : null;
+
+    return `${label}:
+  ${[pacing, tone, character].filter(Boolean).join('\n  ')}`;
+  }).join('\n\n');
+
+  // Determine current directives based on latest feedback
+  const latest = feedbackHistory[feedbackHistory.length - 1];
+  let directives = [];
+
+  if (latest.pacing_feedback && pacingInstructions[latest.pacing_feedback]) {
+    const prefix = latest.pacing_feedback === 'hooked' ? '- ' : '- ';
+    directives.push(`${prefix}${pacingInstructions[latest.pacing_feedback]}`);
+  }
+
+  if (latest.tone_feedback && toneInstructions[latest.tone_feedback]) {
+    const prefix = latest.tone_feedback === 'right' ? '- ' : '- ';
+    directives.push(`${prefix}${toneInstructions[latest.tone_feedback]}`);
+  }
+
+  if (latest.character_feedback && characterInstructions[latest.character_feedback]) {
+    const prefix = latest.character_feedback === 'love' ? '- ' : '- ';
+    directives.push(`${prefix}${characterInstructions[latest.character_feedback]}`);
+  }
+
+  return `Feedback history across this story:
+
+${history}
+
+Current writing directives (accumulated):
+${directives.join('\n')}
+
+IMPORTANT: These are adjustments to HOW the story is told, not WHAT happens.
+The story bible, arc outline, and plot events remain exactly as planned.
+Only the craft of the telling changes.`;
+}
+
+/**
+ * Generate a batch of chapters (3 at a time) with optional course corrections
+ * @param {string} storyId - The story ID
+ * @param {number} startChapter - First chapter number to generate
+ * @param {number} endChapter - Last chapter number to generate (inclusive)
+ * @param {string} userId - User ID for cost tracking
+ * @param {string} courseCorrections - Optional course correction text to inject into prompts
+ */
+async function generateBatch(storyId, startChapter, endChapter, userId, courseCorrections = null) {
+  const { data: story } = await supabaseAdmin
+    .from('stories')
+    .select('title')
+    .eq('id', storyId)
+    .single();
+
+  const storyTitle = story?.title || 'Unknown';
+
+  console.log(`🚀 [${storyTitle}] Batch generation: chapters ${startChapter}-${endChapter}${courseCorrections ? ' with course corrections' : ''}`);
+
+  for (let i = startChapter; i <= endChapter; i++) {
+    console.log(`📖 [${storyTitle}] Chapter ${i}: starting generation...`);
+    const chapterStartTime = Date.now();
+
+    const chapter = await generateChapter(storyId, i, userId, courseCorrections);
+
+    const chapterDuration = ((Date.now() - chapterStartTime) / 1000).toFixed(1);
+    const charCount = chapter?.content?.length || 0;
+    console.log(`📖 [${storyTitle}] Chapter ${i}: saved ✅ (${charCount.toLocaleString()} chars, ${chapterDuration}s)`);
+
+    // 1-second pause between chapters
+    if (i < endChapter) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+
+  console.log(`✅ [${storyTitle}] Batch complete: chapters ${startChapter}-${endChapter}`);
+}
+
+/**
+ * Generate a single chapter with quality review
+ * @param {string} storyId - The story ID
+ * @param {number} chapterNumber - The chapter number to generate
+ * @param {string} userId - User ID for cost tracking
+ * @param {string} courseCorrections - Optional course correction text to inject into prompt (default: null)
+ */
+async function generateChapter(storyId, chapterNumber, userId, courseCorrections = null) {
   // Fetch story
   const { data: story, error: storyError } = await supabaseAdmin
     .from('stories')
@@ -1819,6 +1995,16 @@ async function generateChapter(storyId, chapterNumber, userId) {
   Dialogue preference: ${writingPrefs.preferred_dialogue_style?.summary || 'No data'}
   Complexity: ${writingPrefs.preferred_complexity?.summary || 'No data'}
 </learned_reader_preferences>`;
+  }
+
+  // Build course correction block from real-time checkpoint feedback
+  let courseCorrectionsBlock = '';
+  if (courseCorrections) {
+    courseCorrectionsBlock = `
+
+<reader_course_correction>
+  ${courseCorrections}
+</reader_course_correction>`;
   }
 
   const generatePrompt = `You are an award-winning fiction author known for prose that shows instead of tells, vivid character work, and compulsive page-turning narratives.
@@ -1977,7 +2163,7 @@ ${previousContext}
 
   Adjust vocabulary complexity, sentence structure, and thematic sophistication to match this age range. For children (8-12), keep sentences varied but accessible, avoid abstract philosophical digressions, and ground emotions in concrete physical experience. For teens (13-17), you can explore more complex interior conflict and moral ambiguity. For adults (18+), full range of vocabulary and thematic depth.
 </target_age_range>
-${learnedPreferencesBlock}
+${learnedPreferencesBlock}${courseCorrectionsBlock}
 
 Return ONLY a JSON object in this exact format:
 {
@@ -2260,7 +2446,7 @@ async function orchestratePreGeneration(storyId, userId) {
     const arcComplete = !!progress.arc_complete;
     const bibleComplete = !!progress.bible_complete;
 
-    console.log(`📖 [${storyTitle}] Pipeline started (chapters=${chaptersAlreadyGenerated}/6, arc=${arcComplete}, bible=${bibleComplete})`);
+    console.log(`📖 [${storyTitle}] Pipeline started (chapters=${chaptersAlreadyGenerated}/3, arc=${arcComplete}, bible=${bibleComplete})`);
 
     // Verify bible exists
     const { data: bible } = await supabaseAdmin
@@ -2335,7 +2521,7 @@ async function orchestratePreGeneration(storyId, userId) {
     }
 
     // Step 3: Generate Chapters (resume from where we left off)
-    for (let i = chaptersAlreadyGenerated + 1; i <= 6; i++) {
+    for (let i = chaptersAlreadyGenerated + 1; i <= 3; i++) {
       await updateGenerationProgress(storyId, {
         bible_complete: true,
         arc_complete: true,
@@ -2343,7 +2529,7 @@ async function orchestratePreGeneration(storyId, userId) {
         current_step: `generating_chapter_${i}`
       });
 
-      console.log(`📖 [${storyTitle}] Chapter ${i}/6: starting generation...`);
+      console.log(`📖 [${storyTitle}] Chapter ${i}/3: starting generation...`);
       const chapterStartTime = Date.now();
 
       const chapter = await retryGenerationStep(`Chapter ${i} generation`, storyId, storyTitle, async () => {
@@ -2352,15 +2538,15 @@ async function orchestratePreGeneration(storyId, userId) {
 
       const chapterDuration = ((Date.now() - chapterStartTime) / 1000).toFixed(1);
       const charCount = chapter?.content?.length || 0;
-      console.log(`📖 [${storyTitle}] Chapter ${i}/6: saved ✅ (${charCount.toLocaleString()} chars, ${chapterDuration}s)`);
+      console.log(`📖 [${storyTitle}] Chapter ${i}/3: saved ✅ (${charCount.toLocaleString()} chars, ${chapterDuration}s)`);
 
       // 1-second pause between chapters to avoid rate limits
-      if (i < 6) {
+      if (i < 3) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
-    // Mark story as active (with 6 chapters ready)
+    // Mark story as active (with 3 chapters ready)
     await supabaseAdmin
       .from('stories')
       .update({
@@ -2368,8 +2554,8 @@ async function orchestratePreGeneration(storyId, userId) {
         generation_progress: {
           bible_complete: true,
           arc_complete: true,
-          chapters_generated: 6,
-          current_step: 'awaiting_chapter_3_feedback',
+          chapters_generated: 3,
+          current_step: 'awaiting_chapter_2_feedback',
           last_updated: new Date().toISOString()
         }
       })
@@ -2947,6 +3133,8 @@ module.exports = {
   getUserWritingPreferences,
   updateDiscoveryTolerance,
   resumeStalledGenerations,
+  buildCourseCorrections,
+  generateBatch,
   // Export utilities for testing
   calculateCost,
   parseAndValidateJSON,

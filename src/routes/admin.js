@@ -2,6 +2,11 @@ const express = require('express');
 const { supabaseAdmin } = require('../config/supabase');
 const { asyncHandler } = require('../middleware/error-handler');
 const { authenticateUser } = require('../middleware/auth');
+const {
+  generateWritingIntelligenceSnapshot,
+  generateWritingIntelligenceReport,
+  logPromptAdjustment
+} = require('../services/writing-intelligence');
 
 const router = express.Router();
 
@@ -128,6 +133,75 @@ router.get('/health', asyncHandler(async (req, res) => {
   }
 
   res.json(health);
+}));
+
+/**
+ * GET /admin/writing-intelligence
+ * Generate and return a comprehensive writing intelligence report
+ * Analyzes aggregate reader feedback patterns and recommends prompt adjustments
+ */
+router.get('/writing-intelligence', authenticateUser, asyncHandler(async (req, res) => {
+  // TODO: In production, add admin role check here
+  console.log('📊 Generating writing intelligence report for admin...');
+
+  const result = await generateWritingIntelligenceReport();
+
+  res.json(result);
+}));
+
+/**
+ * POST /admin/writing-intelligence/snapshot
+ * Trigger generation of a new writing intelligence snapshot
+ * Aggregates all dimension feedback data and calculates distributions/metrics
+ */
+router.post('/writing-intelligence/snapshot', authenticateUser, asyncHandler(async (req, res) => {
+  // TODO: In production, add admin role check here
+  console.log('📊 Triggering writing intelligence snapshot generation...');
+
+  const result = await generateWritingIntelligenceSnapshot();
+
+  res.json(result);
+}));
+
+/**
+ * POST /admin/writing-intelligence/log-adjustment
+ * Log a manual prompt adjustment made based on intelligence report
+ * Records what changed and why for future analysis
+ */
+router.post('/writing-intelligence/log-adjustment', authenticateUser, asyncHandler(async (req, res) => {
+  // TODO: In production, add admin role check here
+  const {
+    adjustmentType,
+    genre,
+    description,
+    previousValue,
+    newValue,
+    dataBasis,
+    snapshotId
+  } = req.body;
+
+  // Validate required fields
+  if (!adjustmentType || !description) {
+    return res.status(400).json({
+      success: false,
+      error: 'adjustmentType and description are required'
+    });
+  }
+
+  console.log('📝 Logging prompt adjustment:', description);
+
+  const result = await logPromptAdjustment(
+    adjustmentType,
+    genre,
+    description,
+    previousValue,
+    newValue,
+    dataBasis,
+    snapshotId,
+    'manual' // appliedBy
+  );
+
+  res.json(result);
 }));
 
 module.exports = router;
