@@ -360,10 +360,33 @@ async function retryGenerationStep(stepName, storyId, storyTitle, stepFn, maxRet
         .single();
 
       const progress = story?.generation_progress || {};
+      const previousError = progress.last_error;
+
       progress.last_error = error.message;
+      progress.last_error_at = new Date().toISOString();
       progress.retry_count = (progress.retry_count || 0) + 1;
       progress.last_retry = new Date().toISOString();
       progress.last_updated = new Date().toISOString();
+
+      // CIRCUIT BREAKER: Same-error detection
+      // If error is identical to previous error, it's a code bug not a transient failure
+      if (attempt > 1 && previousError === error.message) {
+        console.log(`🛑 [${storyTitle}] Same error repeated — this is a code bug, not a transient failure. Stopping.`);
+        progress.current_step = 'permanently_failed';
+        progress.permanently_failed_at = new Date().toISOString();
+        progress.repeated_error = true;
+
+        await supabaseAdmin
+          .from('stories')
+          .update({
+            generation_progress: progress,
+            status: 'error',
+            error_message: `${stepName} failed with repeated error (code bug, not transient): ${error.message}`
+          })
+          .eq('id', storyId);
+
+        throw error; // Stop immediately, don't continue retrying
+      }
 
       if (isLastAttempt) {
         progress.current_step = 'generation_failed';
@@ -2364,16 +2387,23 @@ async function orchestratePreGeneration(storyId, userId) {
     // Update story with error status if not already set
     const { data: currentStory } = await supabaseAdmin
       .from('stories')
-      .select('status')
+      .select('status, generation_progress')
       .eq('id', storyId)
       .single();
 
     if (currentStory?.status !== 'error') {
+      const progress = currentStory?.generation_progress || {};
       await supabaseAdmin
         .from('stories')
         .update({
           status: 'error',
-          error_message: error.message
+          error_message: error.message,
+          generation_progress: {
+            ...progress,
+            last_error: error.message,
+            last_error_at: new Date().toISOString(),
+            current_step: 'generation_failed'
+          }
         })
         .eq('id', storyId);
     }
@@ -2777,12 +2807,31 @@ async function resumeStalledGenerations() {
       const currentStep = progress.current_step || 'unknown';
       const chaptersGenerated = progress.chapters_generated || 0;
       const healthCheckRetries = progress.health_check_retries || 0;
+      const lastError = progress.last_error;
 
       // Calculate stall duration
       const lastUpdated = new Date(progress.last_updated || story.created_at);
       const stallMinutes = Math.round((Date.now() - lastUpdated.getTime()) / (1000 * 60));
 
-      console.log(`🏥 Recovering: [${story.title}] (stuck at: ${currentStep}, stalled for ${stallMinutes}m)`);
+      // CIRCUIT BREAKER: Hard cap on recovery attempts (max 2 total)
+      if (healthCheckRetries >= 2) {
+        console.log(`🛑 [${story.title}] Max recovery attempts reached (${healthCheckRetries}). Giving up.`);
+        await supabaseAdmin
+          .from('stories')
+          .update({
+            status: 'error',
+            error_message: `Generation failed permanently after ${healthCheckRetries} recovery attempts. Last error: ${lastError || 'unknown'}. Needs manual investigation.`,
+            generation_progress: {
+              ...progress,
+              current_step: 'permanently_failed',
+              permanently_failed_at: new Date().toISOString()
+            }
+          })
+          .eq('id', story.id);
+        continue; // Skip this story, DO NOT retry
+      }
+
+      console.log(`🏥 Recovering: [${story.title}] (stuck at: ${currentStep}, stalled for ${stallMinutes}m, attempt ${healthCheckRetries + 1}/2)`);
 
       try {
         // Increment health check retry counter and set recovery lock
@@ -2790,6 +2839,7 @@ async function resumeStalledGenerations() {
           ...progress,
           health_check_retries: healthCheckRetries + 1,
           last_health_check: new Date().toISOString(),
+          last_recovery_attempt: new Date().toISOString(),
           recovery_started: new Date().toISOString()  // CONCURRENCY LOCK
         };
 
