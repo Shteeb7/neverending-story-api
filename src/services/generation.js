@@ -2208,7 +2208,7 @@ async function orchestratePreGeneration(storyId, userId) {
     // Fetch story details for cover generation
     const { data: storyData } = await supabaseAdmin
       .from('stories')
-      .select('title, genre, description')
+      .select('title, genre')
       .eq('id', storyId)
       .single();
 
@@ -2217,7 +2217,9 @@ async function orchestratePreGeneration(storyId, userId) {
       title: storyData?.title || bible.title,
       genre: storyData?.genre || 'fiction',
       themes: bible.themes || [],
-      description: storyData?.description || bible.central_conflict?.description || ''
+      description: typeof bible.central_conflict === 'string'
+        ? bible.central_conflict
+        : bible.central_conflict?.description || ''
     }, authorName).then(url => {
       console.log(`🎨 Cover ready for story ${storyId}: ${url}`);
     }).catch(err => {
