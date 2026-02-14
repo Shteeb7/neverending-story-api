@@ -1,16 +1,6 @@
 require('dotenv').config();
-const { createClient } = require('@supabase/supabase-js');
+const { supabaseAdmin } = require('../src/config/supabase');
 const { generateBookCover } = require('../src/services/cover-generation');
-
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!supabaseUrl || !supabaseServiceKey) {
-  console.error('❌ Missing required environment variables: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY');
-  process.exit(1);
-}
-
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -20,7 +10,7 @@ async function backfillCovers() {
   console.log('🎨 Starting book cover backfill...\n');
 
   // Query all stories without covers, joining to story_bibles
-  const { data: stories, error } = await supabase
+  const { data: stories, error } = await supabaseAdmin
     .from('stories')
     .select(`
       id,
@@ -57,7 +47,7 @@ async function backfillCovers() {
 
     try {
       // Get user preferences for author name
-      const { data: userPrefs } = await supabase
+      const { data: userPrefs } = await supabaseAdmin
         .from('user_preferences')
         .select('preferences')
         .eq('user_id', story.user_id)
