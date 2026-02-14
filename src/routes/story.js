@@ -85,7 +85,6 @@ router.post('/select-premise', authenticateUser, asyncHandler(async (req, res) =
       premise_id: storyPremisesRecordId,
       title: selectedPremise.title,
       genre: selectedPremise.genre || null,
-      description: selectedPremise.description || null,
       premise_tier: selectedPremise.tier || null,        // NEW: Store comfort/stretch/wildcard tier
       status: 'active',
       generation_progress: {
