@@ -195,8 +195,8 @@ router.post('/completion-interview', authenticateUser, asyncHandler(async (req, 
     throw new Error(`Failed to store interview: ${error.message}`);
   }
 
-  // Non-blocking: trigger preference analysis in background
-  const { analyzeUserPreferences } = require('../services/generation');
+  // Non-blocking: trigger preference analysis and discovery tolerance update in background
+  const { analyzeUserPreferences, updateDiscoveryTolerance } = require('../services/generation');
   (async () => {
     try {
       const result = await analyzeUserPreferences(userId);
@@ -205,6 +205,10 @@ router.post('/completion-interview', authenticateUser, asyncHandler(async (req, 
       console.error('Preference analysis failed (non-blocking):', err.message);
     }
   })();
+
+  updateDiscoveryTolerance(userId).catch(err =>
+    console.error('Discovery tolerance update failed (non-blocking):', err.message)
+  );
 
   res.json({
     success: true,
@@ -242,6 +246,136 @@ router.get('/writing-preferences', authenticateUser, asyncHandler(async (req, re
     success: true,
     hasPreferences: !!preferences,
     preferences: preferences || null
+  });
+}));
+
+/**
+ * GET /feedback/completion-context/:storyId
+ * Fetch rich context for book completion interview (Prospero needs reference points)
+ * Returns: story details, bible summary, reading analytics, checkpoint feedback
+ */
+router.get('/completion-context/:storyId', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { storyId } = req.params;
+
+  // Fetch story details
+  const { data: story, error: storyError } = await supabaseAdmin
+    .from('stories')
+    .select('title, genre, premise_tier')
+    .eq('id', storyId)
+    .eq('user_id', userId)
+    .single();
+
+  if (storyError || !story) {
+    return res.status(404).json({
+      success: false,
+      error: 'Story not found'
+    });
+  }
+
+  // Fetch bible summary (protagonist, central conflict, themes, key locations)
+  const { data: bible } = await supabaseAdmin
+    .from('story_bibles')
+    .select('characters, central_conflict, themes, key_locations')
+    .eq('story_id', storyId)
+    .single();
+
+  let bibleData = {
+    protagonistName: null,
+    supportingCast: [],
+    centralConflict: '',
+    themes: [],
+    keyLocations: []
+  };
+
+  if (bible) {
+    // Extract protagonist (first character in bible.characters array)
+    const characters = bible.characters || [];
+    if (characters.length > 0) {
+      bibleData.protagonistName = characters[0].name;
+      bibleData.supportingCast = characters.slice(1, 4).map(c => c.name); // Top 3 supporting
+    }
+
+    bibleData.centralConflict = typeof bible.central_conflict === 'string'
+      ? bible.central_conflict
+      : bible.central_conflict?.description || '';
+    bibleData.themes = bible.themes || [];
+    bibleData.keyLocations = (bible.key_locations || []).map(loc =>
+      typeof loc === 'string' ? loc : loc.name
+    );
+  }
+
+  // Fetch reading analytics
+  const { data: readingStats } = await supabaseAdmin
+    .from('chapter_reading_stats')
+    .select('chapter_number, total_reading_time_seconds, session_count, completed')
+    .eq('story_id', storyId)
+    .eq('user_id', userId)
+    .order('chapter_number', { ascending: true });
+
+  let readingBehavior = {
+    totalReadingMinutes: 0,
+    lingeredChapters: [],   // Top 3 by time
+    skimmedChapters: [],    // Under 2 min
+    rereadChapters: []      // session_count > 1
+  };
+
+  if (readingStats && readingStats.length > 0) {
+    const totalSeconds = readingStats.reduce((sum, s) => sum + (s.total_reading_time_seconds || 0), 0);
+    readingBehavior.totalReadingMinutes = Math.round(totalSeconds / 60);
+
+    // Lingered chapters (top 3 by time)
+    const lingered = readingStats
+      .filter(s => s.total_reading_time_seconds > 0)
+      .sort((a, b) => b.total_reading_time_seconds - a.total_reading_time_seconds)
+      .slice(0, 3)
+      .map(s => ({
+        chapter: s.chapter_number,
+        minutes: Math.round(s.total_reading_time_seconds / 60)
+      }));
+    readingBehavior.lingeredChapters = lingered;
+
+    // Skimmed chapters (under 2 min)
+    const skimmed = readingStats
+      .filter(s => s.total_reading_time_seconds > 0 && s.total_reading_time_seconds < 120)
+      .map(s => s.chapter_number);
+    readingBehavior.skimmedChapters = skimmed;
+
+    // Re-read chapters
+    const reread = readingStats
+      .filter(s => s.session_count > 1)
+      .map(s => ({
+        chapter: s.chapter_number,
+        sessions: s.session_count
+      }));
+    readingBehavior.rereadChapters = reread;
+  }
+
+  // Fetch checkpoint feedback (chapters 3, 6, 9)
+  const { data: feedbackRows } = await supabaseAdmin
+    .from('story_feedback')
+    .select('checkpoint, response, follow_up_action')
+    .eq('story_id', storyId)
+    .eq('user_id', userId)
+    .in('checkpoint', ['chapter_3', 'chapter_6', 'chapter_9'])
+    .order('checkpoint', { ascending: true });
+
+  const checkpointFeedback = (feedbackRows || []).map(f => ({
+    checkpoint: f.checkpoint,
+    response: f.response,
+    action: f.follow_up_action
+  }));
+
+  res.json({
+    success: true,
+    story: {
+      title: story.title,
+      genre: story.genre,
+      premiseTier: story.premise_tier
+    },
+    bible: bibleData,
+    readingBehavior,
+    checkpointFeedback
   });
 }));
 

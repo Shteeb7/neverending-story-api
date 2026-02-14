@@ -106,6 +106,12 @@ router.post('/select-premise', authenticateUser, asyncHandler(async (req, res) =
 
   console.log(`✅ Story record created immediately: ${story.id} - "${selectedPremise.title}"`);
 
+  // Step 2.5: Update discovery tolerance based on selection (non-blocking)
+  const { updateDiscoveryTolerance } = require('../services/generation');
+  updateDiscoveryTolerance(userId).catch(err =>
+    console.error('Discovery tolerance update failed (non-blocking):', err.message)
+  );
+
   // Step 3: Fire entire generation pipeline async (non-blocking)
   const { generateStoryBibleForExistingStory, orchestratePreGeneration } = require('../services/generation');
 

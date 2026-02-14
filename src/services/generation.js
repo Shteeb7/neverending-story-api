@@ -1293,7 +1293,7 @@ async function analyzeUserPreferences(userId) {
   // Step 1: Count completed stories (stories with 12 chapters)
   const { data: stories } = await supabaseAdmin
     .from('stories')
-    .select('id, title')
+    .select('id, title, premise_tier')
     .eq('user_id', userId);
 
   if (!stories || stories.length === 0) {
@@ -1396,6 +1396,11 @@ Abandoned chapters (not completed): ${abandonedChapters.length} chapters (${aban
     return `Story: ${q.story_id.slice(0, 8)}..., Ch${q.chapter_number}, Overall: ${q.quality_score || 'N/A'}, Criteria: [${criteriaScores}]`;
   }).join('\n') || 'No quality data';
 
+  // Build premise tier history
+  const premiseTierHistory = stories
+    .map(s => `"${s.title}" — tier: ${s.premise_tier || 'unknown'}`)
+    .join('\n');
+
   const analysisPrompt = `You are analyzing a reader's feedback patterns across multiple stories to learn their preferences.
 
 <feedback_data>
@@ -1414,6 +1419,10 @@ ${qualitySummary}
 ${readingBehaviorSummary}
 </reading_behavior>
 
+<premise_tier_history>
+${premiseTierHistory}
+</premise_tier_history>
+
 Based on this data, identify this reader's preferences:
 
 PACING: Do they prefer action-dense or character-focused stories? Fast or deliberate?
@@ -1423,6 +1432,7 @@ THEMES: What themes/elements consistently appear in their highly-rated content?
 WHAT TO AVOID: Are there patterns in what they dislike or rate as "Meh"?
 CUSTOM INSTRUCTIONS: Generate 3-5 specific writing instructions that would make future stories better for THIS reader.
 AVOID PATTERNS: Generate 2-3 specific things to avoid for this reader.
+DISCOVERY PATTERN: Based on premise_tier_history, does this reader tend toward comfort picks or do they embrace wildcards? Are they happier (better feedback, more engagement) with familiar or unfamiliar stories? Summarize in one sentence.
 
 Return ONLY a JSON object:
 {
@@ -1446,6 +1456,7 @@ Return ONLY a JSON object:
   },
   "custom_instructions": ["instruction1", "instruction2", "instruction3"],
   "avoid_patterns": ["pattern1", "pattern2"],
+  "discovery_pattern": "one sentence about comfort vs wildcard preference",
   "confidence": 0.0-1.0,
   "analysis_summary": "2-3 sentence summary of this reader's taste"
 }`;
@@ -1472,6 +1483,7 @@ Return ONLY a JSON object:
     'character_voice_preferences',
     'custom_instructions',
     'avoid_patterns',
+    'discovery_pattern',
     'confidence',
     'analysis_summary'
   ]);
@@ -1487,6 +1499,7 @@ Return ONLY a JSON object:
       character_voice_preferences: parsed.character_voice_preferences,
       custom_instructions: parsed.custom_instructions,
       avoid_patterns: parsed.avoid_patterns,
+      discovery_pattern: parsed.discovery_pattern,
       stories_analyzed: completedStories.length,
       feedback_data_points: (feedbackRows?.length || 0) + (interviewRows?.length || 0),
       confidence_score: Math.round(parsed.confidence * 100) / 100, // Round to 2 decimals
@@ -1530,6 +1543,116 @@ async function getUserWritingPreferences(userId) {
     .single();
 
   return data; // null if no preferences yet
+}
+
+/**
+ * Update discovery tolerance based on reader's selection patterns and feedback
+ * This is the learning loop: behavior → adjustment → smarter future premises
+ */
+async function updateDiscoveryTolerance(userId) {
+  // Fetch current tolerance
+  const { data: userPrefs } = await supabaseAdmin
+    .from('user_preferences')
+    .select('discovery_tolerance, preferences')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let tolerance = userPrefs?.discovery_tolerance ?? 0.5;
+  const originalTolerance = tolerance;
+
+  // Fetch stories with tiers (only those created AFTER premise_tier was added)
+  const { data: stories } = await supabaseAdmin
+    .from('stories')
+    .select('id, premise_tier, created_at')
+    .eq('user_id', userId)
+    .not('premise_tier', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  if (!stories || stories.length === 0) {
+    return { tolerance, changed: false, reason: 'No tier-tracked stories yet' };
+  }
+
+  // Fetch completion interviews for these stories
+  const storyIds = stories.map(s => s.id);
+  const { data: interviews } = await supabaseAdmin
+    .from('book_completion_interviews')
+    .select('story_id, preferences_extracted')
+    .in('story_id', storyIds);
+
+  const interviewMap = {};
+  (interviews || []).forEach(i => { interviewMap[i.story_id] = i; });
+
+  // --- ADJUSTMENT RULES ---
+
+  // Rule 1: Recent selection patterns
+  const recentTiers = stories.slice(0, 5).map(s => s.premise_tier);
+  const comfortCount = recentTiers.filter(t => t === 'comfort').length;
+  const stretchCount = recentTiers.filter(t => t === 'stretch').length;
+  const wildcardCount = recentTiers.filter(t => t === 'wildcard').length;
+
+  // Consistently picking comfort across 3+ recent stories = tolerance down
+  if (comfortCount >= 3) {
+    tolerance -= 0.05;
+  }
+
+  // Picking stretch or wildcard = tolerance up per pick
+  tolerance += (stretchCount + wildcardCount) * 0.03;
+
+  // Rule 2: Completion feedback on wildcards/stretches
+  for (const story of stories) {
+    if (story.premise_tier === 'wildcard' || story.premise_tier === 'stretch') {
+      const interview = interviewMap[story.id];
+      if (interview?.preferences_extracted) {
+        const signal = interview.preferences_extracted.satisfactionSignal;
+        if (signal === 'loved_it' || signal === 'wanting_more' || signal === 'fantastic') {
+          tolerance += 0.05;  // Positive wildcard/stretch experience
+        } else if (signal === 'disappointed' || signal === 'not_for_me') {
+          tolerance -= 0.05;  // Negative experience
+        }
+      }
+    }
+  }
+
+  // Rule 3: Check for abandoned wildcards (stories with < 6 chapters read)
+  for (const story of stories) {
+    if (story.premise_tier === 'wildcard') {
+      const { count } = await supabaseAdmin
+        .from('chapter_reading_stats')
+        .select('*', { count: 'exact', head: true })
+        .eq('story_id', story.id)
+        .eq('user_id', userId)
+        .eq('completed', true);
+
+      // If they didn't finish at least 6 chapters of a wildcard, tolerance down
+      if (count !== null && count < 6) {
+        tolerance -= 0.08;
+      }
+    }
+  }
+
+  // Clamp to floor/ceiling
+  tolerance = Math.max(0.1, Math.min(0.95, tolerance));
+  tolerance = Math.round(tolerance * 100) / 100;  // Round to 2 decimals
+
+  // Only update if changed
+  if (tolerance !== originalTolerance) {
+    await supabaseAdmin
+      .from('user_preferences')
+      .update({ discovery_tolerance: tolerance })
+      .eq('user_id', userId);
+
+    console.log(`🎯 Discovery tolerance updated: ${originalTolerance} → ${tolerance} for user ${userId}`);
+  }
+
+  return {
+    tolerance,
+    changed: tolerance !== originalTolerance,
+    previous: originalTolerance,
+    reason: `Analyzed ${stories.length} stories (${comfortCount}C/${stretchCount}S/${wildcardCount}W)`
+  };
 }
 
 /**
@@ -2695,6 +2818,7 @@ module.exports = {
   generateSequelBible,
   analyzeUserPreferences,
   getUserWritingPreferences,
+  updateDiscoveryTolerance,
   resumeStalledGenerations,
   // Export utilities for testing
   calculateCost,
