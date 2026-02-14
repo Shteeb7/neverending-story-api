@@ -158,6 +158,23 @@ router.post('/completion-interview', authenticateUser, asyncHandler(async (req, 
     .eq('id', storyId)
     .single();
 
+  // Enrich preferences with new completion feedback fields
+  const enrichedPreferences = preferences ? {
+    ...preferences,
+    // Extract richer feedback data
+    highlights: preferences.highlights || [],
+    lowlights: preferences.lowlights || [],
+    characterConnections: preferences.characterConnections || '',
+    sequelDesires: preferences.sequelDesires || '',
+    satisfactionSignal: preferences.satisfactionSignal || 'satisfied',
+    preferenceUpdates: preferences.preferenceUpdates || ''
+  } : null;
+
+  console.log('📊 Book completion feedback received:');
+  console.log(`   Satisfaction: ${enrichedPreferences?.satisfactionSignal}`);
+  console.log(`   Highlights: ${enrichedPreferences?.highlights?.length || 0} items`);
+  console.log(`   Sequel desires captured: ${!!enrichedPreferences?.sequelDesires}`);
+
   const { data, error } = await supabaseAdmin
     .from('book_completion_interviews')
     .upsert({
@@ -167,7 +184,7 @@ router.post('/completion-interview', authenticateUser, asyncHandler(async (req, 
       book_number: story?.book_number || 1,
       transcript,
       session_id: sessionId || null,
-      preferences_extracted: preferences || null
+      preferences_extracted: enrichedPreferences
     }, {
       onConflict: 'user_id,story_id'
     })

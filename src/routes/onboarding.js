@@ -7,6 +7,21 @@ const { authenticateUser } = require('../middleware/auth');
 const router = express.Router();
 
 /**
+ * Helper function to normalize discoveryTolerance to numeric value
+ * "low" (comfort-seeker) = 0.2
+ * "medium" (balanced) = 0.5
+ * "high" (adventurer) = 0.8
+ */
+function normalizeDiscoveryTolerance(tolerance) {
+  const mapping = {
+    'low': 0.2,
+    'medium': 0.5,
+    'high': 0.8
+  };
+  return mapping[tolerance] || 0.5; // default to medium
+}
+
+/**
  * POST /onboarding/start
  * Initialize voice conversation session for onboarding
  * Creates an ephemeral OpenAI Realtime session and returns credentials to client
@@ -93,7 +108,14 @@ router.post('/process-transcript', authenticateUser, asyncHandler(async (req, re
     dislikedElements: extractedData.dislikedElements || [],
     characterTypes: extractedData.characterTypes || 'varied',
     name: extractedData.name || 'Reader',
-    ageRange: extractedData.ageRange || 'adult' // Default to adult, not child
+    ageRange: extractedData.ageRange || 'adult', // Default to adult, not child
+
+    // New experience-mining fields
+    emotionalDrivers: extractedData.emotionalDrivers || [],
+    belovedStories: extractedData.belovedStories || [],
+    readingMotivation: extractedData.readingMotivation || '',
+    discoveryTolerance: normalizeDiscoveryTolerance(extractedData.discoveryTolerance),
+    pacePreference: extractedData.pacePreference || 'varied'
   };
 
   // Log warning if ageRange wasn't provided
@@ -273,6 +295,41 @@ router.get('/premises/:userId', authenticateUser, asyncHandler(async (req, res) 
     premises: allUnusedPremises,
     allPremisesUsed: allUnusedPremises.length === 0,
     needsNewInterview: allUnusedPremises.length === 0
+  });
+}));
+
+/**
+ * GET /onboarding/user-preferences/:userId
+ * Retrieve user preferences for voice session context
+ */
+router.get('/user-preferences/:userId', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+
+  // Verify requesting user matches
+  if (req.userId?.toLowerCase() !== userId?.toLowerCase()) {
+    console.log('❌ Authorization FAILED - user IDs do not match');
+    return res.status(403).json({
+      success: false,
+      error: 'Unauthorized access'
+    });
+  }
+
+  // Fetch user preferences from database
+  const { data: userPrefs, error: prefsError } = await supabaseAdmin
+    .from('user_preferences')
+    .select('preferences')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (prefsError) {
+    throw new Error(`Failed to fetch preferences: ${prefsError.message}`);
+  }
+
+  res.json({
+    success: true,
+    preferences: userPrefs?.preferences || null
   });
 }));
 

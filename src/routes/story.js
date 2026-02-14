@@ -84,6 +84,8 @@ router.post('/select-premise', authenticateUser, asyncHandler(async (req, res) =
       user_id: userId,
       premise_id: storyPremisesRecordId,
       title: selectedPremise.title,
+      genre: selectedPremise.genre || null,              // NEW: Populate genre from premise
+      description: selectedPremise.description || null,  // NEW: Populate description from premise
       status: 'active',
       generation_progress: {
         bible_complete: false,
@@ -450,7 +452,7 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
   console.log('📚 Generating Book 2 bible...');
   const book2BibleContent = await generateSequelBible(storyId, userPreferences, userId);
 
-  // Create Book 2 story record
+  // Create Book 2 story record (inherit genre from Book 1)
   const { data: book2Story, error: book2Error } = await supabaseAdmin
     .from('stories')
     .insert({
@@ -459,6 +461,7 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
       book_number: 2,
       parent_story_id: storyId,
       title: book2BibleContent.title,
+      genre: book1Story.genre || null,  // NEW: Inherit genre from Book 1
       status: 'generating',
       generation_progress: {
         bible_complete: false,
