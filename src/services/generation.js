@@ -1280,6 +1280,26 @@ Return ONLY a JSON object in this exact format:
     throw new Error('Expected exactly 12 chapters in arc outline');
   }
 
+  // Check if arc already exists for this story (prevents duplicates on recovery)
+  const { data: existingArc } = await supabaseAdmin
+    .from('story_arcs')
+    .select('id, chapters, outline')
+    .eq('story_id', storyId)
+    .eq('arc_number', 1)
+    .maybeSingle();
+
+  if (existingArc) {
+    console.log(`📖 [${storyTitle}] Arc already exists (id: ${existingArc.id}), skipping creation`);
+    // Update story progress to reflect arc is complete
+    await updateGenerationProgress(storyId, {
+      bible_complete: true,
+      arc_complete: true,
+      chapters_generated: 0,
+      current_step: 'arc_created'
+    });
+    return { arc: existingArc.outline || parsed };
+  }
+
   // Store arc in database
   const { data: arc, error: arcError} = await supabaseAdmin
     .from('story_arcs')
@@ -1704,11 +1724,18 @@ async function generateChapter(storyId, chapterNumber, userId) {
     .eq('story_id', storyId)
     .single();
 
-  const { data: arc } = await supabaseAdmin
+  // Fetch most recent arc (handles duplicate arcs from recovery retries)
+  const { data: arc, error: arcError } = await supabaseAdmin
     .from('story_arcs')
     .select('*')
     .eq('story_id', storyId)
-    .single();
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!arc || arcError) {
+    throw new Error(`No arc found for story ${storyId}: ${arcError?.message || 'arc is null'}`);
+  }
 
   // Fetch preferences from story_premises to get age range
   let ageRange = '25+'; // default to adult
@@ -2241,24 +2268,28 @@ async function orchestratePreGeneration(storyId, userId) {
     // Fetch story details for cover generation
     const { data: storyData } = await supabaseAdmin
       .from('stories')
-      .select('title, genre')
+      .select('title, genre, cover_image_url')
       .eq('id', storyId)
       .single();
 
-    // Fire cover generation without awaiting — it runs alongside arc + chapters
-    console.log(`🎨 [${storyTitle}] Cover: generating in background...`);
-    generateBookCover(storyId, {
-      title: storyData?.title || bible.title,
-      genre: storyData?.genre || 'fiction',
-      themes: bible.themes || [],
-      description: typeof bible.central_conflict === 'string'
-        ? bible.central_conflict
-        : bible.central_conflict?.description || ''
-    }, authorName).then(url => {
-      console.log(`🎨 [${storyTitle}] Cover: uploaded ✅`);
-    }).catch(err => {
-      console.error(`⚠️ [${storyTitle}] Cover generation failed (non-blocking): ${err.message}`);
-    });
+    // Only generate cover if it doesn't already exist (prevents regeneration on recovery)
+    if (!storyData?.cover_image_url) {
+      console.log(`🎨 [${storyTitle}] Cover: generating in background...`);
+      generateBookCover(storyId, {
+        title: storyData?.title || bible.title,
+        genre: storyData?.genre || 'fiction',
+        themes: bible.themes || [],
+        description: typeof bible.central_conflict === 'string'
+          ? bible.central_conflict
+          : bible.central_conflict?.description || ''
+      }, authorName).then(url => {
+        console.log(`🎨 [${storyTitle}] Cover: uploaded ✅`);
+      }).catch(err => {
+        console.error(`⚠️ [${storyTitle}] Cover generation failed (non-blocking): ${err.message}`);
+      });
+    } else {
+      console.log(`🎨 [${storyTitle}] Cover: already exists, skipping`);
+    }
 
     // Step 2: Generate Arc (skip if already complete)
     if (!arcComplete) {
