@@ -240,23 +240,37 @@ async function callClaudeWithRetry(messages, maxTokens, metadata = {}) {
   const maxAttempts = 4;
   let lastError;
   const delays = [2000, 10000, 30000]; // More aggressive backoff: 2s, 10s, 30s
+  const storyTitle = metadata.storyTitle || 'Unknown';
 
   for (let i = 0; i < maxAttempts; i++) {
     try {
       // Wait before retry (except first attempt)
       if (i > 0 && delays[i - 1]) {
+        const waitSeconds = (delays[i - 1] / 1000).toFixed(0);
+        if (error.status === 429 || error.type === 'rate_limit_error') {
+          console.log(`⏳ [${storyTitle}] Rate limited, waiting ${waitSeconds}s before retry...`);
+        }
         await new Promise(resolve => setTimeout(resolve, delays[i - 1]));
       }
 
+      // Calculate prompt length
+      const promptLength = JSON.stringify(messages).length;
+      console.log(`🤖 [${storyTitle}] Claude API call → (${promptLength.toLocaleString()} chars)`);
+
+      const apiStartTime = Date.now();
       const response = await anthropic.messages.create({
         model: PRICING.MODEL,
         max_tokens: maxTokens,
         messages
       });
 
+      const apiDuration = ((Date.now() - apiStartTime) / 1000).toFixed(1);
       const inputTokens = response.usage.input_tokens;
       const outputTokens = response.usage.output_tokens;
       const cost = calculateCost(inputTokens, outputTokens);
+      const responseLength = response.content[0].text.length;
+
+      console.log(`🤖 [${storyTitle}] Claude API responded ← (${responseLength.toLocaleString()} chars, ${apiDuration}s)`);
 
       return {
         response: response.content[0].text,
@@ -280,7 +294,7 @@ async function callClaudeWithRetry(messages, maxTokens, metadata = {}) {
         throw error;
       }
 
-      console.log(`Claude API call failed (attempt ${i + 1}/${maxAttempts}):`, error.message);
+      console.log(`⚠️ [${storyTitle}] Claude API retry ${i + 1}/${maxAttempts} — reason: ${error.message}`);
     }
   }
 
@@ -330,13 +344,13 @@ async function clearRecoveryLock(storyId) {
 /**
  * Retry a generation step with backoff and progress tracking
  */
-async function retryGenerationStep(stepName, storyId, stepFn, maxRetries = 2) {
+async function retryGenerationStep(stepName, storyId, storyTitle, stepFn, maxRetries = 2) {
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
     try {
       return await stepFn();
     } catch (error) {
       const isLastAttempt = attempt > maxRetries;
-      console.error(`❌ ${stepName} failed (attempt ${attempt}/${maxRetries + 1}):`, error.message);
+      console.error(`🔄 [${storyTitle}] Retrying step "${stepName}" — attempt ${attempt}/${maxRetries + 1}: ${error.message}`);
 
       // Update progress with retry info
       const { data: story } = await supabaseAdmin
@@ -364,6 +378,7 @@ async function retryGenerationStep(stepName, storyId, stepFn, maxRetries = 2) {
           })
           .eq('id', storyId);
 
+        console.error(`❌ [${storyTitle}] Step "${stepName}" failed after ${maxRetries + 1} attempts`);
         throw error;
       }
 
@@ -374,7 +389,7 @@ async function retryGenerationStep(stepName, storyId, stepFn, maxRetries = 2) {
         .eq('id', storyId);
 
       const backoffMs = attempt * 15000; // 15s, 30s
-      console.log(`⏳ Waiting ${backoffMs/1000}s before retry...`);
+      console.log(`⏳ [${storyTitle}] Waiting ${backoffMs/1000}s before retry...`);
       await new Promise(resolve => setTimeout(resolve, backoffMs));
     }
   }
@@ -874,7 +889,15 @@ Return ONLY a JSON object in this exact format:
  * This allows the API to return immediately while generation happens in background
  */
 async function generateStoryBibleForExistingStory(storyId, premiseId, userId) {
-  console.log(`📚 Generating bible for existing story ${storyId}...`);
+  // Fetch story title first for logging
+  const { data: storyData } = await supabaseAdmin
+    .from('stories')
+    .select('title')
+    .eq('id', storyId)
+    .single();
+
+  const storyTitle = storyData?.title || 'Unknown';
+  console.log(`📖 [${storyTitle}] Bible: calling Claude API...`);
 
   // Fetch all premise records for this user (premises are stored as arrays)
   const { data: premiseRecords, error: premiseError } = await supabaseAdmin
@@ -1039,12 +1062,13 @@ Return ONLY a JSON object in this exact format:
   const messages = [{ role: 'user', content: prompt }];
 
   // Wrap bible generation in retryGenerationStep for immediate retry on failure
-  const result = await retryGenerationStep('Bible generation', storyId, async () => {
+  const bibleStartTime = Date.now();
+  const result = await retryGenerationStep('Bible generation', storyId, storyTitle, async () => {
     // Call Claude API
     const apiResult = await callClaudeWithRetry(
       messages,
       64000,
-      { operation: 'generate_bible', userId, premiseId }
+      { operation: 'generate_bible', userId, premiseId, storyTitle }
     );
 
     const parsed = parseAndValidateJSON(apiResult.response, [
@@ -1099,10 +1123,12 @@ Return ONLY a JSON object in this exact format:
       premiseId
     });
 
+    const bibleDuration = ((Date.now() - bibleStartTime) / 1000).toFixed(1);
+    const bibleChars = JSON.stringify(parsed).length;
+    console.log(`📖 [${storyTitle}] Bible: generated ✅ (${bibleChars.toLocaleString()} chars, ${bibleDuration}s)`);
+
     return { bible, inputTokens: apiResult.inputTokens, outputTokens: apiResult.outputTokens };
   });
-
-  console.log(`✅ Bible generation complete for story ${storyId}`);
 
   return { storyId };
 }
@@ -1241,10 +1267,11 @@ Return ONLY a JSON object in this exact format:
 
   const messages = [{ role: 'user', content: prompt }];
 
+  const storyTitle = story.title || 'Unknown';
   const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
     messages,
     64000,
-    { operation: 'generate_arc', userId, storyId }
+    { operation: 'generate_arc', userId, storyId, storyTitle }
   );
 
   const parsed = parseAndValidateJSON(response, ['chapters', 'pacing_notes', 'story_threads']);
@@ -1921,6 +1948,8 @@ Return ONLY a JSON object in this exact format:
   let qualityReview;
   let passedQuality = false;
 
+  const storyTitle = story.title || 'Unknown';
+
   // Generation with quality review loop (max 3 attempts)
   while (!passedQuality && regenerationCount < 3) {
     const messages = regenerationCount === 0
@@ -1934,7 +1963,7 @@ Return ONLY a JSON object in this exact format:
     const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
       messages,
       64000,
-      { operation: 'generate_chapter', userId, storyId, chapterNumber, regenerationCount }
+      { operation: 'generate_chapter', userId, storyId, chapterNumber, regenerationCount, storyTitle }
     );
 
     await logApiCost(userId, 'generate_chapter', inputTokens, outputTokens, {
@@ -2093,7 +2122,7 @@ Return ONLY a JSON object in this exact format:
     const { response: reviewResponse, inputTokens: reviewInputTokens, outputTokens: reviewOutputTokens } = await callClaudeWithRetry(
       reviewMessages,
       64000,
-      { operation: 'quality_review', userId, storyId, chapterNumber, regenerationCount }
+      { operation: 'quality_review', userId, storyId, chapterNumber, regenerationCount, storyTitle }
     );
 
     await logApiCost(userId, 'quality_review', reviewInputTokens, reviewOutputTokens, {
@@ -2160,11 +2189,14 @@ Return ONLY a JSON object in this exact format:
  * (Chapters 7-9 and 10-12 are generated based on reader feedback)
  */
 async function orchestratePreGeneration(storyId, userId) {
+  const pipelineStartTime = Date.now();
+  let storyTitle = 'Unknown';
+
   try {
     // Step 1: Check current progress to determine where to resume
     const { data: story } = await supabaseAdmin
       .from('stories')
-      .select('generation_progress, bible_id, current_arc_id')
+      .select('title, generation_progress, bible_id, current_arc_id')
       .eq('id', storyId)
       .single();
 
@@ -2172,12 +2204,13 @@ async function orchestratePreGeneration(storyId, userId) {
       throw new Error('Story not found');
     }
 
+    storyTitle = story.title || 'Unknown';
     const progress = story.generation_progress || {};
     const chaptersAlreadyGenerated = progress.chapters_generated || 0;
     const arcComplete = !!progress.arc_complete;
     const bibleComplete = !!progress.bible_complete;
 
-    console.log(`📊 Resuming generation from: chapters=${chaptersAlreadyGenerated}, arc=${arcComplete}, bible=${bibleComplete}`);
+    console.log(`📖 [${storyTitle}] Pipeline started (chapters=${chaptersAlreadyGenerated}/6, arc=${arcComplete}, bible=${bibleComplete})`);
 
     // Verify bible exists
     const { data: bible } = await supabaseAdmin
@@ -2213,6 +2246,7 @@ async function orchestratePreGeneration(storyId, userId) {
       .single();
 
     // Fire cover generation without awaiting — it runs alongside arc + chapters
+    console.log(`🎨 [${storyTitle}] Cover: generating in background...`);
     generateBookCover(storyId, {
       title: storyData?.title || bible.title,
       genre: storyData?.genre || 'fiction',
@@ -2221,9 +2255,9 @@ async function orchestratePreGeneration(storyId, userId) {
         ? bible.central_conflict
         : bible.central_conflict?.description || ''
     }, authorName).then(url => {
-      console.log(`🎨 Cover ready for story ${storyId}: ${url}`);
+      console.log(`🎨 [${storyTitle}] Cover: uploaded ✅`);
     }).catch(err => {
-      console.error(`⚠️ Cover generation failed (non-blocking): ${err.message}`);
+      console.error(`⚠️ [${storyTitle}] Cover generation failed (non-blocking): ${err.message}`);
     });
 
     // Step 2: Generate Arc (skip if already complete)
@@ -2235,13 +2269,15 @@ async function orchestratePreGeneration(storyId, userId) {
         current_step: 'generating_arc'
       });
 
-      await retryGenerationStep('Arc generation', storyId, async () => {
+      console.log(`📖 [${storyTitle}] Arc: starting generation...`);
+      const arcResult = await retryGenerationStep('Arc generation', storyId, storyTitle, async () => {
         return await generateArcOutline(storyId, userId);
       });
 
-      console.log('✅ Arc generation complete');
+      const chapterCount = arcResult?.outline?.length || 6;
+      console.log(`📖 [${storyTitle}] Arc: complete ✅ (${chapterCount} chapters outlined)`);
     } else {
-      console.log('⏭️ Skipping arc generation (already complete)');
+      console.log(`📖 [${storyTitle}] Arc: already exists, skipping`);
     }
 
     // Step 3: Generate Chapters (resume from where we left off)
@@ -2253,11 +2289,16 @@ async function orchestratePreGeneration(storyId, userId) {
         current_step: `generating_chapter_${i}`
       });
 
-      await retryGenerationStep(`Chapter ${i} generation`, storyId, async () => {
+      console.log(`📖 [${storyTitle}] Chapter ${i}/6: starting generation...`);
+      const chapterStartTime = Date.now();
+
+      const chapter = await retryGenerationStep(`Chapter ${i} generation`, storyId, storyTitle, async () => {
         return await generateChapter(storyId, i, userId);
       });
 
-      console.log(`✅ Chapter ${i} generation complete`);
+      const chapterDuration = ((Date.now() - chapterStartTime) / 1000).toFixed(1);
+      const charCount = chapter?.content?.length || 0;
+      console.log(`📖 [${storyTitle}] Chapter ${i}/6: saved ✅ (${charCount.toLocaleString()} chars, ${chapterDuration}s)`);
 
       // 1-second pause between chapters to avoid rate limits
       if (i < 6) {
@@ -2283,9 +2324,10 @@ async function orchestratePreGeneration(storyId, userId) {
     // Clear recovery lock on success
     await clearRecoveryLock(storyId);
 
-    console.log(`✅ Pre-generation complete for story ${storyId} - 6 chapters ready`);
+    const pipelineDuration = ((Date.now() - pipelineStartTime) / 1000).toFixed(1);
+    console.log(`📖 [${storyTitle}] Pipeline complete! All chapters generated (${pipelineDuration}s total)`);
   } catch (error) {
-    console.error(`❌ Pre-generation failed for story ${storyId}:`, error);
+    console.error(`❌ [${storyTitle}] Pipeline failed:`, error.message);
 
     // Error handling is now in retryGenerationStep, but catch any other errors
     // Update story with error status if not already set
@@ -2622,7 +2664,7 @@ Return Book 2 Bible in this EXACT format:
  * Runs on server startup and every 30 minutes thereafter
  */
 async function resumeStalledGenerations() {
-  console.log('\n🔍 Checking for stalled/failed story generations...');
+  console.log('\n🏥 Health check running...');
 
   const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
@@ -2691,11 +2733,13 @@ async function resumeStalledGenerations() {
     });
 
     if (needsRecovery.length === 0) {
-      console.log('✅ No stalled or failed generations found');
+      console.log('🏥 All clear — no stalled generations');
       return;
     }
 
-    console.log(`⚠️ Found ${needsRecovery.length} story generation(s) needing recovery`);
+    const stalledCount = needsRecovery.filter(s => s.status === 'active').length;
+    const failedCount = needsRecovery.filter(s => s.status === 'error').length;
+    console.log(`🏥 Found ${stalledCount} stalled stories, ${failedCount} failed stories`);
 
     for (const story of needsRecovery) {
       const progress = story.generation_progress;
@@ -2703,11 +2747,11 @@ async function resumeStalledGenerations() {
       const chaptersGenerated = progress.chapters_generated || 0;
       const healthCheckRetries = progress.health_check_retries || 0;
 
-      console.log(`\n🔧 Recovering story: ${story.id} - "${story.title}"`);
-      console.log(`   Status: ${story.status}`);
-      console.log(`   Current step: ${currentStep}`);
-      console.log(`   Chapters: ${chaptersGenerated}/6`);
-      console.log(`   Health check retry: ${healthCheckRetries + 1}/3`);
+      // Calculate stall duration
+      const lastUpdated = new Date(progress.last_updated || story.created_at);
+      const stallMinutes = Math.round((Date.now() - lastUpdated.getTime()) / (1000 * 60));
+
+      console.log(`🏥 Recovering: [${story.title}] (stuck at: ${currentStep}, stalled for ${stallMinutes}m)`);
 
       try {
         // Increment health check retry counter and set recovery lock
