@@ -49,25 +49,22 @@ async function generateBookCover(storyId, storyDetails, authorName) {
   const prompt = buildCoverPrompt(title, genre, themes, description, authorName);
 
   const response = await openai.images.generate({
-    model: 'dall-e-3',
+    model: 'gpt-image-1',
     prompt: prompt,
     n: 1,
-    size: '1024x1792', // Portrait aspect ratio for book covers (dall-e-3 supports 1024x1792)
-    quality: 'standard' // dall-e-3 uses 'standard' or 'hd', not 'medium'
+    size: '1024x1536',
+    quality: 'high'
   });
 
-  const imageUrl = response.data[0].url;
+  // gpt-image-1 returns base64 data, not a URL
+  const b64_json = response.data[0].b64_json;
 
-  if (!imageUrl) {
-    throw new Error('OpenAI returned no image URL');
+  if (!b64_json) {
+    throw new Error('OpenAI returned no image data');
   }
 
-  // Step 2: Download the image from OpenAI's temporary URL
-  const imageResponse = await fetch(imageUrl);
-  if (!imageResponse.ok) {
-    throw new Error(`Failed to download generated image: ${imageResponse.status}`);
-  }
-  const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+  // Step 2: Decode base64 to buffer
+  const imageBuffer = Buffer.from(b64_json, 'base64');
 
   // Step 3: Upload to Supabase Storage
   const fileName = `covers/${storyId}.png`;
@@ -108,32 +105,39 @@ async function generateBookCover(storyId, storyDetails, authorName) {
 }
 
 /**
+ * Spell out title character-by-character for better text rendering.
+ */
+function spellOutTitle(title) {
+  return title.toUpperCase().split('').map(c => {
+    if (c === ':') return 'colon';
+    if (c === ' ') return 'space';
+    if (c === '-') return 'dash';
+    if (c === "'") return 'apostrophe';
+    return c;
+  }).join('-');
+}
+
+/**
  * Build the OpenAI image generation prompt for a book cover.
  */
 function buildCoverPrompt(title, genre, themes, description, authorName) {
   const themeStr = Array.isArray(themes) ? themes.join(', ') : (themes || '');
+  const spelledTitle = spellOutTitle(title);
+  const upperTitle = title.toUpperCase();
+  const upperAuthor = authorName.toUpperCase();
 
-  return `Create a flat, front-facing book cover illustration for a ${genre} novel. This is NOT an image of a physical book — it is the cover artwork itself, as if scanned flat on a table.
+  return `A book cover illustration for a ${genre} novel. Flat, front-facing rectangular artwork filling the entire canvas edge-to-edge.
 
-Title: "${title}"
-Author: "${authorName}"
+At the top, the title reads "${upperTitle}" — spelled ${spelledTitle} — in bold serif font, large and centered, white or metallic lettering with dramatic shadow.
 
-Story: ${description}
+At the bottom, the author name reads "${upperAuthor}" in smaller clean sans-serif font, white, centered.
+
+Background artwork based on this story: ${description}
 Themes: ${themeStr}
 
-CRITICAL RULES:
-- This is a FLAT, 2D, front-facing rectangular image — NO 3D perspective, NO book spine, NO visible pages, NO curled edges, NO shadow of a book object
-- Think of this as the artwork file a designer would send to the printer — perfectly flat and rectangular
-- The title "${title}" must be rendered in LARGE, BOLD, HIGHLY LEGIBLE typography — treat the text as the most important element
-- The author name "${authorName}" should appear smaller, typically at the top or bottom
-- ALL TEXT must be spelled exactly as provided — double-check every letter
-- Use clean, professional font styling — no distorted, warped, or stylized letterforms that sacrifice readability
-- Genre-appropriate illustration or painterly composition for ${genre}
-- Rich color palette that fits the genre and mood
-- Professional layout with clear visual hierarchy: artwork, title, author name
-- Portrait orientation (taller than wide)
-- Do NOT include publisher logos, barcodes, ISBN numbers, or review quotes
-- Do NOT render this as a photograph of a book — it must be the flat cover art only`;
+Genre-appropriate visual style and color palette for ${genre}. Rich, painterly, cinematic composition with dramatic lighting.
+
+Ensure all text is perfectly legible with no extra characters. Do NOT render a 3D book object, spine, or pages. No borders or margins. Include padding so no text is cut off.`;
 }
 
 module.exports = {
