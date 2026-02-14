@@ -113,25 +113,27 @@ async function generateBookCover(storyId, storyDetails, authorName) {
 function buildCoverPrompt(title, genre, themes, description, authorName) {
   const themeStr = Array.isArray(themes) ? themes.join(', ') : (themes || '');
 
-  return `Design a professional, published-quality book cover for a ${genre} novel.
+  return `Create a flat, front-facing book cover illustration for a ${genre} novel. This is NOT an image of a physical book — it is the cover artwork itself, as if scanned flat on a table.
 
 Title: "${title}"
-Author name: "${authorName}"
+Author: "${authorName}"
 
-Story summary: ${description}
+Story: ${description}
 Themes: ${themeStr}
 
-Requirements:
-- This must look like a real, professionally designed book cover you'd find in a bookstore
-- The title "${title}" must be prominently displayed and perfectly legible
-- The author name "${authorName}" must appear on the cover (typically at top or bottom)
-- Genre-appropriate artwork and color palette for ${genre}
-- Rich, detailed illustration or photographic composition as the cover art
-- Professional typography — the text must be crisp, clean, and correctly spelled
-- Include subtle decorative elements appropriate to the genre (ornamental borders, textures, etc.)
-- The overall composition should have visual depth and feel premium
-- Portrait orientation (taller than wide), standard book cover proportions
-- Do NOT include any publisher logos, barcodes, or ISBN numbers`;
+CRITICAL RULES:
+- This is a FLAT, 2D, front-facing rectangular image — NO 3D perspective, NO book spine, NO visible pages, NO curled edges, NO shadow of a book object
+- Think of this as the artwork file a designer would send to the printer — perfectly flat and rectangular
+- The title "${title}" must be rendered in LARGE, BOLD, HIGHLY LEGIBLE typography — treat the text as the most important element
+- The author name "${authorName}" should appear smaller, typically at the top or bottom
+- ALL TEXT must be spelled exactly as provided — double-check every letter
+- Use clean, professional font styling — no distorted, warped, or stylized letterforms that sacrifice readability
+- Genre-appropriate illustration or painterly composition for ${genre}
+- Rich color palette that fits the genre and mood
+- Professional layout with clear visual hierarchy: artwork, title, author name
+- Portrait orientation (taller than wide)
+- Do NOT include publisher logos, barcodes, ISBN numbers, or review quotes
+- Do NOT render this as a photograph of a book — it must be the flat cover art only`;
 }
 
 module.exports = {
