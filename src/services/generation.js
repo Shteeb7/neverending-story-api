@@ -392,49 +392,104 @@ async function generatePremises(userId, preferences) {
     dislikedElements = [],
     characterTypes = 'varied',
     name = 'Reader',
-    ageRange: rawAgeRange = 'adult'  // Changed: default to 'adult' category not '8-12'
+    ageRange: rawAgeRange = 'adult'
   } = preferences;
 
   // Map categorical age to literal range for prompts
   const ageRange = mapAgeRange(rawAgeRange);
 
-  console.log('📊 Generating premises with user preferences:');
+  // Fetch discovery tolerance and emotional drivers from user_preferences
+  const { data: userPrefs } = await supabaseAdmin
+    .from('user_preferences')
+    .select('discovery_tolerance, preferences')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const discoveryTolerance = userPrefs?.discovery_tolerance ?? 0.5;
+  const emotionalDrivers = userPrefs?.preferences?.emotionalDrivers || userPrefs?.preferences?.emotional_drivers || [];
+  const belovedStories = userPrefs?.preferences?.belovedStories || userPrefs?.preferences?.beloved_stories || [];
+
+  // Fetch reading history to avoid repetition
+  const { data: readHistory } = await supabaseAdmin
+    .from('stories')
+    .select('title, genre, premise_tier')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  const previousTitles = (readHistory || []).map(s => s.title).filter(Boolean);
+  const previousGenres = (readHistory || []).map(s => s.genre).filter(Boolean);
+
+  console.log('📊 Generating premises with three-tier framework:');
   console.log(`   Genres: ${genres.join(', ') || 'None specified'}`);
   console.log(`   Themes: ${themes.join(', ') || 'None specified'}`);
   console.log(`   Mood: ${mood}`);
   console.log(`   Character Types: ${characterTypes}`);
   console.log(`   Disliked: ${dislikedElements.join(', ') || 'None specified'}`);
   console.log(`   Age Range: ${rawAgeRange} → ${ageRange}`);
+  console.log(`   Discovery Tolerance: ${discoveryTolerance.toFixed(2)}`);
+  console.log(`   Emotional Drivers: ${emotionalDrivers.join(', ') || 'Not yet identified'}`);
+  console.log(`   Previous Stories: ${previousTitles.length} titles`);
 
-  // Build dynamic prompt based on actual preferences
-  const genreList = genres.length > 0 ? genres.join(', ') : 'varied fiction';
-  const themeList = themes.length > 0 ? themes.join(', ') : 'engaging themes';
+  // Build the three-tier premise prompt
+  const genreList = genres.length > 0 ? genres.join(', ') : 'varied';
+  const themeList = themes.length > 0 ? themes.join(', ') : 'varied';
+  const avoidList = dislikedElements.length > 0 ? dislikedElements.join(', ') : 'none specified';
+  const driverList = emotionalDrivers.length > 0 ? emotionalDrivers.join(', ') : 'not yet identified';
+  const belovedList = belovedStories.length > 0
+    ? belovedStories.map(s => typeof s === 'object' ? `${s.title} (${s.reason || s.why || ''})` : s).join('; ')
+    : 'not yet shared';
+  const historyList = previousTitles.length > 0 ? previousTitles.join(', ') : 'none yet — this is their first set of stories';
 
-  const prompt = `You are an expert author who creates compelling stories tailored to reader preferences.
+  const wildcardCalibration = discoveryTolerance >= 0.7
+    ? 'HIGH tolerance — the wildcard should be a genuine genre departure. Take the emotional driver and transplant it into a genre/setting they have NEVER mentioned or experienced. Be bold.'
+    : discoveryTolerance >= 0.4
+    ? 'MEDIUM tolerance — the wildcard should stay in a related genre family but take an unexpected thematic or setting angle they would not have predicted.'
+    : 'LOW tolerance — the wildcard should stay within their preferred genres but approach from a surprising angle or subgenre they haven\'t explored. Gentle surprise, not shock.';
 
-Based on the following reader preferences, generate 3 unique and compelling story premises:
+  const premisePrompt = `You are Prospero, the master storyteller of Mythweaver. You know this reader deeply and are crafting three story premises — each with a DIFFERENT purpose.
 
-READER NAME: ${name}
-PREFERRED GENRES: ${genreList}
-PREFERRED THEMES: ${themeList}
-DESIRED MOOD/TONE: ${mood}
-CHARACTER PREFERENCES: ${characterTypes}
-ELEMENTS TO AVOID: ${dislikedElements.join(', ') || 'None specified'}
-TARGET AGE RANGE: ${ageRange}
+READER PROFILE:
+- Name: ${name}
+- Preferred Genres: ${genreList}
+- Preferred Themes: ${themeList}
+- Desired Mood/Tone: ${mood}
+- Character Preferences: ${characterTypes}
+- Elements to AVOID: ${avoidList}
+- Age Range: ${ageRange}
+- Emotional Drivers (WHY they read): ${driverList}
+- Stories/Shows/Games They Love: ${belovedList}
 
-CRITICAL REQUIREMENTS:
-1. Generate stories that STRONGLY align with the preferred genres (${genreList})
-2. Incorporate the preferred themes naturally (${themeList})
-3. Match the desired mood/tone (${mood})
-4. Feature ${characterTypes} characters
-5. ABSOLUTELY AVOID all disliked elements
-6. Each premise should be distinct from the others in setting and approach
-7. Create compelling hooks that make the reader want to start immediately
+READING HISTORY (do NOT repeat these):
+${historyList}
 
-If the reader prefers Romance, create ROMANCE stories with romantic relationships as the central plot.
-If the reader prefers Fantasy, create magical/fantastical worlds.
-If the reader prefers Science Fiction, create futuristic/sci-fi settings.
-Always prioritize the reader's stated genre preferences above all else.
+DISCOVERY TOLERANCE: ${discoveryTolerance.toFixed(2)} (scale 0.0 = comfort-seeker, 1.0 = explorer)
+
+---
+
+GENERATE EXACTLY 3 PREMISES with these specific roles:
+
+**PREMISE 1 — COMFORT** (tier: "comfort")
+This is the "I know exactly what you want" option. It should land squarely within their stated genre and theme preferences. Make it excellent, compelling, and deeply aligned with what they've told you they love. This is the safe bet — and it should be VERY tempting.
+
+**PREMISE 2 — STRETCH** (tier: "stretch")
+This combines two or more things from their profile in a way they would NOT have predicted. Maybe it collides two of their favorite genres. Maybe it takes a beloved theme into an unexpected setting. The key: every ingredient comes from their profile, but the combination is fresh. They should look at this and think "I never would have asked for this, but... I'm intrigued."
+
+**PREMISE 3 — WILDCARD** (tier: "wildcard")
+This is your curated surprise, Prospero. Look beneath their stated preferences to their EMOTIONAL DRIVERS — the reasons they read. Then find a completely different genre or setting that delivers that same emotional payload through an unexpected vehicle.
+
+Wildcard calibration: ${wildcardCalibration}
+
+Use TRISOCIATION: combine the reader's core emotional driver + a theme from their profile + an unexpected genre/setting into something that feels both surprising and inevitable. The reader would never have asked for this story. But three chapters in, they'll be hooked.
+
+CRITICAL RULES:
+- NEVER repeat a title, genre+setting combination, or core concept from their reading history
+- All three premises must feel COMPLETELY distinct from each other
+- The wildcard must STILL respect their avoid-list and age range
+- Every premise must have a compelling hook — the first sentence should make them NEED to know what happens
+- Genres in the response should be specific (e.g., "LitRPG", "Space Opera", "Cozy Mystery") not generic (e.g., "Fantasy", "Sci-Fi")
 
 Return ONLY a JSON object in this exact format:
 {
@@ -443,18 +498,37 @@ Return ONLY a JSON object in this exact format:
       "title": "Story Title",
       "description": "2-3 sentence compelling description that highlights the genre and themes",
       "hook": "One sentence that captures the essence and makes them want to read",
-      "genre": "primary genre from user preferences",
+      "genre": "specific genre label",
       "themes": ["theme1", "theme2", "theme3"],
-      "age_range": "${ageRange}"
+      "age_range": "${ageRange}",
+      "tier": "comfort"
+    },
+    {
+      "title": "...",
+      "description": "...",
+      "hook": "...",
+      "genre": "...",
+      "themes": ["..."],
+      "age_range": "${ageRange}",
+      "tier": "stretch"
+    },
+    {
+      "title": "...",
+      "description": "...",
+      "hook": "...",
+      "genre": "...",
+      "themes": ["..."],
+      "age_range": "${ageRange}",
+      "tier": "wildcard"
     }
   ]
 }`;
 
-  const messages = [{ role: 'user', content: prompt }];
+  const messages = [{ role: 'user', content: premisePrompt }];
 
   const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
     messages,
-    4000, // Reduced from 64000 - only need ~1000 tokens per premise
+    4000,
     { operation: 'generate_premises', userId }
   );
 
@@ -466,13 +540,21 @@ Return ONLY a JSON object in this exact format:
     throw new Error('Expected exactly 3 premises');
   }
 
-  // Add unique IDs to each premise (required by iOS Premise model)
-  const premisesWithIds = parsed.premises.map(premise => ({
-    id: crypto.randomUUID(),
-    ...premise
-  }));
+  // Validate tier tags and add unique IDs
+  const validTiers = ['comfort', 'stretch', 'wildcard'];
+  const premisesWithIds = parsed.premises.map((premise, i) => {
+    if (!premise.tier || !validTiers.includes(premise.tier)) {
+      // Fallback: assign by position (comfort, stretch, wildcard)
+      premise.tier = validTiers[i] || 'comfort';
+      console.log(`⚠️ Premise ${i+1} missing tier, assigned: ${premise.tier}`);
+    }
+    return {
+      id: crypto.randomUUID(),
+      ...premise
+    };
+  });
 
-  console.log('✅ Added UUIDs to premises:', premisesWithIds.map(p => ({ id: p.id, title: p.title })));
+  console.log('✅ Generated premises with tiers:', premisesWithIds.map(p => ({ id: p.id, title: p.title, tier: p.tier })));
 
   // Store in database
   const { data, error } = await supabaseAdmin
