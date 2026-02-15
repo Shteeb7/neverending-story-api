@@ -16,6 +16,15 @@ const SONNET_PRICING = {
 };
 
 /**
+ * Strip markdown code blocks from Claude response before JSON parsing
+ */
+function stripMarkdownCodeBlocks(text) {
+  // Remove ```json ... ``` or ``` ... ``` wrappers if present
+  const stripped = text.trim().replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '');
+  return stripped.trim();
+}
+
+/**
  * Calculate cost in USD for Haiku API calls
  */
 function calculateHaikuCost(inputTokens, outputTokens) {
@@ -214,7 +223,7 @@ IMPORTANT: Focus on SUBJECTIVE experience, not plot summary. We need to know how
     // Call Claude Haiku for extraction
     const response = await anthropic.messages.create({
       model: HAIKU_PRICING.MODEL,
-      max_tokens: 4000,
+      max_tokens: 8000,
       messages: [{ role: 'user', content: extractionPrompt }]
     });
 
@@ -228,7 +237,8 @@ IMPORTANT: Focus on SUBJECTIVE experience, not plot summary. We need to know how
     });
 
     const responseText = response.content[0].text;
-    const ledgerData = JSON.parse(responseText);
+    const cleanedResponse = stripMarkdownCodeBlocks(responseText);
+    const ledgerData = JSON.parse(cleanedResponse);
 
     // Smart merge: deduplicate by (source_chapter + moment), keeping newest status
     const newCallbacks = ledgerData.callback_bank || [];
@@ -672,7 +682,8 @@ Return ONLY valid JSON matching this structure:
     });
 
     // Parse the response
-    const reviewData = JSON.parse(responseText);
+    const cleanedResponse = stripMarkdownCodeBlocks(responseText);
+    const reviewData = JSON.parse(cleanedResponse);
 
     // Count total flags across all characters
     const flagsCount = reviewData.voice_checks?.reduce((sum, check) => {

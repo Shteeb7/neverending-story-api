@@ -409,4 +409,58 @@ router.post('/complete', authenticateUser, asyncHandler(async (req, res) => {
   });
 }));
 
+/**
+ * POST /onboarding/confirm-name
+ * Confirms and optionally updates the user's name after onboarding
+ */
+router.post('/confirm-name', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { name } = req.body;
+
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Name is required and must be a non-empty string'
+    });
+  }
+
+  const confirmedName = name.trim();
+
+  // Update name in user_preferences.preferences (JSONB merge)
+  const { error: updateError } = await supabaseAdmin
+    .from('user_preferences')
+    .update({
+      preferences: supabaseAdmin.raw(`preferences || '{"name": "${confirmedName.replace(/"/g, '\\"')}"}'::jsonb`),
+      name_confirmed: true
+    })
+    .eq('user_id', userId);
+
+  if (updateError) {
+    throw new Error(`Failed to update name: ${updateError.message}`);
+  }
+
+  // Find all stories missing covers for this user
+  const { data: storiesNeedingCovers } = await supabaseAdmin
+    .from('stories')
+    .select('id, title')
+    .eq('user_id', userId)
+    .is('cover_image_url', null);
+
+  // Fire cover generation for each (non-blocking)
+  if (storiesNeedingCovers && storiesNeedingCovers.length > 0) {
+    const { generateBookCover } = require('../services/cover-generation');
+    for (const story of storiesNeedingCovers) {
+      generateBookCover(story.id, userId).catch(err =>
+        console.error(`❌ Cover gen failed for "${story.title}":`, err.message)
+      );
+    }
+    console.log(`🎨 Triggered cover generation for ${storiesNeedingCovers.length} stories after name confirmation`);
+  }
+
+  res.json({
+    success: true,
+    name: confirmedName
+  });
+}));
+
 module.exports = router;

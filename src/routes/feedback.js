@@ -91,13 +91,21 @@ router.post('/checkpoint', authenticateUser, asyncHandler(async (req, res) => {
     });
   }
 
-  console.log(`📊 Feedback: story=${storyId}, checkpoint=${checkpoint}, ${hasDimensions ? `dimensions={pacing:${pacing}, tone:${tone}, character:${character}}` : `response=${response}`}`);
+  // Map old checkpoint names to new names for backward compatibility
+  const checkpointMap = {
+    'chapter_3': 'chapter_2',   // old name → new name
+    'chapter_6': 'chapter_5',
+    'chapter_9': 'chapter_8'
+  };
+  const normalizedCheckpoint = checkpointMap[checkpoint] || checkpoint;
 
-  // Store feedback with dimensions
+  console.log(`📊 Feedback: story=${storyId}, checkpoint=${checkpoint}${checkpoint !== normalizedCheckpoint ? ` (normalized to ${normalizedCheckpoint})` : ''}, ${hasDimensions ? `dimensions={pacing:${pacing}, tone:${tone}, character:${character}}` : `response=${response}`}`);
+
+  // Store feedback with dimensions (use normalized checkpoint)
   const feedbackData = {
     user_id: userId,
     story_id: storyId,
-    checkpoint,
+    checkpoint: normalizedCheckpoint,  // Use normalized checkpoint name
     response: response || null, // Keep for backward compatibility
     follow_up_action: followUpAction || null,
     voice_transcript: voiceTranscript || null,
@@ -126,27 +134,70 @@ router.post('/checkpoint', authenticateUser, asyncHandler(async (req, res) => {
   let startChapter = null;
   let endChapter = null;
 
-  if (checkpoint === 'chapter_2') {
+  // Use normalized checkpoint for trigger logic
+  if (normalizedCheckpoint === 'chapter_2') {
     startChapter = 4;
     endChapter = 6;
-  } else if (checkpoint === 'chapter_5') {
+  } else if (normalizedCheckpoint === 'chapter_5') {
     startChapter = 7;
     endChapter = 9;
-  } else if (checkpoint === 'chapter_8') {
+  } else if (normalizedCheckpoint === 'chapter_8') {
     startChapter = 10;
     endChapter = 12;
   }
 
-  // For backward compatibility: also handle old checkpoint names (chapter_3, chapter_6)
-  if (checkpoint === 'chapter_3') {
-    startChapter = 7;
-    endChapter = 9;
-  } else if (checkpoint === 'chapter_6') {
-    startChapter = 10;
-    endChapter = 12;
-  }
+  let shouldGenerate = startChapter !== null && endChapter !== null;
 
-  const shouldGenerate = startChapter !== null && endChapter !== null;
+  // Check if the next batch of chapters already exists (legacy beta stories)
+  if (shouldGenerate) {
+    const { count } = await supabaseAdmin
+      .from('chapters')
+      .select('*', { count: 'exact', head: true })
+      .eq('story_id', storyId)
+      .gte('chapter_number', startChapter)
+      .lte('chapter_number', endChapter);
+
+    if (count >= 3) {
+      // Chapters already exist, skip generation
+      console.log(`📖 Chapters ${startChapter}-${endChapter} already exist for story ${storyId}, skipping generation`);
+
+      // Fetch story to get current progress
+      const { data: story } = await supabaseAdmin
+        .from('stories')
+        .select('title, generation_progress')
+        .eq('id', storyId)
+        .single();
+
+      const storyTitle = story?.title || 'Unknown';
+
+      // Update generation_progress to the next awaiting step without regenerating
+      const nextStep = {
+        4: 'awaiting_chapter_5_feedback',
+        7: 'awaiting_chapter_8_feedback',
+        10: 'chapter_12_complete'
+      };
+
+      await supabaseAdmin
+        .from('stories')
+        .update({
+          generation_progress: {
+            ...story.generation_progress,
+            chapters_generated: endChapter,
+            current_step: nextStep[startChapter]
+          }
+        })
+        .eq('id', storyId);
+
+      console.log(`📖 [${storyTitle}] Updated progress to ${nextStep[startChapter]}`);
+
+      // Return success so the reader continues normally
+      return res.json({
+        success: true,
+        message: 'Chapters already available',
+        courseCorrections: null
+      });
+    }
+  }
 
   if (shouldGenerate) {
     console.log(`🚀 Triggering batch generation: chapters ${startChapter}-${endChapter}`);

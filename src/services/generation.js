@@ -1905,6 +1905,19 @@ async function generateBatch(storyId, startChapter, endChapter, userId, courseCo
  * @param {string} courseCorrections - Optional course correction text to inject into prompt (default: null)
  */
 async function generateChapter(storyId, chapterNumber, userId, courseCorrections = null) {
+  // Check if chapter already exists (prevents duplicate generation for legacy stories or recovery loops)
+  const { data: existingChapter } = await supabaseAdmin
+    .from('chapters')
+    .select('id, title, content')
+    .eq('story_id', storyId)
+    .eq('chapter_number', chapterNumber)
+    .maybeSingle();
+
+  if (existingChapter) {
+    console.log(`📖 Chapter ${chapterNumber} already exists for story ${storyId}, skipping generation`);
+    return existingChapter;
+  }
+
   // Fetch story
   const { data: story, error: storyError } = await supabaseAdmin
     .from('stories')
@@ -2494,16 +2507,17 @@ async function orchestratePreGeneration(storyId, userId) {
     // Runs in parallel with arc/chapter generation
     const { generateBookCover } = require('./cover-generation');
 
-    // Fetch reader's name from preferences
+    // Fetch reader's name and confirmation status from preferences
     const { data: userPrefsData } = await supabaseAdmin
       .from('user_preferences')
-      .select('preferences')
+      .select('preferences, name_confirmed')
       .eq('user_id', userId)
       .order('updated_at', { ascending: false })
       .limit(1)
       .single();
 
     const authorName = userPrefsData?.preferences?.name || 'Reader';
+    const nameConfirmed = userPrefsData?.name_confirmed || false;
 
     // Fetch story details for cover generation
     const { data: storyData } = await supabaseAdmin
@@ -2512,21 +2526,27 @@ async function orchestratePreGeneration(storyId, userId) {
       .eq('id', storyId)
       .single();
 
-    // Only generate cover if it doesn't already exist (prevents regeneration on recovery)
+    // Only generate cover if:
+    // 1. It doesn't already exist (prevents regeneration on recovery)
+    // 2. Name has been confirmed (ensures correct author name on cover)
     if (!storyData?.cover_image_url) {
-      console.log(`🎨 [${storyTitle}] Cover: generating in background...`);
-      generateBookCover(storyId, {
-        title: storyData?.title || bible.title,
-        genre: storyData?.genre || 'fiction',
-        themes: bible.themes || [],
-        description: typeof bible.central_conflict === 'string'
-          ? bible.central_conflict
-          : bible.central_conflict?.description || ''
-      }, authorName).then(url => {
-        console.log(`🎨 [${storyTitle}] Cover: uploaded ✅`);
-      }).catch(err => {
-        console.error(`⚠️ [${storyTitle}] Cover generation failed (non-blocking): ${err.message}`);
-      });
+      if (nameConfirmed) {
+        console.log(`🎨 [${storyTitle}] Cover: generating in background...`);
+        generateBookCover(storyId, {
+          title: storyData?.title || bible.title,
+          genre: storyData?.genre || 'fiction',
+          themes: bible.themes || [],
+          description: typeof bible.central_conflict === 'string'
+            ? bible.central_conflict
+            : bible.central_conflict?.description || ''
+        }, authorName).then(url => {
+          console.log(`🎨 [${storyTitle}] Cover: uploaded ✅`);
+        }).catch(err => {
+          console.error(`⚠️ [${storyTitle}] Cover generation failed (non-blocking): ${err.message}`);
+        });
+      } else {
+        console.log(`📖 [${storyTitle}] Skipping cover generation — name not yet confirmed`);
+      }
     } else {
       console.log(`🎨 [${storyTitle}] Cover: already exists, skipping`);
     }
