@@ -329,21 +329,28 @@ router.get('/premises/:userId', authenticateUser, asyncHandler(async (req, res) 
 
   // Step 4: Collect all unused premises from ALL premise sets
   const allUnusedPremises = [];
+  let mostRecentPremisesId = null;
 
   for (const premiseSet of premiseSets) {
     if (Array.isArray(premiseSet.premises)) {
       const unusedInThisSet = premiseSet.premises.filter(p => !usedPremiseIds.has(p.id));
+      if (unusedInThisSet.length > 0 && !mostRecentPremisesId) {
+        // Store the ID of the most recent set with unused premises
+        mostRecentPremisesId = premiseSet.id;
+      }
       allUnusedPremises.push(...unusedInThisSet);
     }
   }
 
   console.log(`✅ Returning ${allUnusedPremises.length} unused premises`);
+  console.log(`   Most recent premises ID: ${mostRecentPremisesId}`);
 
   res.json({
     success: true,
     premises: allUnusedPremises,
     allPremisesUsed: allUnusedPremises.length === 0,
-    needsNewInterview: allUnusedPremises.length === 0
+    needsNewInterview: allUnusedPremises.length === 0,
+    premisesId: mostRecentPremisesId
   });
 }));
 
@@ -376,9 +383,19 @@ router.get('/user-preferences/:userId', authenticateUser, asyncHandler(async (re
     throw new Error(`Failed to fetch preferences: ${prefsError.message}`);
   }
 
+  // Fetch recently discarded premises (most recent discard event)
+  const { data: recentDiscard } = await supabaseAdmin
+    .from('premise_discards')
+    .select('discarded_premises')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   res.json({
     success: true,
-    preferences: userPrefs?.preferences || null
+    preferences: userPrefs?.preferences || null,
+    recentlyDiscarded: recentDiscard?.discarded_premises || []
   });
 }));
 
@@ -475,6 +492,87 @@ router.post('/confirm-name', authenticateUser, asyncHandler(async (req, res) => 
   res.json({
     success: true,
     name: confirmedName
+  });
+}));
+
+/**
+ * POST /onboarding/discard-premises
+ * Log discarded premises when user chooses "Talk to Prospero" without selecting
+ */
+router.post('/discard-premises', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { premisesId } = req.body;
+
+  if (!premisesId) {
+    return res.status(400).json({
+      success: false,
+      error: 'premisesId is required'
+    });
+  }
+
+  console.log(`🗑️ Discarding premises for user ${userId}, premises set: ${premisesId}`);
+
+  // Fetch the story_premises record
+  const { data: premiseSet, error: fetchError } = await supabaseAdmin
+    .from('story_premises')
+    .select('premises')
+    .eq('id', premisesId)
+    .eq('user_id', userId)
+    .single();
+
+  if (fetchError || !premiseSet) {
+    return res.status(404).json({
+      success: false,
+      error: 'Premise set not found'
+    });
+  }
+
+  // Get all stories created by this user to identify which premises were used
+  const { data: stories } = await supabaseAdmin
+    .from('stories')
+    .select('title')
+    .eq('user_id', userId);
+
+  const usedTitles = new Set(stories?.map(s => s.title) || []);
+
+  // Filter out premises that were already used (selected)
+  const premises = premiseSet.premises || [];
+  const discardedPremises = premises.filter(p => !usedTitles.has(p.title));
+
+  console.log(`   Total premises in set: ${premises.length}`);
+  console.log(`   Already used: ${premises.length - discardedPremises.length}`);
+  console.log(`   Discarded: ${discardedPremises.length}`);
+
+  // Log the discarded premises
+  if (discardedPremises.length > 0) {
+    const { error: insertError } = await supabaseAdmin
+      .from('premise_discards')
+      .insert({
+        user_id: userId,
+        premises_id: premisesId,
+        discarded_premises: discardedPremises,
+        created_at: new Date().toISOString()
+      });
+
+    if (insertError) {
+      console.error('Failed to log premise discards:', insertError);
+      // Don't throw - this is a learning signal, not critical
+    }
+  }
+
+  // Update the story_premises record status to 'discarded'
+  const { error: updateError } = await supabaseAdmin
+    .from('story_premises')
+    .update({ status: 'discarded' })
+    .eq('id', premisesId);
+
+  if (updateError) {
+    console.error('Failed to update premise set status:', updateError);
+  }
+
+  res.json({
+    success: true,
+    discardedCount: discardedPremises.length
   });
 }));
 

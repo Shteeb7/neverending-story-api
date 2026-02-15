@@ -1722,6 +1722,23 @@ async function updateDiscoveryTolerance(userId) {
     }
   }
 
+  // Rule 4: Discarded premise patterns
+  const { data: discards } = await supabaseAdmin
+    .from('premise_discards')
+    .select('discarded_premises')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  if (discards && discards.length > 0) {
+    const allDiscarded = discards.flatMap(d => d.discarded_premises || []);
+    const discardedWildcards = allDiscarded.filter(p => p.tier === 'wildcard').length;
+    const discardedComforts = allDiscarded.filter(p => p.tier === 'comfort').length;
+
+    if (discardedWildcards >= 3) tolerance -= 0.05;
+    if (discardedComforts >= 3) tolerance += 0.05;
+  }
+
   // Clamp to floor/ceiling
   tolerance = Math.max(0.1, Math.min(0.95, tolerance));
   tolerance = Math.round(tolerance * 100) / 100;  // Round to 2 decimals
