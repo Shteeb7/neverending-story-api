@@ -261,5 +261,6 @@ REQUIREMENTS:
 
 module.exports = {
   generateBookCover,
-  buildCoverPrompt
+  buildCoverPrompt,
+  getArtStyle  // Export for testing
 };

@@ -3203,5 +3203,6 @@ module.exports = {
   // Export utilities for testing
   calculateCost,
   parseAndValidateJSON,
+  attemptJsonRepair,
   mapAgeRange
 };
