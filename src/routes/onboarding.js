@@ -474,7 +474,7 @@ router.post('/confirm-name', authenticateUser, asyncHandler(async (req, res) => 
   // Find all stories missing covers for this user
   const { data: storiesNeedingCovers } = await supabaseAdmin
     .from('stories')
-    .select('id, title')
+    .select('id, title, genre')
     .eq('user_id', userId)
     .is('cover_image_url', null);
 
@@ -482,9 +482,22 @@ router.post('/confirm-name', authenticateUser, asyncHandler(async (req, res) => 
   if (storiesNeedingCovers && storiesNeedingCovers.length > 0) {
     const { generateBookCover } = require('../services/cover-generation');
     for (const story of storiesNeedingCovers) {
-      generateBookCover(story.id, userId).catch(err =>
-        console.error(`❌ Cover gen failed for "${story.title}":`, err.message)
-      );
+      // Fetch the story bible for this story
+      supabaseAdmin
+        .from('story_bibles')
+        .select('*')
+        .eq('story_id', story.id)
+        .maybeSingle()
+        .then(({ data: bible }) => {
+          return generateBookCover(story.id, {
+            title: story.title,
+            genre: story.genre || 'fiction',
+            bible: bible || {}
+          }, confirmedName);
+        })
+        .catch(err =>
+          console.error(`❌ Cover gen failed for "${story.title}":`, err.message)
+        );
     }
     console.log(`🎨 Triggered cover generation for ${storiesNeedingCovers.length} stories after name confirmation`);
   }

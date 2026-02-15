@@ -63,12 +63,12 @@ async function ensureBucketExists() {
  * Generate a book cover image using OpenAI and store it in Supabase Storage.
  *
  * @param {string} storyId - The story ID
- * @param {object} storyDetails - { title, genre, themes, description }
+ * @param {object} storyDetails - { title, genre, bible }
  * @param {string} authorName - Reader's name to display as author
  * @returns {string} Public URL of the stored cover image
  */
 async function generateBookCover(storyId, storyDetails, authorName) {
-  const { title, genre, themes, description } = storyDetails;
+  const { title, genre, bible } = storyDetails;
 
   console.log(`🎨 Generating cover for "${title}" by ${authorName}`);
 
@@ -76,7 +76,7 @@ async function generateBookCover(storyId, storyDetails, authorName) {
   await ensureBucketExists();
 
   // Step 1: Generate the image with OpenAI
-  const prompt = buildCoverPrompt(title, genre, themes, description, authorName);
+  const prompt = buildCoverPrompt(title, genre, bible, authorName);
 
   const response = await openai.images.generate({
     model: 'gpt-image-1',
@@ -163,26 +163,100 @@ function spellOutTitle(title) {
 }
 
 /**
- * Build the OpenAI image generation prompt for a book cover.
+ * Select art style based on genre to create varied, genre-appropriate covers.
  */
-function buildCoverPrompt(title, genre, themes, description, authorName) {
-  const themeStr = Array.isArray(themes) ? themes.join(', ') : (themes || '');
+function getArtStyle(genre) {
+  const g = (genre || '').toLowerCase();
+
+  if (g.includes('litrpg') || g.includes('gamelit'))
+    return 'digital fantasy art style, vibrant colors, game-inspired aesthetic with glowing UI elements';
+  if (g.includes('sci-fi') || g.includes('space') || g.includes('protocol'))
+    return 'sleek sci-fi concept art, neon accents, dark metallic tones, cinematic lighting';
+  if (g.includes('horror') || g.includes('gothic') || g.includes('plague'))
+    return 'dark gothic illustration, muted earth tones with splashes of crimson, heavy shadow and atmosphere';
+  if (g.includes('whimsical') || g.includes('gaslamp'))
+    return 'whimsical watercolor illustration, warm golden tones, intricate linework, storybook charm';
+  if (g.includes('heroic') || g.includes('epic'))
+    return 'oil painting style, sweeping heroic composition, warm firelight and cool shadow contrast';
+  if (g.includes('mythic'))
+    return 'luminous mythological painting, celestial color palette, ethereal atmospheric perspective';
+  if (g.includes('dying earth') || g.includes('post'))
+    return 'weathered illustration style, faded maritime palette, textured like aged parchment';
+  if (g.includes('mystery') || g.includes('thriller'))
+    return 'moody noir illustration, high contrast, deep shadows with single dramatic light source';
+  if (g.includes('romance'))
+    return 'soft romantic illustration, warm sunset palette, flowing organic composition';
+  if (g.includes('adventure'))
+    return 'dynamic adventure illustration, saturated colors, bold composition with sense of movement';
+
+  // Default
+  return 'richly detailed book cover illustration, dramatic composition, cinematic lighting';
+}
+
+/**
+ * Build the OpenAI image generation prompt for a book cover using story bible data.
+ */
+function buildCoverPrompt(title, genre, bible, authorName) {
+  const artStyle = getArtStyle(genre);
   const spelledTitle = spellOutTitle(title);
   const upperTitle = title.toUpperCase();
   const upperAuthor = authorName.toUpperCase();
 
-  return `A book cover illustration for a ${genre} novel. Flat, front-facing rectangular artwork filling the entire canvas edge-to-edge.
+  // Extract the protagonist from bible characters
+  const characters = bible?.characters || [];
+  const protagonist = characters[0]; // First character is usually the lead
 
-At the top, the title reads "${upperTitle}" — spelled ${spelledTitle} — in bold serif font, large and centered, white or metallic lettering with dramatic shadow.
+  // Extract the most visual location
+  const locations = bible?.key_locations || [];
+  const primaryLocation = locations[0];
 
-At the bottom, the author name reads "${upperAuthor}" in smaller clean sans-serif font, white, centered.
+  // Extract conflict for mood
+  const conflict = bible?.central_conflict;
+  const conflictDesc = typeof conflict === 'string'
+    ? conflict
+    : conflict?.description || '';
 
-Background artwork based on this story: ${description}
+  // Extract themes for symbolism
+  const themes = bible?.themes || [];
+  const themeStr = Array.isArray(themes) ? themes.join(', ') : (themes || '');
+
+  // Build a character description for the cover
+  let characterLine = '';
+  if (protagonist) {
+    const name = protagonist.name || '';
+    const appearance = protagonist.appearance || protagonist.description || '';
+    characterLine = `The central figure is ${name}, ${appearance}.`;
+  }
+
+  // Build a setting description
+  let settingLine = '';
+  if (primaryLocation) {
+    const locName = primaryLocation.name || '';
+    const locDesc = primaryLocation.description || '';
+    settingLine = `The setting is ${locName}: ${locDesc}.`;
+  }
+
+  return `Design a unique book cover for a ${genre} novel titled "${upperTitle}".
+
+VISUAL SCENE:
+${characterLine}
+${settingLine}
+The story's central tension: ${conflictDesc}
 Themes: ${themeStr}
 
-Genre-appropriate visual style and color palette for ${genre}. Rich, painterly, cinematic composition with dramatic lighting.
+ART STYLE: ${artStyle}
 
-Ensure all text is perfectly legible with no extra characters. Do NOT render a 3D book object, spine, or pages. No borders or margins. Include padding so no text is cut off.`;
+TEXT LAYOUT:
+At the top: "${upperTitle}" — spelled ${spelledTitle} — in bold, genre-appropriate display font, large and centered, with strong contrast against the background.
+At the bottom: "${upperAuthor}" in smaller clean font, centered.
+
+REQUIREMENTS:
+- Flat, front-facing rectangular artwork filling the entire canvas edge-to-edge
+- Genre-appropriate color palette that reflects the story's mood
+- All text perfectly legible with no extra characters
+- Do NOT render a 3D book object, spine, or pages
+- No borders or margins
+- Include padding so no text is cut off`;
 }
 
 module.exports = {

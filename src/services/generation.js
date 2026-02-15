@@ -2552,10 +2552,7 @@ async function orchestratePreGeneration(storyId, userId) {
         generateBookCover(storyId, {
           title: storyData?.title || bible.title,
           genre: storyData?.genre || 'fiction',
-          themes: bible.themes || [],
-          description: typeof bible.central_conflict === 'string'
-            ? bible.central_conflict
-            : bible.central_conflict?.description || ''
+          bible: bible  // Pass the entire bible for unique cover generation
         }, authorName).then(url => {
           console.log(`🎨 [${storyTitle}] Cover: uploaded ✅`);
         }).catch(err => {
