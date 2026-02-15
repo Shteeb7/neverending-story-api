@@ -1,6 +1,36 @@
 const { openai } = require('../config/ai-clients');
 const { supabaseAdmin } = require('../config/supabase');
 
+// OpenAI DALL-E 3 / gpt-image-1 pricing (as of Feb 2026)
+// HD quality, 1024×1536 (similar to 1024×1792): $0.12 per image
+const IMAGE_GENERATION_COST = 0.12;
+
+/**
+ * Log API cost to database for OpenAI image generation
+ */
+async function logImageCost(userId, storyId, operation, metadata = {}) {
+  try {
+    await supabaseAdmin
+      .from('api_costs')
+      .insert({
+        user_id: userId,
+        story_id: storyId,
+        provider: 'openai',
+        model: 'gpt-image-1',
+        operation,
+        input_tokens: 0,  // Image generation doesn't use token-based pricing
+        output_tokens: 0,
+        total_tokens: 0,
+        cost: IMAGE_GENERATION_COST,
+        metadata,
+        created_at: new Date().toISOString()
+      });
+  } catch (error) {
+    // Don't throw on cost logging failures - log to console instead
+    console.error('Failed to log image generation cost:', error);
+  }
+}
+
 /**
  * Ensure the book-covers storage bucket exists (idempotent).
  */
@@ -61,6 +91,21 @@ async function generateBookCover(storyId, storyDetails, authorName) {
 
   if (!b64_json) {
     throw new Error('OpenAI returned no image data');
+  }
+
+  // Log cost for image generation (fetch userId from story)
+  const { data: story } = await supabaseAdmin
+    .from('stories')
+    .select('user_id')
+    .eq('id', storyId)
+    .single();
+
+  if (story?.user_id) {
+    await logImageCost(story.user_id, storyId, 'cover_generation', {
+      title,
+      size: '1024x1536',
+      quality: 'high'
+    });
   }
 
   // Step 2: Decode base64 to buffer

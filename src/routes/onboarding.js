@@ -6,6 +6,46 @@ const { authenticateUser } = require('../middleware/auth');
 
 const router = express.Router();
 
+// OpenAI Realtime API pricing (as of Feb 2026)
+// Audio input: $0.06 per minute, Audio output: $0.24 per minute
+// Text input: $5/1M tokens, Text output: $20/1M tokens
+// We estimate based on transcript length since we don't have exact audio duration
+const REALTIME_PRICING = {
+  TEXT_INPUT_PER_MILLION: 5,
+  TEXT_OUTPUT_PER_MILLION: 20,
+  // Rough estimate: ~150 words = 200 tokens, ~1 minute of speech
+  // Blended rate for audio + text: ~$0.15 per 200 tokens equivalent
+  ESTIMATED_COST_PER_TOKEN: 0.00075  // $0.75 per 1000 tokens (conservative estimate)
+};
+
+/**
+ * Log API cost for OpenAI Realtime voice session
+ */
+async function logVoiceCost(userId, operation, estimatedTokens, metadata = {}) {
+  const cost = estimatedTokens * REALTIME_PRICING.ESTIMATED_COST_PER_TOKEN;
+
+  try {
+    await supabaseAdmin
+      .from('api_costs')
+      .insert({
+        user_id: userId,
+        story_id: null,  // Voice onboarding isn't tied to a specific story yet
+        provider: 'openai',
+        model: process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-mini-realtime-preview-2024-12-17',
+        operation,
+        input_tokens: Math.floor(estimatedTokens * 0.4),  // Rough split: 40% input (user speaking)
+        output_tokens: Math.floor(estimatedTokens * 0.6), // 60% output (AI speaking)
+        total_tokens: estimatedTokens,
+        cost,
+        metadata,
+        created_at: new Date().toISOString()
+      });
+  } catch (error) {
+    // Don't throw on cost logging failures - log to console instead
+    console.error('Failed to log voice session cost:', error);
+  }
+}
+
 /**
  * Helper function to normalize discoveryTolerance to numeric value
  * "low" (comfort-seeker) = 0.2
@@ -139,6 +179,15 @@ router.post('/process-transcript', authenticateUser, asyncHandler(async (req, re
   if (error) {
     throw new Error(`Failed to store preferences: ${error.message}`);
   }
+
+  // Log cost for voice session (estimate tokens from transcript length)
+  // Rough estimate: 1 token ≈ 0.75 words, so words / 0.75 = tokens
+  const estimatedTokens = Math.ceil(transcript.split(/\s+/).length / 0.75);
+  await logVoiceCost(userId, 'voice_onboarding', estimatedTokens, {
+    sessionId,
+    transcriptLength: transcript.length,
+    estimatedTokens
+  });
 
   res.json({
     success: true,
