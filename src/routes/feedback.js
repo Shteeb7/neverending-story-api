@@ -106,7 +106,7 @@ router.post('/checkpoint', authenticateUser, asyncHandler(async (req, res) => {
     user_id: userId,
     story_id: storyId,
     checkpoint: normalizedCheckpoint,  // Use normalized checkpoint name
-    response: response || null, // Keep for backward compatibility
+    response: response || (hasDimensions ? 'dimension_feedback' : null), // Default for new format
     follow_up_action: followUpAction || null,
     voice_transcript: voiceTranscript || null,
     voice_session_id: voiceSessionId || null,
