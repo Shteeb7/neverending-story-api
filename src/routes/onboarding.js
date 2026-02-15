@@ -426,11 +426,26 @@ router.post('/confirm-name', authenticateUser, asyncHandler(async (req, res) => 
 
   const confirmedName = name.trim();
 
-  // Update name in user_preferences.preferences (JSONB merge)
+  // Fetch current preferences to merge with new name
+  const { data: currentPrefs } = await supabaseAdmin
+    .from('user_preferences')
+    .select('preferences')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // Merge new name into existing preferences
+  const updatedPreferences = {
+    ...(currentPrefs?.preferences || {}),
+    name: confirmedName
+  };
+
+  // Update preferences with merged object and set name_confirmed flag
   const { error: updateError } = await supabaseAdmin
     .from('user_preferences')
     .update({
-      preferences: supabaseAdmin.raw(`preferences || '{"name": "${confirmedName.replace(/"/g, '\\"')}"}'::jsonb`),
+      preferences: updatedPreferences,
       name_confirmed: true
     })
     .eq('user_id', userId);
