@@ -271,10 +271,12 @@ router.get('/premises/:userId', authenticateUser, asyncHandler(async (req, res) 
   console.log('✅ Authorization passed');
 
   // Step 1: Fetch ALL premise sets for this user (not just latest)
+  // Filter out discarded premise sets to prevent showing old premises after "Talk to Prospero"
   const { data: premiseSets, error: premisesError } = await supabaseAdmin
     .from('story_premises')
-    .select('id, premises, generated_at')
+    .select('id, premises, generated_at, status')
     .eq('user_id', userId)
+    .neq('status', 'discarded')
     .order('generated_at', { ascending: false });
 
   if (premisesError) {
