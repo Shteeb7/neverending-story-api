@@ -2007,6 +2007,10 @@ async function generateChapter(storyId, chapterNumber, userId, courseCorrections
 </reader_course_correction>`;
   }
 
+  // Build character continuity block from previous ledger entries
+  const { buildCharacterContinuityBlock } = require('./character-intelligence');
+  const characterContinuityBlock = await buildCharacterContinuityBlock(storyId, chapterNumber);
+
   const generatePrompt = `You are an award-winning fiction author known for prose that shows instead of tells, vivid character work, and compulsive page-turning narratives.
 
 Write Chapter ${chapterNumber} of "${bible.title}" following this outline and craft rules.
@@ -2163,7 +2167,7 @@ ${previousContext}
 
   Adjust vocabulary complexity, sentence structure, and thematic sophistication to match this age range. For children (8-12), keep sentences varied but accessible, avoid abstract philosophical digressions, and ground emotions in concrete physical experience. For teens (13-17), you can explore more complex interior conflict and moral ambiguity. For adults (18+), full range of vocabulary and thematic depth.
 </target_age_range>
-${learnedPreferencesBlock}${courseCorrectionsBlock}
+${learnedPreferencesBlock}${courseCorrectionsBlock}${characterContinuityBlock}
 
 Return ONLY a JSON object in this exact format:
 {
@@ -2416,6 +2420,33 @@ Return ONLY a JSON object in this exact format:
     chapters_generated: chapterNumber,
     current_step: `chapter_${chapterNumber}_complete`
   });
+
+  // Extract character ledger (wait for completion to ensure intra-batch continuity)
+  const { extractCharacterLedger, reviewCharacterVoices, applyVoiceRevisions } = require('./character-intelligence');
+  try {
+    await extractCharacterLedger(storyId, chapterNumber, chapter.content);
+    console.log(`📚 [${storyTitle}] Character ledger extracted for chapter ${chapterNumber}`);
+  } catch (err) {
+    console.error(`⚠️ [${storyTitle}] Character ledger extraction failed for chapter ${chapterNumber}: ${err.message}`);
+  }
+
+  // Character voice review (Sonnet pass — checks character authenticity against ledger)
+  try {
+    const voiceReview = await reviewCharacterVoices(storyId, chapterNumber, chapter.content, userId);
+    if (voiceReview) {
+      console.log(`🎭 [${storyTitle}] Voice review complete for chapter ${chapterNumber} (${voiceReview.voice_checks?.length || 0} characters reviewed)`);
+
+      // Check if revision is needed
+      const revisedContent = await applyVoiceRevisions(storyId, chapterNumber, chapter.content, voiceReview, userId);
+      if (revisedContent) {
+        console.log(`🎭 [${storyTitle}] Voice revision applied to chapter ${chapterNumber}`);
+        // Update the storedChapter reference with new content
+        storedChapter.content = revisedContent;
+      }
+    }
+  } catch (err) {
+    console.error(`⚠️ [${storyTitle}] Voice review failed for chapter ${chapterNumber}: ${err.message}`);
+  }
 
   return storedChapter;
 }

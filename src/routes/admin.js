@@ -204,4 +204,79 @@ router.post('/writing-intelligence/log-adjustment', authenticateUser, asyncHandl
   res.json(result);
 }));
 
+/**
+ * GET /admin/character-intelligence
+ * Get character intelligence system health metrics
+ * Shows ledger usage, voice review stats, callback utilization, and authenticity scores
+ */
+router.get('/character-intelligence', authenticateUser, asyncHandler(async (req, res) => {
+  // TODO: In production, add admin role check here
+  console.log('📚 Fetching character intelligence metrics...');
+
+  // Voice review stats
+  const { data: reviews } = await supabaseAdmin
+    .from('character_voice_reviews')
+    .select('review_data, flags_count, revision_applied, chapter_number');
+
+  // Ledger stats
+  const { data: ledgers } = await supabaseAdmin
+    .from('character_ledger_entries')
+    .select('story_id, chapter_number, token_count, callback_bank');
+
+  // Calculate metrics
+  const totalReviews = reviews?.length || 0;
+  const revisionsApplied = reviews?.filter(r => r.revision_applied).length || 0;
+  const revisionRate = totalReviews > 0 ? (revisionsApplied / totalReviews * 100).toFixed(1) : 0;
+
+  // Average authenticity scores
+  const allScores = [];
+  for (const review of reviews || []) {
+    for (const check of review.review_data?.voice_checks || []) {
+      allScores.push(check.authenticity_score);
+    }
+  }
+  const avgAuthenticity = allScores.length > 0
+    ? (allScores.reduce((a, b) => a + b, 0) / allScores.length).toFixed(2)
+    : 'N/A';
+  const passRate = allScores.length > 0
+    ? (allScores.filter(s => s >= 0.85).length / allScores.length * 100).toFixed(1)
+    : 'N/A';
+
+  // Callback utilization
+  const totalCallbacks = ledgers?.reduce((sum, l) => sum + (l.callback_bank?.length || 0), 0) || 0;
+  const usedCallbacks = ledgers?.reduce((sum, l) =>
+    sum + (l.callback_bank?.filter(cb => cb.status === 'used')?.length || 0), 0) || 0;
+  const callbackUtilization = totalCallbacks > 0
+    ? (usedCallbacks / totalCallbacks * 100).toFixed(1)
+    : 'N/A';
+
+  // Token usage
+  const avgTokens = ledgers?.length > 0
+    ? Math.round(ledgers.reduce((sum, l) => sum + (l.token_count || 0), 0) / ledgers.length)
+    : 0;
+
+  // Unique stories using the system
+  const uniqueStories = new Set(ledgers?.map(l => l.story_id) || []).size;
+
+  res.json({
+    character_intelligence: {
+      stories_tracked: uniqueStories,
+      ledger_entries: ledgers?.length || 0,
+      avg_token_count: avgTokens,
+      voice_reviews: {
+        total: totalReviews,
+        revisions_applied: revisionsApplied,
+        revision_rate: `${revisionRate}%`,
+        avg_authenticity_score: avgAuthenticity,
+        pass_rate_085: `${passRate}%`
+      },
+      callback_bank: {
+        total_callbacks: totalCallbacks,
+        used_callbacks: usedCallbacks,
+        utilization_rate: `${callbackUtilization}%`
+      }
+    }
+  });
+}));
+
 module.exports = router;
