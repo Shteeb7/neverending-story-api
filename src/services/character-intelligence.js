@@ -1,12 +1,28 @@
 const { anthropic } = require('../config/ai-clients');
 const { supabaseAdmin } = require('../config/supabase');
 
+// Haiku 4.5 pricing for ledger extraction and compression (per million tokens)
+const HAIKU_PRICING = {
+  INPUT_PER_MILLION: 1,    // Claude Haiku 4.5 input pricing
+  OUTPUT_PER_MILLION: 5,   // Claude Haiku 4.5 output pricing
+  MODEL: 'claude-haiku-4-5-20251001'
+};
+
 // Sonnet 4.5 pricing for voice review and revision (per million tokens)
 const SONNET_PRICING = {
   INPUT_PER_MILLION: 3,    // Claude Sonnet 4.5 input pricing
   OUTPUT_PER_MILLION: 15,  // Claude Sonnet 4.5 output pricing
   MODEL: 'claude-sonnet-4-5-20250929'
 };
+
+/**
+ * Calculate cost in USD for Haiku API calls
+ */
+function calculateHaikuCost(inputTokens, outputTokens) {
+  const inputCost = (inputTokens / 1_000_000) * HAIKU_PRICING.INPUT_PER_MILLION;
+  const outputCost = (outputTokens / 1_000_000) * HAIKU_PRICING.OUTPUT_PER_MILLION;
+  return inputCost + outputCost;
+}
 
 /**
  * Calculate cost in USD for Sonnet API calls
@@ -18,7 +34,36 @@ function calculateSonnetCost(inputTokens, outputTokens) {
 }
 
 /**
- * Log API cost to database
+ * Log API cost to database for Haiku operations
+ */
+async function logHaikuCost(userId, storyId, operation, inputTokens, outputTokens, metadata = {}) {
+  const totalTokens = inputTokens + outputTokens;
+  const cost = calculateHaikuCost(inputTokens, outputTokens);
+
+  try {
+    await supabaseAdmin
+      .from('api_costs')
+      .insert({
+        user_id: userId,
+        story_id: storyId,
+        provider: 'claude',
+        model: HAIKU_PRICING.MODEL,
+        operation,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        total_tokens: totalTokens,
+        cost,
+        metadata,
+        created_at: new Date().toISOString()
+      });
+  } catch (error) {
+    // Don't throw on cost logging failures - log to console instead
+    console.error('Failed to log API cost:', error);
+  }
+}
+
+/**
+ * Log API cost to database for Sonnet operations
  */
 async function logApiCost(userId, storyId, operation, inputTokens, outputTokens, metadata = {}) {
   const totalTokens = inputTokens + outputTokens;
@@ -53,9 +98,10 @@ async function logApiCost(userId, storyId, operation, inputTokens, outputTokens,
  * @param {string} storyId - UUID of the story
  * @param {number} chapterNumber - Chapter number (1-12)
  * @param {string} chapterContent - The full text of the chapter
+ * @param {string} userId - UUID of the user (for cost logging)
  * @returns {Promise<Object>} The saved ledger entry
  */
-async function extractCharacterLedger(storyId, chapterNumber, chapterContent) {
+async function extractCharacterLedger(storyId, chapterNumber, chapterContent, userId) {
   try {
     // Fetch story bible for character list
     const { data: bible, error: bibleError } = await supabaseAdmin
@@ -167,9 +213,18 @@ IMPORTANT: Focus on SUBJECTIVE experience, not plot summary. We need to know how
 
     // Call Claude Haiku for extraction
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: HAIKU_PRICING.MODEL,
       max_tokens: 4000,
       messages: [{ role: 'user', content: extractionPrompt }]
+    });
+
+    const inputTokens = response.usage.input_tokens;
+    const outputTokens = response.usage.output_tokens;
+
+    // Log API cost
+    await logHaikuCost(userId, storyId, 'ledger_extraction', inputTokens, outputTokens, {
+      chapterNumber,
+      characters_extracted: bible.characters.supporting?.length + 2 || 2
     });
 
     const responseText = response.content[0].text;
@@ -427,9 +482,11 @@ ${JSON.stringify(callbackBank, null, 4)}
  * Preserves key relationship states, active callbacks, and major unresolved tensions
  *
  * @param {Object} ledgerData - Full ledger JSON
+ * @param {string} [userId] - Optional UUID of the user (for cost logging)
+ * @param {string} [storyId] - Optional UUID of the story (for cost logging)
  * @returns {Promise<string>} Compressed text summary
  */
-async function compressLedgerEntry(ledgerData) {
+async function compressLedgerEntry(ledgerData, userId = null, storyId = null) {
   try {
     const compressionPrompt = `Compress this character relationship ledger into a concise summary (100-150 words).
 
@@ -450,10 +507,19 @@ DROP:
 Return ONLY the compressed text summary, no JSON formatting.`;
 
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: HAIKU_PRICING.MODEL,
       max_tokens: 500,
       messages: [{ role: 'user', content: compressionPrompt }]
     });
+
+    // Log API cost if userId and storyId are provided
+    if (userId && storyId) {
+      const inputTokens = response.usage.input_tokens;
+      const outputTokens = response.usage.output_tokens;
+      await logHaikuCost(userId, storyId, 'ledger_compression', inputTokens, outputTokens, {
+        chapter: ledgerData.chapter
+      });
+    }
 
     return response.content[0].text.trim();
   } catch (error) {

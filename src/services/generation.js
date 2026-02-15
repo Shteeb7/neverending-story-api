@@ -2424,7 +2424,7 @@ Return ONLY a JSON object in this exact format:
   // Extract character ledger (wait for completion to ensure intra-batch continuity)
   const { extractCharacterLedger, reviewCharacterVoices, applyVoiceRevisions } = require('./character-intelligence');
   try {
-    await extractCharacterLedger(storyId, chapterNumber, chapter.content);
+    await extractCharacterLedger(storyId, chapterNumber, chapter.content, userId);
     console.log(`📚 [${storyTitle}] Character ledger extracted for chapter ${chapterNumber}`);
   } catch (err) {
     console.error(`⚠️ [${storyTitle}] Character ledger extraction failed for chapter ${chapterNumber}: ${err.message}`);
