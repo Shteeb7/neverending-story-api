@@ -512,9 +512,9 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
   console.log('📐 Generating Book 2 arc...');
   await generateArcOutline(book2Story.id, userId);
 
-  console.log('📝 Starting Book 2 chapter generation (1-6)...');
+  console.log('📝 Starting Book 2 chapter generation (1-3 initial batch)...');
 
-  // Start pre-generation in background (6 chapters)
+  // Start pre-generation in background (3 chapters)
   orchestratePreGeneration(book2Story.id, userId).catch(error => {
     console.error('Book 2 pre-generation failed:', error);
   });

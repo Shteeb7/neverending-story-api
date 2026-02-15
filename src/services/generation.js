@@ -2421,8 +2421,8 @@ Return ONLY a JSON object in this exact format:
 }
 
 /**
- * Orchestrate complete pre-generation: Bible -> Arc -> Chapters 1-6
- * (Chapters 7-9 and 10-12 are generated based on reader feedback)
+ * Orchestrate complete pre-generation: Bible -> Arc -> Chapters 1-3 (initial batch)
+ * (Chapters 4-6, 7-9, and 10-12 are generated based on reader feedback after checkpoints)
  */
 async function orchestratePreGeneration(storyId, userId) {
   const pipelineStartTime = Date.now();
