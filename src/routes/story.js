@@ -164,10 +164,12 @@ router.get('/generation-status/:storyId', authenticateUser, asyncHandler(async (
     });
   }
 
-  const { count: chapterCount } = await supabaseAdmin
+  // Count distinct chapter numbers (not rows) to handle any duplicates
+  const { data: countData } = await supabaseAdmin
     .from('chapters')
-    .select('*', { count: 'exact', head: true })
+    .select('chapter_number')
     .eq('story_id', storyId);
+  const chapterCount = new Set(countData?.map(c => c.chapter_number)).size;
 
   res.json({
     success: true,
@@ -214,10 +216,20 @@ router.get('/:storyId/chapters', authenticateUser, asyncHandler(async (req, res)
     throw new Error(`Failed to fetch chapters: ${chaptersError.message}`);
   }
 
+  // Deduplicate by chapter_number (keep first occurrence) - defense in depth
+  const uniqueChapters = [];
+  const seenChapterNumbers = new Set();
+  for (const chapter of chapters) {
+    if (!seenChapterNumbers.has(chapter.chapter_number)) {
+      seenChapterNumbers.add(chapter.chapter_number);
+      uniqueChapters.push(chapter);
+    }
+  }
+
   res.json({
     success: true,
     storyId,
-    chapters: chapters || []
+    chapters: uniqueChapters || []
   });
 }));
 
@@ -253,10 +265,12 @@ router.post('/:storyId/generate-next', authenticateUser, asyncHandler(async (req
   }
 
   // Get current chapter count
-  const { count: chapterCount } = await supabaseAdmin
+  // Count distinct chapter numbers (not rows) to handle any duplicates
+  const { data: countData } = await supabaseAdmin
     .from('chapters')
-    .select('*', { count: 'exact', head: true })
+    .select('chapter_number')
     .eq('story_id', storyId);
+  const chapterCount = new Set(countData?.map(c => c.chapter_number)).size;
 
   const nextChapterNumber = (chapterCount || 0) + 1;
 
@@ -346,10 +360,12 @@ router.get('/:storyId/current-state', authenticateUser, asyncHandler(async (req,
     .single();
 
   // Get chapter count
-  const { count: chapterCount } = await supabaseAdmin
+  // Count distinct chapter numbers (not rows) to handle any duplicates
+  const { data: countData } = await supabaseAdmin
     .from('chapters')
-    .select('*', { count: 'exact', head: true })
+    .select('chapter_number')
     .eq('story_id', storyId);
+  const chapterCount = new Set(countData?.map(c => c.chapter_number)).size;
 
   res.json({
     success: true,
@@ -386,10 +402,12 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
   }
 
   // Check if chapters complete
-  const { count: chapterCount } = await supabaseAdmin
+  // Count distinct chapter numbers (not rows) to handle any duplicates
+  const { data: countData } = await supabaseAdmin
     .from('chapters')
-    .select('*', { count: 'exact', head: true })
+    .select('chapter_number')
     .eq('story_id', storyId);
+  const chapterCount = new Set(countData?.map(c => c.chapter_number)).size;
 
   if (chapterCount < 12) {
     return res.status(400).json({
