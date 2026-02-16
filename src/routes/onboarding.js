@@ -592,4 +592,89 @@ router.post('/discard-premises', authenticateUser, asyncHandler(async (req, res)
   });
 }));
 
+/**
+ * POST /onboarding/save-dob
+ * Save date of birth (month/year only) and compute is_minor flag
+ * This is called AFTER account creation succeeds
+ * Validates age >= 13 (COPPA compliance)
+ */
+router.post('/save-dob', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { birthMonth, birthYear } = req.body;
+
+  // Validate input
+  if (!birthMonth || !birthYear) {
+    return res.status(400).json({
+      success: false,
+      error: 'AGE_VALIDATION_FAILED',
+      message: 'birthMonth and birthYear are required'
+    });
+  }
+
+  if (birthMonth < 1 || birthMonth > 12) {
+    return res.status(400).json({
+      success: false,
+      error: 'AGE_VALIDATION_FAILED',
+      message: 'birthMonth must be between 1 and 12'
+    });
+  }
+
+  const currentYear = new Date().getFullYear();
+  if (birthYear < 1920 || birthYear > currentYear) {
+    return res.status(400).json({
+      success: false,
+      error: 'AGE_VALIDATION_FAILED',
+      message: `birthYear must be between 1920 and ${currentYear}`
+    });
+  }
+
+  // Calculate age using conservative month/year approach
+  // If birth month hasn't fully passed in current year, assume birthday hasn't occurred yet
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1; // JavaScript months are 0-indexed
+  let age = currentYear - birthYear;
+  if (currentMonth < birthMonth) {
+    age -= 1;
+  }
+
+  // COPPA compliance: reject under-13
+  if (age < 13) {
+    console.log(`🚫 Age gate blocked user ${userId}: age ${age} (DOB: ${birthMonth}/${birthYear})`);
+    return res.status(403).json({
+      success: false,
+      error: 'AGE_REQUIREMENT_NOT_MET',
+      message: 'Users must be 13 or older'
+    });
+  }
+
+  // Compute is_minor flag (under 18)
+  const isMinor = age < 18;
+
+  // Save to user_preferences
+  const { error } = await supabaseAdmin
+    .from('user_preferences')
+    .upsert({
+      user_id: userId,
+      birth_month: birthMonth,
+      birth_year: birthYear,
+      is_minor: isMinor,
+      updated_at: new Date().toISOString()
+    }, {
+      onConflict: 'user_id'
+    });
+
+  if (error) {
+    console.error(`Failed to save DOB for user ${userId}:`, error);
+    throw new Error(`Failed to save date of birth: ${error.message}`);
+  }
+
+  console.log(`✅ Saved DOB for user ${userId}: ${birthMonth}/${birthYear}, age ${age}, is_minor: ${isMinor}`);
+
+  res.json({
+    success: true,
+    age,
+    is_minor: isMinor
+  });
+}));
+
 module.exports = router;

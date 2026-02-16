@@ -141,4 +141,40 @@ router.post('/revoke-voice-consent', authenticateUser, asyncHandler(async (req, 
   });
 }));
 
+/**
+ * POST /settings/update-is-minor
+ * Update is_minor flag (called on app launch to recompute based on current age)
+ */
+router.post('/update-is-minor', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { isMinor } = req.body;
+
+  if (typeof isMinor !== 'boolean') {
+    return res.status(400).json({
+      success: false,
+      error: 'INVALID_INPUT',
+      message: 'isMinor must be a boolean'
+    });
+  }
+
+  const { error } = await supabaseAdmin
+    .from('user_preferences')
+    .update({
+      is_minor: isMinor,
+      updated_at: new Date().toISOString()
+    })
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error(`Failed to update is_minor for user ${userId}:`, error);
+    throw new Error(`Failed to update is_minor: ${error.message}`);
+  }
+
+  console.log(`✅ Updated is_minor for user ${userId}: ${isMinor}`);
+
+  res.json({
+    success: true
+  });
+}));
+
 module.exports = router;
