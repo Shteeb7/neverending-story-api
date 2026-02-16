@@ -3,6 +3,7 @@ const { supabaseAdmin } = require('../config/supabase');
 const { anthropic, openai } = require('../config/ai-clients');
 const { asyncHandler } = require('../middleware/error-handler');
 const { authenticateUser } = require('../middleware/auth');
+const { requireAIConsentMiddleware, requireVoiceConsentMiddleware } = require('../middleware/consent');
 
 const router = express.Router();
 
@@ -66,7 +67,7 @@ function normalizeDiscoveryTolerance(tolerance) {
  * Initialize voice conversation session for onboarding
  * Creates an ephemeral OpenAI Realtime session and returns credentials to client
  */
-router.post('/start', authenticateUser, asyncHandler(async (req, res) => {
+router.post('/start', authenticateUser, requireVoiceConsentMiddleware, asyncHandler(async (req, res) => {
   const { userId } = req;
 
   console.log('🎙️ Creating OpenAI Realtime session for user:', userId);
@@ -117,7 +118,7 @@ router.post('/start', authenticateUser, asyncHandler(async (req, res) => {
  * POST /onboarding/process-transcript
  * Process voice conversation transcript and extract user preferences
  */
-router.post('/process-transcript', authenticateUser, asyncHandler(async (req, res) => {
+router.post('/process-transcript', authenticateUser, requireVoiceConsentMiddleware, asyncHandler(async (req, res) => {
   const { userId } = req;
   const { transcript, sessionId, preferences } = req.body;
 
@@ -200,7 +201,7 @@ router.post('/process-transcript', authenticateUser, asyncHandler(async (req, re
  * POST /onboarding/generate-premises
  * Generate 3 story premises based on user preferences
  */
-router.post('/generate-premises', authenticateUser, asyncHandler(async (req, res) => {
+router.post('/generate-premises', authenticateUser, requireAIConsentMiddleware, asyncHandler(async (req, res) => {
   const { userId } = req;
   console.log(`🎬 /generate-premises called for user: ${userId}`);
 

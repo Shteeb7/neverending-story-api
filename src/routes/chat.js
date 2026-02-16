@@ -1,6 +1,7 @@
 const express = require('express');
 const { asyncHandler } = require('../middleware/error-handler');
 const { authenticateUser } = require('../middleware/auth');
+const { requireAIConsentMiddleware } = require('../middleware/consent');
 const { createChatSession, sendMessage, getChatSession } = require('../services/chat');
 const { assemblePrompt, getGreeting } = require('../config/prospero');
 
@@ -18,7 +19,7 @@ const router = express.Router();
  *   - sessionId: UUID of the created session
  *   - openingMessage: Prospero's opening message
  */
-router.post('/start', authenticateUser, asyncHandler(async (req, res) => {
+router.post('/start', authenticateUser, requireAIConsentMiddleware, asyncHandler(async (req, res) => {
   const { interviewType, context } = req.body;
   const userId = req.userId;
 
@@ -58,7 +59,7 @@ router.post('/start', authenticateUser, asyncHandler(async (req, res) => {
  *   - toolCall: { name, arguments } if Prospero called a function, null otherwise
  *   - sessionComplete: boolean, true if the conversation is complete
  */
-router.post('/send', authenticateUser, asyncHandler(async (req, res) => {
+router.post('/send', authenticateUser, requireAIConsentMiddleware, asyncHandler(async (req, res) => {
   const { sessionId, message } = req.body;
 
   if (!sessionId || !message) {
@@ -116,7 +117,7 @@ router.get('/session/:sessionId', authenticateUser, asyncHandler(async (req, res
  *   - prompt: The complete system prompt
  *   - greeting: The opening greeting for this interview type
  */
-router.post('/system-prompt', authenticateUser, asyncHandler(async (req, res) => {
+router.post('/system-prompt', authenticateUser, requireAIConsentMiddleware, asyncHandler(async (req, res) => {
   const { interviewType, medium, context } = req.body;
 
   if (!interviewType) {

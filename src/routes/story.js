@@ -3,6 +3,7 @@ const { supabaseAdmin } = require('../config/supabase');
 const { anthropic } = require('../config/ai-clients');
 const { asyncHandler } = require('../middleware/error-handler');
 const { authenticateUser } = require('../middleware/auth');
+const { requireAIConsentMiddleware } = require('../middleware/consent');
 
 const router = express.Router();
 
@@ -11,7 +12,7 @@ const router = express.Router();
  * User selects a premise and triggers pre-generation of first chapters
  * FAST RETURN: Creates story record and returns immediately (1-2s), then generates in background
  */
-router.post('/select-premise', authenticateUser, asyncHandler(async (req, res) => {
+router.post('/select-premise', authenticateUser, requireAIConsentMiddleware, asyncHandler(async (req, res) => {
   const { userId } = req;
   const { premiseId, customPremise } = req.body;
 

@@ -205,6 +205,54 @@ router.post('/writing-intelligence/log-adjustment', authenticateUser, asyncHandl
 }));
 
 /**
+ * GET /admin/reading-analytics
+ * Get scroll-based reading analytics
+ * Shows per-user reading speed, active vs idle time, and fleet averages
+ */
+router.get('/reading-analytics', authenticateUser, asyncHandler(async (req, res) => {
+  // TODO: In production, add admin role check here
+  const { storyId, userId } = req.query;
+
+  let query = supabaseAdmin
+    .from('reading_sessions')
+    .select('user_id, story_id, chapter_number, reading_duration_seconds, active_reading_seconds, idle_seconds, estimated_reading_speed, max_scroll_progress, completed')
+    .not('active_reading_seconds', 'is', null);
+
+  if (storyId) query = query.eq('story_id', storyId);
+  if (userId) query = query.eq('user_id', userId);
+
+  const { data, error } = await query.order('session_start', { ascending: false }).limit(500);
+
+  if (error) throw new Error(`Failed to fetch reading analytics: ${error.message}`);
+
+  // Aggregate by user
+  const byUser = {};
+  for (const row of data) {
+    if (!byUser[row.user_id]) byUser[row.user_id] = { sessions: [], speeds: [] };
+    byUser[row.user_id].sessions.push(row);
+    if (row.estimated_reading_speed) byUser[row.user_id].speeds.push(row.estimated_reading_speed);
+  }
+
+  const userSummaries = Object.entries(byUser).map(([uid, d]) => ({
+    user_id: uid,
+    total_active_seconds: d.sessions.reduce((s, r) => s + (r.active_reading_seconds || 0), 0),
+    total_wall_seconds: d.sessions.reduce((s, r) => s + (r.reading_duration_seconds || 0), 0),
+    total_idle_seconds: d.sessions.reduce((s, r) => s + (r.idle_seconds || 0), 0),
+    avg_reading_speed: d.speeds.length ? d.speeds.reduce((a, b) => a + b, 0) / d.speeds.length : null,
+    session_count: d.sessions.length
+  }));
+
+  res.json({
+    success: true,
+    analytics: {
+      sessions_analyzed: data.length,
+      user_summaries: userSummaries,
+      fleet_avg_speed: userSummaries.filter(u => u.avg_reading_speed).reduce((s, u) => s + u.avg_reading_speed, 0) / (userSummaries.filter(u => u.avg_reading_speed).length || 1)
+    }
+  });
+}));
+
+/**
  * GET /admin/character-intelligence
  * Get character intelligence system health metrics
  * Shows ledger usage, voice review stats, callback utilization, and authenticity scores
