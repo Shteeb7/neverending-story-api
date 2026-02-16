@@ -14,6 +14,7 @@ const analyticsRoutes = require('./routes/analytics');
 const libraryRoutes = require('./routes/library');
 const adminRoutes = require('./routes/admin');
 const testRoutes = require('./routes/test');
+const chatRoutes = require('./routes/chat');
 
 // Initialize Express app
 const app = express();
@@ -103,6 +104,7 @@ app.use('/analytics', analyticsRoutes);
 app.use('/library', libraryRoutes);
 app.use('/admin', adminRoutes);
 app.use('/test', testRoutes);
+app.use('/chat', chatRoutes);
 
 // =========================
 // Error Handling
