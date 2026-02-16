@@ -16,14 +16,15 @@ const CHAT_TOOLS = {
         dislikedElements: { type: 'array', items: { type: 'string' }, description: 'Story elements, genres, or character types they DON\'T like or want to avoid' },
         characterTypes: { type: 'string', description: 'Type of protagonist they prefer like \'Hero\', \'Underdog\', \'Anti-hero\', \'Reluctant Hero\', \'Chosen One\'' },
         mood: { type: 'string', description: 'Desired mood like \'Epic\', \'Dark\', \'Lighthearted\', \'Suspenseful\', \'Hopeful\', \'Whimsical\'' },
-        ageRange: { type: 'string', description: 'Age of the reader - determines complexity and maturity level. Options: \'child\' (8-12), \'teen\' (13-17), \'young-adult\' (18-25), \'adult\' (25+)' },
+        ageRange: { type: 'string', description: 'Age of the reader - determines complexity and maturity level. Options: \'child\' (8-12), \'teen\' (13-17), \'young-adult\' (18-25), \'adult\' (25+). Keep for backward compatibility but readingLevel is now preferred.' },
         emotionalDrivers: { type: 'array', items: { type: 'string' }, description: 'WHY they read (e.g. \'escape\', \'feel deeply\', \'intellectual challenge\', \'thrill\')' },
-        belovedStories: { type: 'array', items: { type: 'string' }, description: 'Specific stories they mentioned and why' },
+        belovedStories: { type: 'array', items: { type: 'string' }, description: 'Books, series, movies, or shows the reader mentioned loving. These determine reading level.' },
+        readingLevel: { type: 'string', enum: ['early_reader', 'middle_grade', 'upper_middle_grade', 'young_adult', 'new_adult', 'adult'], description: 'Derived from their favorite books/media AND their age. Use the anchor books table to calibrate: Magic Tree House/Wimpy Kid = early_reader, Percy Jackson/Harry Potter = middle_grade, Hunger Games/Eragon = upper_middle_grade, Six of Crows/Throne of Glass = young_adult, ACOTAR/Fourth Wing = new_adult, Sanderson/adult fantasy = adult' },
         readingMotivation: { type: 'string', description: 'Natural language summary of what drives their reading' },
         discoveryTolerance: { type: 'string', description: '\'low\' (comfort-seeker), \'medium\' (balanced), or \'high\' (adventurer)' },
         pacePreference: { type: 'string', description: '\'fast\' or \'slow\' or \'varied\'' }
       },
-      required: ['name']
+      required: ['name', 'readingLevel']
     }
   }],
   returning_user: [{

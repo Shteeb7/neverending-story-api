@@ -436,16 +436,17 @@ async function generatePremises(userId, preferences) {
   // Map categorical age to literal range for prompts
   const ageRange = mapAgeRange(rawAgeRange);
 
-  // Fetch discovery tolerance and emotional drivers from user_preferences
+  // Fetch discovery tolerance, reading level, and emotional drivers from user_preferences
   const { data: userPrefs } = await supabaseAdmin
     .from('user_preferences')
-    .select('discovery_tolerance, preferences')
+    .select('discovery_tolerance, reading_level, preferences')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
   const discoveryTolerance = userPrefs?.discovery_tolerance ?? 0.5;
+  const readingLevel = userPrefs?.reading_level || userPrefs?.preferences?.readingLevel || 'adult';
   const emotionalDrivers = userPrefs?.preferences?.emotionalDrivers || userPrefs?.preferences?.emotional_drivers || [];
   const belovedStories = userPrefs?.preferences?.belovedStories || userPrefs?.preferences?.beloved_stories || [];
 
@@ -496,7 +497,8 @@ READER PROFILE:
 - Desired Mood/Tone: ${mood}
 - Character Preferences: ${characterTypes}
 - Elements to AVOID: ${avoidList}
-- Age Range: ${ageRange}
+- Reading Level: ${readingLevel}
+- Age Range: ${ageRange} (for context)
 - Emotional Drivers (WHY they read): ${driverList}
 - Stories/Shows/Games They Love: ${belovedList}
 
@@ -690,10 +692,17 @@ async function generateStoryBible(premiseId, userId) {
   const storyId = story.id;
   console.log(`✅ Story record created immediately: ${storyId} - "${premise.title}"`);
 
-  // Extract and map age range from preferences
-  const rawAgeRange = preferencesUsed?.ageRange || 'adult';
-  const ageRange = mapAgeRange(rawAgeRange);
-  console.log(`📊 Bible generation - Age Range: ${rawAgeRange} → ${ageRange}`);
+  // Fetch reading level from user_preferences (new column + JSONB fallback)
+  const { data: userPrefs } = await supabaseAdmin
+    .from('user_preferences')
+    .select('reading_level, preferences')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  const readingLevel = userPrefs?.reading_level || userPrefs?.preferences?.readingLevel || 'adult';
+  const ageRange = preferencesUsed?.ageRange || 'adult'; // Keep for backward compatibility
+  const belovedStories = preferencesUsed?.belovedStories || [];
+  console.log(`📊 Bible generation - Reading Level: ${readingLevel}, Age Range (compat): ${ageRange}`);
 
   const prompt = `You are an expert world-builder and story architect creating a foundation for compelling fiction.
 
@@ -704,7 +713,25 @@ Create a comprehensive story bible for this premise:
   <description>${premise.description}</description>
   <genre>${premise.genre}</genre>
   <themes>${premise.themes.join(', ')}</themes>
-  <target_age>${ageRange}</target_age>
+  <reading_level>
+    Reading Level: ${readingLevel}
+    Age Range: ${ageRange}
+    Beloved Stories: ${belovedStories.join(', ') || 'not specified'}
+
+    CALIBRATE ALL PROSE TO THIS READING LEVEL. Here's what each level means:
+
+    early_reader: Short chapters (800-1200 words). Simple sentences averaging 8-12 words. Concrete vocabulary — show don't tell through action and dialogue, not internal monologue. Think Magic Tree House, Diary of a Wimpy Kid.
+
+    middle_grade: Standard chapters (1500-2500 words). Sentences average 12-16 words with variety. Accessible vocabulary with occasional "stretch" words that context makes clear. Emotions shown through behavior and some internal thought. Think Percy Jackson, early Harry Potter.
+
+    upper_middle_grade: Fuller chapters (2000-3000 words). Sentence variety with some complex structures. Moral ambiguity can be introduced. Internal conflict goes deeper. Think later Harry Potter, Hunger Games, Eragon.
+
+    young_adult: Rich chapters (2500-4000 words). Full sentence complexity. Unreliable narrators OK. Sophisticated vocabulary used naturally. Deep thematic exploration. Think Six of Crows, Throne of Glass.
+
+    new_adult/adult: No prose constraints. Full literary range.
+
+    IMPORTANT: If the reader mentioned specific beloved stories, match THAT prose level, not a generic age-based level. A 12-year-old who loves Hunger Games should get prose closer to Suzanne Collins than to Jeff Kinney.
+  </reading_level>
 </premise>
 
 The story bible should include:
@@ -957,10 +984,17 @@ async function generateStoryBibleForExistingStory(storyId, premiseId, userId) {
 
   const premise = selectedPremise;
 
-  // Extract and map age range from preferences
-  const rawAgeRange = preferencesUsed?.ageRange || 'adult';
-  const ageRange = mapAgeRange(rawAgeRange);
-  console.log(`📊 Bible generation - Age Range: ${rawAgeRange} → ${ageRange}`);
+  // Fetch reading level from user_preferences (new column + JSONB fallback)
+  const { data: userPrefs } = await supabaseAdmin
+    .from('user_preferences')
+    .select('reading_level, preferences')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  const readingLevel = userPrefs?.reading_level || userPrefs?.preferences?.readingLevel || 'adult';
+  const ageRange = preferencesUsed?.ageRange || 'adult'; // Keep for backward compatibility
+  const belovedStories = preferencesUsed?.belovedStories || [];
+  console.log(`📊 Bible generation - Reading Level: ${readingLevel}, Age Range (compat): ${ageRange}`);
 
   const prompt = `You are an expert world-builder and story architect creating a foundation for compelling fiction.
 
@@ -971,7 +1005,25 @@ Create a comprehensive story bible for this premise:
   <description>${premise.description}</description>
   <genre>${premise.genre}</genre>
   <themes>${premise.themes.join(', ')}</themes>
-  <target_age>${ageRange}</target_age>
+  <reading_level>
+    Reading Level: ${readingLevel}
+    Age Range: ${ageRange}
+    Beloved Stories: ${belovedStories.join(', ') || 'not specified'}
+
+    CALIBRATE ALL PROSE TO THIS READING LEVEL. Here's what each level means:
+
+    early_reader: Short chapters (800-1200 words). Simple sentences averaging 8-12 words. Concrete vocabulary — show don't tell through action and dialogue, not internal monologue. Think Magic Tree House, Diary of a Wimpy Kid.
+
+    middle_grade: Standard chapters (1500-2500 words). Sentences average 12-16 words with variety. Accessible vocabulary with occasional "stretch" words that context makes clear. Emotions shown through behavior and some internal thought. Think Percy Jackson, early Harry Potter.
+
+    upper_middle_grade: Fuller chapters (2000-3000 words). Sentence variety with some complex structures. Moral ambiguity can be introduced. Internal conflict goes deeper. Think later Harry Potter, Hunger Games, Eragon.
+
+    young_adult: Rich chapters (2500-4000 words). Full sentence complexity. Unreliable narrators OK. Sophisticated vocabulary used naturally. Deep thematic exploration. Think Six of Crows, Throne of Glass.
+
+    new_adult/adult: No prose constraints. Full literary range.
+
+    IMPORTANT: If the reader mentioned specific beloved stories, match THAT prose level, not a generic age-based level. A 12-year-old who loves Hunger Games should get prose closer to Suzanne Collins than to Jeff Kinney.
+  </reading_level>
 </premise>
 
 The story bible should include:
@@ -1966,8 +2018,18 @@ async function generateChapter(storyId, chapterNumber, userId, courseCorrections
     throw new Error(`No arc found for story ${storyId}: ${arcError?.message || 'arc is null'}`);
   }
 
-  // Fetch preferences from story_premises to get age range
-  let ageRange = '25+'; // default to adult
+  // Fetch reading level and preferences
+  const { data: userPrefs } = await supabaseAdmin
+    .from('user_preferences')
+    .select('reading_level, preferences')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  const readingLevel = userPrefs?.reading_level || userPrefs?.preferences?.readingLevel || 'adult';
+
+  // Also fetch age range and beloved stories for backward compatibility
+  let ageRange = '25+';
+  let belovedStories = [];
   if (story.premise_id) {
     const { data: premiseRecord } = await supabaseAdmin
       .from('story_premises')
@@ -1975,12 +2037,15 @@ async function generateChapter(storyId, chapterNumber, userId, courseCorrections
       .eq('id', story.premise_id)
       .single();
 
-    if (premiseRecord?.preferences_used?.ageRange) {
+    if (premiseRecord?.preferences_used) {
       const rawAgeRange = premiseRecord.preferences_used.ageRange;
-      ageRange = mapAgeRange(rawAgeRange);
-      console.log(`📊 Chapter ${chapterNumber} generation - Age Range: ${rawAgeRange} → ${ageRange}`);
+      if (rawAgeRange) {
+        ageRange = mapAgeRange(rawAgeRange);
+      }
+      belovedStories = premiseRecord.preferences_used.belovedStories || [];
     }
   }
+  console.log(`📊 Chapter ${chapterNumber} generation - Reading Level: ${readingLevel}, Age Range (compat): ${ageRange}`);
 
   // Get last 3 chapters for context
   const { data: previousChapters } = await supabaseAdmin
@@ -2192,11 +2257,25 @@ ${previousContext}
   If you approach 3500 words and haven't completed the chapter arc, condense. If you finish the chapter arc before 2500 words, expand scenes with richer detail, more character interiority, or stronger sensory grounding.
 </word_count>
 
-<target_age_range>
+<reading_level>
+  Reading Level: ${readingLevel}
   Age Range: ${ageRange}
+  Beloved Stories: ${belovedStories.join(', ') || 'not specified'}
 
-  Adjust vocabulary complexity, sentence structure, and thematic sophistication to match this age range. For children (8-12), keep sentences varied but accessible, avoid abstract philosophical digressions, and ground emotions in concrete physical experience. For teens (13-17), you can explore more complex interior conflict and moral ambiguity. For adults (18+), full range of vocabulary and thematic depth.
-</target_age_range>
+  CALIBRATE ALL PROSE TO THIS READING LEVEL. Here's what each level means:
+
+  early_reader: Short chapters (800-1200 words). Simple sentences averaging 8-12 words. Concrete vocabulary — show don't tell through action and dialogue, not internal monologue. Think Magic Tree House, Diary of a Wimpy Kid.
+
+  middle_grade: Standard chapters (1500-2500 words). Sentences average 12-16 words with variety. Accessible vocabulary with occasional "stretch" words that context makes clear. Emotions shown through behavior and some internal thought. Think Percy Jackson, early Harry Potter.
+
+  upper_middle_grade: Fuller chapters (2000-3000 words). Sentence variety with some complex structures. Moral ambiguity can be introduced. Internal conflict goes deeper. Think later Harry Potter, Hunger Games, Eragon.
+
+  young_adult: Rich chapters (2500-4000 words). Full sentence complexity. Unreliable narrators OK. Sophisticated vocabulary used naturally. Deep thematic exploration. Think Six of Crows, Throne of Glass.
+
+  new_adult/adult: No prose constraints. Full literary range.
+
+  IMPORTANT: If the reader mentioned specific beloved stories, match THAT prose level, not a generic age-based level. A 12-year-old who loves Hunger Games should get prose closer to Suzanne Collins than to Jeff Kinney.
+</reading_level>
 ${learnedPreferencesBlock}${courseCorrectionsBlock}${characterContinuityBlock}
 
 Return ONLY a JSON object in this exact format:

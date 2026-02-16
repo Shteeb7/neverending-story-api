@@ -63,6 +63,52 @@ function normalizeDiscoveryTolerance(tolerance) {
 }
 
 /**
+ * Compute reading level from DOB + preferences
+ * Combines age-based baseline with book preferences to determine prose level
+ */
+function computeReadingLevel(birthMonth, birthYear, preferences) {
+  // 1. Start with age-based baseline
+  const now = new Date();
+  let age;
+  if (birthMonth && birthYear) {
+    // Conservative calculation: if birth month hasn't fully passed, subtract a year
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+    age = currentYear - birthYear;
+    if (currentMonth <= birthMonth) {
+      age -= 1;
+    }
+  }
+
+  // Age-based baseline
+  let baseline;
+  if (!age || age >= 25) baseline = 'adult';
+  else if (age >= 18) baseline = 'new_adult';
+  else if (age >= 14) baseline = 'young_adult';
+  else if (age >= 12) baseline = 'upper_middle_grade';
+  else if (age >= 10) baseline = 'middle_grade';
+  else baseline = 'early_reader';
+
+  // 2. If Prospero derived a readingLevel from the conversation, use it —
+  //    but never go MORE than one level above the age baseline.
+  //    (A 10-year-old who loves Hunger Games gets upper_middle_grade, not young_adult)
+  if (preferences.readingLevel) {
+    const levels = ['early_reader', 'middle_grade', 'upper_middle_grade', 'young_adult', 'new_adult', 'adult'];
+    const baselineIndex = levels.indexOf(baseline);
+    const prosperoIndex = levels.indexOf(preferences.readingLevel);
+
+    // Allow Prospero's assessment to go lower (easier prose) without limit,
+    // but only one level higher than age baseline
+    if (prosperoIndex <= baselineIndex + 1) {
+      return preferences.readingLevel;
+    }
+    return levels[Math.min(baselineIndex + 1, levels.length - 1)];
+  }
+
+  return baseline;
+}
+
+/**
  * POST /onboarding/start
  * Initialize voice conversation session for onboarding
  * Creates an ephemeral OpenAI Realtime session and returns credentials to client
@@ -149,20 +195,39 @@ router.post('/process-transcript', authenticateUser, requireVoiceConsentMiddlewa
     dislikedElements: extractedData.dislikedElements || [],
     characterTypes: extractedData.characterTypes || 'varied',
     name: extractedData.name || 'Reader',
-    ageRange: extractedData.ageRange || 'adult', // Default to adult, not child
+    ageRange: extractedData.ageRange || 'adult', // Default to adult, keep for backward compatibility
 
     // New experience-mining fields
     emotionalDrivers: extractedData.emotionalDrivers || [],
     belovedStories: extractedData.belovedStories || [],
     readingMotivation: extractedData.readingMotivation || '',
     discoveryTolerance: normalizeDiscoveryTolerance(extractedData.discoveryTolerance),
-    pacePreference: extractedData.pacePreference || 'varied'
+    pacePreference: extractedData.pacePreference || 'varied',
+    readingLevel: extractedData.readingLevel // Prospero's assessment from the conversation
   };
 
-  // Log warning if ageRange wasn't provided
-  if (!extractedData.ageRange) {
-    console.log('⚠️ WARNING: ageRange not provided by iOS, defaulting to "adult"');
+  // Fetch user's DOB to compute reading level
+  const { data: userPrefs, error: fetchError } = await supabaseAdmin
+    .from('user_preferences')
+    .select('birth_month, birth_year')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (fetchError) {
+    console.log('⚠️ Could not fetch DOB for reading level calculation:', fetchError);
   }
+
+  // Compute reading level from DOB + preferences
+  const readingLevel = computeReadingLevel(
+    userPrefs?.birth_month,
+    userPrefs?.birth_year,
+    normalizedPreferences
+  );
+
+  console.log(`📚 Computed reading level: ${readingLevel} (age-based DOB: ${userPrefs?.birth_month}/${userPrefs?.birth_year}, Prospero suggested: ${normalizedPreferences.readingLevel || 'none'})`);
+
+  // Store reading_level in both column AND preferences JSONB for backward compatibility
+  normalizedPreferences.readingLevel = readingLevel;
 
   console.log('✅ Normalized preferences:', normalizedPreferences);
 
@@ -172,6 +237,7 @@ router.post('/process-transcript', authenticateUser, requireVoiceConsentMiddlewa
     .upsert({
       user_id: userId,
       preferences: normalizedPreferences,
+      reading_level: readingLevel,  // NEW: dedicated column
       transcript: transcript,
       session_id: sessionId,
       updated_at: new Date().toISOString()
