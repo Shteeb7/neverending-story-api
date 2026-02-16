@@ -2,6 +2,7 @@ const express = require('express');
 const { asyncHandler } = require('../middleware/error-handler');
 const { authenticateUser } = require('../middleware/auth');
 const { createChatSession, sendMessage, getChatSession } = require('../services/chat');
+const { assemblePrompt, getGreeting } = require('../config/prospero');
 
 const router = express.Router();
 
@@ -100,6 +101,69 @@ router.get('/session/:sessionId', authenticateUser, asyncHandler(async (req, res
     success: true,
     session: session
   });
+}));
+
+/**
+ * POST /chat/system-prompt
+ * Assemble a system prompt for Prospero
+ *
+ * Body:
+ *   - interviewType: 'onboarding' | 'returning_user' | 'premise_rejection' | 'book_completion'
+ *   - medium: 'voice' | 'text'
+ *   - context: (optional) context object with interview-specific data
+ *
+ * Returns:
+ *   - prompt: The complete system prompt
+ *   - greeting: The opening greeting for this interview type
+ */
+router.post('/system-prompt', authenticateUser, asyncHandler(async (req, res) => {
+  const { interviewType, medium, context } = req.body;
+
+  if (!interviewType) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing interviewType'
+    });
+  }
+
+  if (!medium) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing medium (voice or text)'
+    });
+  }
+
+  const validInterviewTypes = ['onboarding', 'returning_user', 'premise_rejection', 'book_completion'];
+  if (!validInterviewTypes.includes(interviewType)) {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid interviewType. Must be one of: ${validInterviewTypes.join(', ')}`
+    });
+  }
+
+  const validMediums = ['voice', 'text'];
+  if (!validMediums.includes(medium)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid medium. Must be voice or text'
+    });
+  }
+
+  try {
+    const prompt = assemblePrompt(interviewType, medium, context || {});
+    const greeting = getGreeting(interviewType, context || {});
+
+    res.json({
+      success: true,
+      prompt,
+      greeting
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 }));
 
 module.exports = router;
