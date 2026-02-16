@@ -1998,6 +1998,11 @@ async function generateChapter(storyId, chapterNumber, userId, courseCorrections
     throw new Error(`Story not found: ${storyError?.message || 'No story returned'}`);
   }
 
+  const storyTitle = story.title || 'Untitled';
+
+  // Get generation config for feature flags
+  const config = story.generation_config || {};
+
   // Fetch bible and arc separately
   const { data: bible } = await supabaseAdmin
     .from('story_bibles')
@@ -2070,13 +2075,14 @@ async function generateChapter(storyId, chapterNumber, userId, courseCorrections
       ).join('\n\n')
     : 'This is the first chapter.';
 
-  // Fetch learned reader preferences (if available)
-  const writingPrefs = await getUserWritingPreferences(userId);
+  // Fetch learned reader preferences (if available and enabled)
   let learnedPreferencesBlock = '';
+  if (config.adaptive_preferences !== false) {
+    const writingPrefs = await getUserWritingPreferences(userId);
 
-  if (writingPrefs && writingPrefs.stories_analyzed >= 2 && writingPrefs.confidence_score >= 0.5) {
-    console.log(`📚 Injecting learned preferences (confidence: ${writingPrefs.confidence_score})`);
-    learnedPreferencesBlock = `
+    if (writingPrefs && writingPrefs.stories_analyzed >= 2 && writingPrefs.confidence_score >= 0.5) {
+      console.log(`📚 Injecting learned preferences (confidence: ${writingPrefs.confidence_score})`);
+      learnedPreferencesBlock = `
 
 <learned_reader_preferences>
   This reader's past feedback shows specific preferences. Incorporate naturally:
@@ -2090,21 +2096,32 @@ async function generateChapter(storyId, chapterNumber, userId, courseCorrections
   Dialogue preference: ${writingPrefs.preferred_dialogue_style?.summary || 'No data'}
   Complexity: ${writingPrefs.preferred_complexity?.summary || 'No data'}
 </learned_reader_preferences>`;
+    }
+  } else {
+    console.log(`⚙️ [${storyTitle}] Adaptive preferences DISABLED by generation_config`);
   }
 
   // Build course correction block from real-time checkpoint feedback
   let courseCorrectionsBlock = '';
-  if (courseCorrections) {
+  if (courseCorrections && config.course_corrections !== false) {
     courseCorrectionsBlock = `
 
 <reader_course_correction>
   ${courseCorrections}
 </reader_course_correction>`;
+  } else if (courseCorrections && config.course_corrections === false) {
+    console.log(`⚙️ [${storyTitle}] Course corrections DISABLED by generation_config (feedback ignored)`);
   }
 
   // Build character continuity block from previous ledger entries
   const { buildCharacterContinuityBlock } = require('./character-intelligence');
-  const characterContinuityBlock = await buildCharacterContinuityBlock(storyId, chapterNumber);
+  const characterContinuityBlock = config.character_ledger !== false
+    ? await buildCharacterContinuityBlock(storyId, chapterNumber)
+    : '';
+
+  if (config.character_ledger === false) {
+    console.log(`⚙️ [${storyTitle}] Character ledger DISABLED by generation_config`);
+  }
 
   const generatePrompt = `You are an award-winning fiction author known for prose that shows instead of tells, vivid character work, and compulsive page-turning narratives.
 
@@ -2296,8 +2313,6 @@ Return ONLY a JSON object in this exact format:
   let chapter;
   let qualityReview;
   let passedQuality = false;
-
-  const storyTitle = story.title || 'Unknown';
 
   // Generation with quality review loop (max 3 attempts)
   while (!passedQuality && regenerationCount < 3) {
@@ -2532,29 +2547,37 @@ Return ONLY a JSON object in this exact format:
 
   // Extract character ledger (wait for completion to ensure intra-batch continuity)
   const { extractCharacterLedger, reviewCharacterVoices, applyVoiceRevisions } = require('./character-intelligence');
-  try {
-    await extractCharacterLedger(storyId, chapterNumber, chapter.content, userId);
-    console.log(`📚 [${storyTitle}] Character ledger extracted for chapter ${chapterNumber}`);
-  } catch (err) {
-    console.error(`⚠️ [${storyTitle}] Character ledger extraction failed for chapter ${chapterNumber}: ${err.message}`);
+  if (config.character_ledger !== false) {
+    try {
+      await extractCharacterLedger(storyId, chapterNumber, chapter.content, userId);
+      console.log(`📚 [${storyTitle}] Character ledger extracted for chapter ${chapterNumber}`);
+    } catch (err) {
+      console.error(`⚠️ [${storyTitle}] Character ledger extraction failed for chapter ${chapterNumber}: ${err.message}`);
+    }
+  } else {
+    console.log(`⚙️ [${storyTitle}] Skipping ledger extraction (character_ledger disabled)`);
   }
 
   // Character voice review (Sonnet pass — checks character authenticity against ledger)
-  try {
-    const voiceReview = await reviewCharacterVoices(storyId, chapterNumber, chapter.content, userId);
-    if (voiceReview) {
-      console.log(`🎭 [${storyTitle}] Voice review complete for chapter ${chapterNumber} (${voiceReview.voice_checks?.length || 0} characters reviewed)`);
+  if (config.voice_review !== false) {
+    try {
+      const voiceReview = await reviewCharacterVoices(storyId, chapterNumber, chapter.content, userId);
+      if (voiceReview) {
+        console.log(`🎭 [${storyTitle}] Voice review complete for chapter ${chapterNumber} (${voiceReview.voice_checks?.length || 0} characters reviewed)`);
 
-      // Check if revision is needed
-      const revisedContent = await applyVoiceRevisions(storyId, chapterNumber, chapter.content, voiceReview, userId);
-      if (revisedContent) {
-        console.log(`🎭 [${storyTitle}] Voice revision applied to chapter ${chapterNumber}`);
-        // Update the storedChapter reference with new content
-        storedChapter.content = revisedContent;
+        // Check if revision is needed
+        const revisedContent = await applyVoiceRevisions(storyId, chapterNumber, chapter.content, voiceReview, userId);
+        if (revisedContent) {
+          console.log(`🎭 [${storyTitle}] Voice revision applied to chapter ${chapterNumber}`);
+          // Update the storedChapter reference with new content
+          storedChapter.content = revisedContent;
+        }
       }
+    } catch (err) {
+      console.error(`⚠️ [${storyTitle}] Voice review failed for chapter ${chapterNumber}: ${err.message}`);
     }
-  } catch (err) {
-    console.error(`⚠️ [${storyTitle}] Voice review failed for chapter ${chapterNumber}: ${err.message}`);
+  } else {
+    console.log(`⚙️ [${storyTitle}] Skipping voice review (voice_review disabled)`);
   }
 
   return storedChapter;

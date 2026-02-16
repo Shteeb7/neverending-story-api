@@ -8,6 +8,12 @@ const {
   logPromptAdjustment
 } = require('../services/writing-intelligence');
 
+const {
+  computeDashboard,
+  getStoryQualityDetail,
+  computeStoryQualitySnapshot
+} = require('../services/quality-intelligence');
+
 const router = express.Router();
 
 /**
@@ -324,6 +330,93 @@ router.get('/character-intelligence', authenticateUser, asyncHandler(async (req,
         utilization_rate: `${callbackUtilization}%`
       }
     }
+  });
+}));
+
+/**
+ * GET /admin/quality/dashboard
+ * Compute fleet-level quality metrics across multiple stories
+ * Returns aggregated quality scores, dimensions, costs, and feature flag distribution
+ */
+router.get('/quality/dashboard', authenticateUser, asyncHandler(async (req, res) => {
+  // Check admin role
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      error: 'Admin access required'
+    });
+  }
+
+  const { since, limit } = req.query;
+  console.log(`📊 Computing quality dashboard (since=${since || 'all'}, limit=${limit || 20})`);
+
+  const options = {};
+  if (since) options.since = since;
+  if (limit) options.limit = parseInt(limit, 10);
+
+  const dashboard = await computeDashboard(options);
+
+  res.json({
+    success: true,
+    dashboard
+  });
+}));
+
+/**
+ * GET /admin/quality/story/:storyId
+ * Get detailed quality breakdown for a single story
+ * Returns per-chapter quality, voice authenticity, and quality trend
+ */
+router.get('/quality/story/:storyId', authenticateUser, asyncHandler(async (req, res) => {
+  // Check admin role
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      error: 'Admin access required'
+    });
+  }
+
+  const { storyId } = req.params;
+  console.log(`📊 Fetching quality detail for story: ${storyId}`);
+
+  const detail = await getStoryQualityDetail(storyId);
+
+  res.json({
+    success: true,
+    detail
+  });
+}));
+
+/**
+ * POST /admin/quality/snapshot
+ * Force-compute and store a quality snapshot for a specific story
+ * Useful for manually triggering snapshot creation outside normal flow
+ */
+router.post('/quality/snapshot', authenticateUser, asyncHandler(async (req, res) => {
+  // Check admin role
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      error: 'Admin access required'
+    });
+  }
+
+  const { storyId } = req.body;
+
+  if (!storyId) {
+    return res.status(400).json({
+      success: false,
+      error: 'storyId is required'
+    });
+  }
+
+  console.log(`📊 Force-computing snapshot for story: ${storyId}`);
+
+  const snapshot = await computeStoryQualitySnapshot(storyId);
+
+  res.json({
+    success: true,
+    snapshot
   });
 }));
 
