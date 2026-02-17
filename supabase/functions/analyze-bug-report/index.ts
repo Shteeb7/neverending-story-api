@@ -310,7 +310,6 @@ Respond with ONLY valid JSON, no markdown fences, no other text:
     const { error: costError } = await supabase
       .from('api_costs')
       .insert({
-        user_id: report.user_id,
         provider: 'anthropic',
         model: 'claude-sonnet-4-5-20250929',
         operation: 'bug_report_analysis',
