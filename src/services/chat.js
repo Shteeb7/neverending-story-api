@@ -158,7 +158,7 @@ async function sendMessage(sessionId, userMessage) {
   console.log('🤖 Calling Claude Messages API...');
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-5-20250929',
-    max_tokens: 500,
+    max_tokens: 64000,
     system: session.system_prompt,
     messages: messages,
     tools: tools
@@ -197,7 +197,7 @@ async function sendMessage(sessionId, userMessage) {
 
     const farewellResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 300,
+      max_tokens: 64000,
       system: session.system_prompt,
       messages: farewellMessages
     });

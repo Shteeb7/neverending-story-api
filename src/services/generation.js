@@ -568,7 +568,7 @@ Return ONLY a JSON object in this exact format:
 
   const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
     messages,
-    4000,
+    32000,
     { operation: 'generate_premises', userId }
   );
 
@@ -849,7 +849,7 @@ Return ONLY a JSON object in this exact format:
   try {
     const apiResult = await callClaudeWithRetry(
       messages,
-      64000,
+      32000,
       { operation: 'generate_bible', userId, premiseId }
     );
     response = apiResult.response;
@@ -1142,7 +1142,7 @@ Return ONLY a JSON object in this exact format:
     // Call Claude API
     const apiResult = await callClaudeWithRetry(
       messages,
-      64000,
+      32000,
       { operation: 'generate_bible', userId, premiseId, storyTitle }
     );
 
@@ -1345,7 +1345,7 @@ Return ONLY a JSON object in this exact format:
   const storyTitle = story.title || 'Unknown';
   const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
     messages,
-    64000,
+    32000,
     { operation: 'generate_arc', userId, storyId, storyTitle }
   );
 
@@ -1606,7 +1606,7 @@ Return ONLY a JSON object:
   const startTime = Date.now();
   const response = await anthropic.messages.create({
     model: GENERATION_MODEL,
-    max_tokens: 4000,
+    max_tokens: 32000,
     messages: [{ role: 'user', content: analysisPrompt }]
   });
 
@@ -2326,7 +2326,7 @@ Return ONLY a JSON object in this exact format:
 
     const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
       messages,
-      64000,
+      32000,
       { operation: 'generate_chapter', userId, storyId, chapterNumber, regenerationCount, storyTitle }
     );
 
@@ -2485,7 +2485,7 @@ Return ONLY a JSON object in this exact format:
 
     const { response: reviewResponse, inputTokens: reviewInputTokens, outputTokens: reviewOutputTokens } = await callClaudeWithRetry(
       reviewMessages,
-      64000,
+      32000,
       { operation: 'quality_review', userId, storyId, chapterNumber, regenerationCount, storyTitle }
     );
 
@@ -2873,7 +2873,7 @@ Return ONLY a JSON object:
 
   const { response: contextJson, inputTokens, outputTokens } = await callClaudeWithRetry(
     [{ role: 'user', content: analysisPrompt }],
-    4000
+    32000
   );
 
   await logApiCost(userId, 'extract_book_context', inputTokens, outputTokens, {
@@ -3050,7 +3050,7 @@ Return Book 2 Bible in this EXACT format:
 
   const { response: bibleJson, inputTokens, outputTokens } = await callClaudeWithRetry(
     [{ role: 'user', content: sequelPrompt }],
-    8000
+    32000
   );
 
   await logApiCost(userId, 'generate_sequel_bible', inputTokens, outputTokens, {

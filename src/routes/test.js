@@ -27,7 +27,7 @@ router.get('/claude', asyncHandler(async (req, res) => {
     // Call Claude API with a simple prompt
     const message = await anthropic.messages.create({
       model: GENERATION_MODEL,
-      max_tokens: 200,
+      max_tokens: 32000,
       messages: [{
         role: 'user',
         content: 'Write a one-sentence premise for a fantasy story.'
@@ -441,7 +441,7 @@ Return ONLY a JSON object in this exact format:
 
   const chapterMessage = await anthropic.messages.create({
     model: GENERATION_MODEL,
-    max_tokens: 16000,
+    max_tokens: 32000,
     messages: [{ role: 'user', content: generatePrompt }]
   });
 
@@ -620,7 +620,7 @@ Return ONLY a JSON object in this exact format:
 
   const reviewMessage = await anthropic.messages.create({
     model: GENERATION_MODEL,
-    max_tokens: 4000,
+    max_tokens: 32000,
     messages: [{ role: 'user', content: reviewPrompt }]
   });
 

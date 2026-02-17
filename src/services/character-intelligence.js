@@ -223,7 +223,7 @@ IMPORTANT: Focus on SUBJECTIVE experience, not plot summary. We need to know how
     // Call Claude Haiku for extraction
     const response = await anthropic.messages.create({
       model: HAIKU_PRICING.MODEL,
-      max_tokens: 8000,
+      max_tokens: 64000,
       messages: [{ role: 'user', content: extractionPrompt }]
     });
 
@@ -518,7 +518,7 @@ Return ONLY the compressed text summary, no JSON formatting.`;
 
     const response = await anthropic.messages.create({
       model: HAIKU_PRICING.MODEL,
-      max_tokens: 500,
+      max_tokens: 64000,
       messages: [{ role: 'user', content: compressionPrompt }]
     });
 
@@ -667,7 +667,7 @@ Return ONLY valid JSON matching this structure:
     // Call Claude Sonnet for voice review
     const response = await anthropic.messages.create({
       model: SONNET_PRICING.MODEL,
-      max_tokens: 4000,
+      max_tokens: 64000,
       messages: [{ role: 'user', content: reviewPrompt }]
     });
 
