@@ -5,6 +5,7 @@ const { requireAIConsentMiddleware } = require('../middleware/consent');
 const { createChatSession, sendMessage, getChatSession } = require('../services/chat');
 const prospero = require('../config/prospero');
 const peggy = require('../config/peggy');
+const { supabaseAdmin } = require('../config/supabase');
 
 const router = express.Router();
 
@@ -38,7 +39,25 @@ router.post('/start', authenticateUser, requireAIConsentMiddleware, asyncHandler
     });
   }
 
-  const result = await createChatSession(userId, interviewType, context || {});
+  // Enrich context with reader age for onboarding interviews
+  const enrichedContext = context || {};
+  if (interviewType === 'onboarding') {
+    const { data: prefs } = await supabaseAdmin
+      .from('user_preferences')
+      .select('birth_year, birth_month, is_minor')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (prefs?.birth_year) {
+      const now = new Date();
+      let age = now.getFullYear() - prefs.birth_year;
+      if (prefs.birth_month && now.getMonth() + 1 < prefs.birth_month) age--;
+      enrichedContext.readerAge = age;
+      enrichedContext.isMinor = prefs.is_minor || false;
+    }
+  }
+
+  const result = await createChatSession(userId, interviewType, enrichedContext);
 
   res.json({
     success: true,
@@ -178,8 +197,27 @@ router.post('/system-prompt', authenticateUser, requireAIConsentMiddleware, asyn
         });
       }
 
-      prompt = prospero.assemblePrompt(interviewType, medium, context || {});
-      greeting = prospero.getGreeting(interviewType, context || {});
+      // Enrich context with reader age for onboarding interviews
+      const enrichedContext = context || {};
+      if (interviewType === 'onboarding') {
+        const userId = req.userId;
+        const { data: prefs } = await supabaseAdmin
+          .from('user_preferences')
+          .select('birth_year, birth_month, is_minor')
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (prefs?.birth_year) {
+          const now = new Date();
+          let age = now.getFullYear() - prefs.birth_year;
+          if (prefs.birth_month && now.getMonth() + 1 < prefs.birth_month) age--;
+          enrichedContext.readerAge = age;
+          enrichedContext.isMinor = prefs.is_minor || false;
+        }
+      }
+
+      prompt = prospero.assemblePrompt(interviewType, medium, enrichedContext);
+      greeting = prospero.getGreeting(interviewType, enrichedContext);
     }
 
     res.json({
