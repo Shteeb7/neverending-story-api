@@ -230,6 +230,41 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
 }));
 
 /**
+ * GET /bug-reports/updates
+ * Get recent status updates for the authenticated user's bug reports
+ * NOTE: Must be defined BEFORE the generic GET / handler (Express matches top-to-bottom)
+ */
+router.get('/updates', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { since } = req.query;
+
+  // Default to 7 days ago if not provided
+  const sinceDate = since
+    ? new Date(since).toISOString()
+    : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Query for reviewed reports updated since the timestamp
+  const { data: updates, error } = await supabaseAdmin
+    .from('bug_reports')
+    .select('id, peggy_summary, status, ai_priority, category, reviewed_at, created_at')
+    .eq('user_id', userId)
+    .in('status', ['approved', 'fixed', 'denied', 'deferred'])
+    .gt('reviewed_at', sinceDate)
+    .order('reviewed_at', { ascending: false })
+    .limit(10);
+
+  if (error) {
+    throw new Error(`Failed to fetch bug report updates: ${error.message}`);
+  }
+
+  console.log(`📬 Bug report updates: user=${userId}, since=${sinceDate}, found=${updates?.length || 0}`);
+
+  res.json({
+    updates: updates || []
+  });
+}));
+
+/**
  * GET /bug-reports
  * List bug reports with filtering and pagination
  */
