@@ -188,7 +188,7 @@ describe('Peggy Configuration', () => {
       const voicePrompt = peggy.assemblePrompt('bug_report', 'voice', {});
 
       expect(voicePrompt).toContain('VOICE CONVERSATION');
-      expect(voicePrompt).toContain('VERY SHORT');
+      expect(voicePrompt).toContain('Maximum 1-2 sentences');
     });
 
     test('text medium allows slightly more detail', () => {

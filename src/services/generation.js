@@ -30,6 +30,47 @@ function mapAgeRange(ageCategory) {
   return ageMap[ageCategory] || ageMap['adult'];
 }
 
+/**
+ * Scan chapter content for prose craft violations
+ * @param {string} chapterContent - The generated chapter text
+ * @returns {object} { passed: boolean, violations: string[] }
+ */
+function scanForProseViolations(chapterContent) {
+  const violations = [];
+
+  // 1. Count em dashes (—)
+  const emDashCount = (chapterContent.match(/—/g) || []).length;
+  if (emDashCount > 5) {
+    violations.push(`Em dashes: ${emDashCount} (limit: 5)`);
+  }
+
+  // 2. Count "Not X, but Y" and "Not X — Y" patterns
+  const notButPattern = /Not [a-zA-Z]+(?:,| —) (?:but|just) /gi;
+  const notButMatches = (chapterContent.match(notButPattern) || []).length;
+  if (notButMatches > 2) {
+    violations.push(`"Not X, but Y" constructions: ${notButMatches} (limit: 2)`);
+  }
+
+  // 3. Count "something in" (case insensitive)
+  const somethingInPattern = /something in (?:his|her|their|my|your) /gi;
+  const somethingInMatches = (chapterContent.match(somethingInPattern) || []).length;
+  if (somethingInMatches > 2) {
+    violations.push(`"Something in [X]" constructions: ${somethingInMatches} (limit: 2)`);
+  }
+
+  // 4. Count "the kind of" (case insensitive)
+  const kindOfPattern = /the kind of/gi;
+  const kindOfMatches = (chapterContent.match(kindOfPattern) || []).length;
+  if (kindOfMatches > 2) {
+    violations.push(`"The kind of" constructions: ${kindOfMatches} (limit: 2)`);
+  }
+
+  return {
+    passed: violations.length === 0,
+    violations
+  };
+}
+
 // Model and pricing configuration
 // Model is read from environment so it can be changed without redeployment
 const GENERATION_MODEL = process.env.CLAUDE_GENERATION_MODEL || 'claude-opus-4-6';
@@ -2174,6 +2215,23 @@ async function generateChapter(storyId, chapterNumber, userId, courseCorrections
 
   const generatePrompt = `You are an award-winning fiction author known for prose that shows instead of tells, vivid character work, and compulsive page-turning narratives.
 
+<CRITICAL_PROSE_RULES>
+These rules are NON-NEGOTIABLE. Any chapter that violates them will be rejected and regenerated.
+
+BANNED CONSTRUCTIONS — zero tolerance:
+
+1. EM DASHES: Maximum 3 per chapter. Use periods, commas, or semicolons instead.
+2. "NOT X, BUT Y" / "NOT X — Y": Do NOT define anything by what it isn't. Maximum 1 per chapter.
+3. "SOMETHING IN [X]": Never write "something in her chest," "something in his voice." Name it or show it.
+4. "THE KIND OF X THAT Y": Never write "the kind of silence that meant calculation." Just describe it directly.
+5. MICRO-EXPRESSION MIND-READING: When a face does something, do NOT explain what it means. Let readers interpret.
+6. BODY-PART EMOTION PALETTE: Do NOT default to throat-tightens, hands-shake, chest-seizes, jaw-tightens for every emotion. Use varied, surprising physical manifestations.
+7. ONE-WORD DRAMATIC SENTENCES: Maximum 2 per chapter. ("Silence." "Just that." "Alive.")
+8. SIMULTANEOUS DIALOGUE + ACTION: Not every line of dialogue needs physical business. Let some dialogue stand alone.
+
+INSTEAD: Write with restraint. Let readers interpret. Vary sentence structure aggressively. Use specific physical details, not generic body-part emotions. Silence and ambiguity are features.
+</CRITICAL_PROSE_RULES>
+
 Write Chapter ${chapterNumber} of "${bible.title}" following this outline and craft rules.
 
 <story_context>
@@ -2310,11 +2368,13 @@ ${previousContext}
 </writing_craft_rules>
 
 <style_example>
-  This is the prose standard you're aiming for:
+Prose standard to aim for:
 
-  The door stood open. Not kicked in, not broken—just open, like an invitation written in silence. Mira's pulse kicked up. She pressed her back against the hallway wall, felt the rough brick bite through her jacket, and counted to three. No sound from inside. No movement.
+The door stood open. She didn't remember leaving it that way. Mira pressed her back against the hallway wall and counted to three. The brick bit through her jacket. No sound from inside.
 
-  She slipped through. The apartment looked wrong. Not ransacked-wrong, but rearranged-wrong. Someone had been careful. The couch cushions sat perfectly straight. The stack of mail on the counter lined up like soldiers. Her breath came shallow now. Whoever did this wanted her to know they'd been here. Wanted her to feel it.
+She slipped through. The apartment looked rearranged. Someone had been careful. Couch cushions perfectly straight. Mail on the counter lined up like soldiers. Her breathing went shallow. Whoever did this wanted her to know.
+
+Notice: no em dashes. Short sentences for tension. Physical sensation instead of named emotions. No "not X but Y." Just clean prose that trusts the reader.
 </style_example>
 
 <word_count>
@@ -2388,6 +2448,33 @@ Return ONLY a JSON object in this exact format:
     const parsed = parseAndValidateJSON(response, ['chapter']);
     chapter = parsed.chapter;
 
+    // Prose violations scan (before quality review)
+    const proseScan = scanForProseViolations(chapter.content);
+    if (!proseScan.passed) {
+      console.log(`⚠️ [${storyTitle}] Chapter ${chapterNumber} failed prose scan (attempt ${regenerationCount + 1}/3)`);
+      console.log(`   Violations: ${proseScan.violations.join(', ')}`);
+
+      if (regenerationCount < 2) {
+        regenerationCount++;
+        qualityReview = {
+          weighted_score: 5.0,
+          priority_fixes: proseScan.violations,
+          pass: false,
+          criteria_scores: {
+            prose_quality: {
+              score: 3,
+              weight: 0.25,
+              quotes: proseScan.violations,
+              fix: `CRITICAL PROSE VIOLATIONS: ${proseScan.violations.join('; ')}. Rewrite to eliminate these patterns completely.`
+            }
+          }
+        };
+        continue; // Retry generation
+      } else {
+        console.log(`⚠️ [${storyTitle}] Chapter ${chapterNumber} still has prose violations after 3 attempts. Proceeding to quality review.`);
+      }
+    }
+
     // Quality review pass
     const reviewPrompt = `You are an expert editor for fiction with deep knowledge of show-don't-tell craft, dialogue quality, and prose technique.
 
@@ -2444,7 +2531,7 @@ THINGS TO AVOID (AI tells):
 
 Score each criterion (1-10), provide evidence quotes, and suggest fixes if score < 7.
 
-1. SHOW DON'T TELL (Weight: 25%)
+1. SHOW DON'T TELL (Weight: 15%)
    - Does the chapter show emotions through action/sensation/dialogue rather than naming them?
    - Quote any instances of emotion-telling
    - Are abstract states made concrete?
@@ -2466,13 +2553,19 @@ Score each criterion (1-10), provide evidence quotes, and suggest fixes if score
    - Natural voice without talking down?
    - Themes handled appropriately?
 
-5. CHARACTER CONSISTENCY (Weight: 10%)
+5. CHARACTER CONSISTENCY (Weight: 5%)
    - Do character decisions flow from established traits, fears, goals?
    - Any out-of-character moments?
    - Does this chapter develop the character arc?
 
-6. PROSE QUALITY (Weight: 10%)
+6. PROSE QUALITY (Weight: 25%)
    - Clean writing free of AI tells ("not X but Y", rhetorical questions, etc.)?
+   - Count em dashes (>3 = score ≤5)
+   - Count "Not X but Y" constructions (>1 = score ≤6)
+   - Count "something in" constructions (>1 = score ≤5)
+   - Count "the kind of" constructions (>1 = score ≤6)
+   - Check for repeated body-part emotions (jaw-tightens, hands-shake, throat-tightens)
+   - Check if micro-expressions are interpreted rather than left ambiguous
    - No purple prose or clichés?
    - Varied sentence structure?
 
@@ -2489,7 +2582,7 @@ Return ONLY a JSON object in this exact format:
     "criteria_scores": {
       "show_dont_tell": {
         "score": number (1-10),
-        "weight": 0.25,
+        "weight": 0.15,
         "quotes": ["quote1 showing issue or strength", "quote2"],
         "fix": "actionable fix if score < 7, else empty string"
       },
@@ -2513,13 +2606,13 @@ Return ONLY a JSON object in this exact format:
       },
       "character_consistency": {
         "score": number (1-10),
-        "weight": 0.10,
+        "weight": 0.05,
         "quotes": ["quote1", "quote2"],
         "fix": "actionable fix or empty"
       },
       "prose_quality": {
         "score": number (1-10),
-        "weight": 0.10,
+        "weight": 0.25,
         "quotes": ["quote1", "quote2"],
         "fix": "actionable fix or empty"
       }

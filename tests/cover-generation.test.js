@@ -34,7 +34,7 @@ describe('Cover Generation - getArtStyle', () => {
   test('returns default style for unknown genre', () => {
     const style = getArtStyle('Unknown Genre');
     expect(style).toContain('richly detailed book cover');
-    expect(style).toContain('dramatic composition');
+    expect(style).toContain('vibrant color palette');
   });
 
   test('returns default style for null genre', () => {

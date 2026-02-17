@@ -171,7 +171,7 @@ function getArtStyle(genre) {
   if (g.includes('litrpg') || g.includes('gamelit'))
     return 'digital fantasy art style, vibrant colors, game-inspired aesthetic with glowing UI elements';
   if (g.includes('sci-fi') || g.includes('space') || g.includes('protocol'))
-    return 'sleek sci-fi concept art, neon accents, dark metallic tones, cinematic lighting';
+    return 'sleek sci-fi concept art, neon accents, rich metallic tones with vibrant accent colors, cinematic lighting';
   if (g.includes('horror') || g.includes('gothic') || g.includes('plague'))
     return 'dark gothic illustration, muted earth tones with splashes of crimson, heavy shadow and atmosphere';
   if (g.includes('whimsical') || g.includes('gaslamp'))
@@ -183,14 +183,14 @@ function getArtStyle(genre) {
   if (g.includes('dying earth') || g.includes('post'))
     return 'weathered illustration style, faded maritime palette, textured like aged parchment';
   if (g.includes('mystery') || g.includes('thriller'))
-    return 'moody noir illustration, high contrast, deep shadows with single dramatic light source';
+    return 'moody noir illustration, high contrast, atmospheric contrast, rich jewel tones with strategic shadow';
   if (g.includes('romance'))
     return 'soft romantic illustration, warm sunset palette, flowing organic composition';
   if (g.includes('adventure'))
     return 'dynamic adventure illustration, saturated colors, bold composition with sense of movement';
 
   // Default
-  return 'richly detailed book cover illustration, dramatic composition, cinematic lighting';
+  return 'richly detailed book cover illustration, vibrant color palette, clear and inviting composition';
 }
 
 /**
@@ -252,7 +252,8 @@ At the bottom: "${upperAuthor}" in smaller clean font, centered.
 
 REQUIREMENTS:
 - Flat, front-facing rectangular artwork filling the entire canvas edge-to-edge
-- Genre-appropriate color palette that reflects the story's mood
+- Vibrant, eye-catching color palette appropriate to the genre — covers should be visually striking and inviting, not muddy or overly dark
+- Strong contrast between text and background for readability
 - All text perfectly legible with no extra characters
 - Do NOT render a 3D book object, spine, or pages
 - No borders or margins
