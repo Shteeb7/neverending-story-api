@@ -16,6 +16,8 @@ const adminRoutes = require('./routes/admin');
 const testRoutes = require('./routes/test');
 const chatRoutes = require('./routes/chat');
 const settingsRoutes = require('./routes/settings');
+const bugReportRoutes = require('./routes/bug-reports');
+const codebaseContextRoutes = require('./routes/codebase-context');
 
 // Initialize Express app
 const app = express();
@@ -107,6 +109,8 @@ app.use('/admin', adminRoutes);
 app.use('/test', testRoutes);
 app.use('/chat', chatRoutes);
 app.use('/settings', settingsRoutes);
+app.use('/bug-reports', bugReportRoutes);
+app.use('/', codebaseContextRoutes);
 
 // =========================
 // Error Handling
