@@ -246,7 +246,7 @@ router.get('/updates', authenticateUser, asyncHandler(async (req, res) => {
   // Query for reviewed reports updated since the timestamp
   const { data: updates, error } = await supabaseAdmin
     .from('bug_reports')
-    .select('id, peggy_summary, status, ai_priority, category, reviewed_at, created_at')
+    .select('id, user_description, peggy_summary, status, ai_priority, category, reviewed_at, created_at')
     .eq('user_id', userId)
     .in('status', ['approved', 'fixed', 'denied', 'deferred'])
     .gt('reviewed_at', sinceDate)
