@@ -6,14 +6,13 @@ on:
 
 jobs:
   fix:
-    # Only run when the peggy-fix label is added
-    if: github.event.label.name == 'peggy-fix'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write
       issues: write
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -24,38 +23,35 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
+      - name: Install API dependencies
         run: npm ci
 
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          model: claude-sonnet-4-5-20250929
-          timeout_minutes: 10
-          direct_prompt: |
+          label_trigger: "peggy-fix"
+          claude_args: "--model claude-sonnet-4-5-20250929 --max-turns 25"
+          prompt: |
             You are fixing a bug in the NeverendingStory API server (Node.js/Express).
 
-            READ THE ISSUE BODY BELOW FOR YOUR INSTRUCTIONS:
-            ---
-            ${{ github.event.issue.body }}
-            ---
+            READ THE ISSUE BODY FOR YOUR INSTRUCTIONS. It contains:
+            - BUG REPORT SUMMARY
+            - AI DIAGNOSIS
+            - SUGGESTED FIX
+            - FILES LIKELY INVOLVED
 
             RULES:
             1. Read the diagnosis and suggested fix carefully
             2. Look at the files mentioned in "FILES LIKELY INVOLVED"
             3. Implement the fix
-            4. Run `npm test` and make sure ALL tests pass (currently 191 tests)
-            5. If your fix breaks tests, fix the tests too (unless the test was wrong)
+            4. Run `npm test` and make sure ALL tests pass
+            5. If your fix breaks tests, fix the tests too (unless the test was genuinely wrong)
             6. If you can't figure out the fix, create the PR anyway with what you tried and a note about what's blocking you
 
-            PR DESCRIPTION MUST INCLUDE:
-            - What was wrong (1-2 sentences)
-            - What you changed (list of files and what changed)
-            - Test results (paste the npm test summary line)
-
             IMPORTANT:
-            - This is a SERVER-SIDE Node.js codebase. Do NOT touch any Swift/iOS files.
+            - This is a SERVER-SIDE Node.js codebase
+            - Do NOT touch any Swift/iOS files
             - The API runs on Express with routes in src/routes/
-            - Database is Supabase PostgreSQL, accessed via @supabase/supabase-js
-            - Do NOT modify test infrastructure (test/setup.js, test/helpers/) unless a test is genuinely wrong
+            - Database is Supabase PostgreSQL via @supabase/supabase-js
+            - Do NOT modify test infrastructure unless a test is genuinely wrong
             - Keep changes minimal — fix the bug, don't refactor the world
