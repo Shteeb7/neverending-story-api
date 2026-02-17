@@ -35,7 +35,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: |
             --model claude-sonnet-4-5-20250929
-            --max-turns 25
+            --max-turns 50
             --allowedTools "Bash(*),Read,Write,Edit,Glob,Grep"
           prompt: |
             You are fixing a bug in the NeverendingStory API server (Node.js/Express).
