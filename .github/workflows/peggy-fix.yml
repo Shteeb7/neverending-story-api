@@ -36,7 +36,7 @@ jobs:
           claude_args: |
             --model claude-sonnet-4-5-20250929
             --max-turns 25
-            --allowedTools "Bash(npm test),Bash(npm run *),Read,Write,Edit,Glob,Grep"
+            --allowedTools "Bash(*),Read,Write,Edit,Glob,Grep"
           prompt: |
             You are fixing a bug in the NeverendingStory API server (Node.js/Express).
 
