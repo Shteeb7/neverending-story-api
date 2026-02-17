@@ -5,7 +5,8 @@ on:
     types: [labeled]
 
 jobs:
-  fix:
+  claude:
+    if: github.event.label.name == 'peggy-fix'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -15,24 +16,27 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install API dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - uses: anthropics/claude-code-action@v1
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          label_trigger: "peggy-fix"
-          claude_args: "--model claude-sonnet-4-5-20250929 --max-turns 25 --permission-mode allowlist"
-          additional_permissions: "bash:write"
+          claude_args: |
+            --model claude-sonnet-4-5-20250929
+            --max-turns 25
+            --allowedTools "Bash(npm test),Bash(npm run *),Read,Write,Edit,Glob,Grep"
           prompt: |
             You are fixing a bug in the NeverendingStory API server (Node.js/Express).
 
