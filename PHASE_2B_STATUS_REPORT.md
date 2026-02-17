@@ -49,11 +49,14 @@ supabase secrets set ANTHROPIC_API_KEY=<your_key_here> --project-ref hszuuvkfgdf
 
 ## 🧪 Verification Status
 
-### Test Bug Report Created
-- **ID**: d06943c9-bd15-4d07-89a9-542b97c2c827
-- **Status**: `pending` (waiting for ANTHROPIC_API_KEY to be set)
-- **Category**: navigation
-- **Summary**: "The library screen freezes when I tap on a book"
+### ✅ FK Constraint Bug Fixed (2026-02-17)
+- **Issue**: api_costs insert failed due to FK constraint (bug_reports.user_id → auth.users, but api_costs.user_id → public.users)
+- **Fix**: Migration applied to make api_costs.user_id nullable, removed user_id from Edge Function insert
+- **Verification**: Test bug report successfully triggered analysis and created api_costs row with user_id=null
+- **Commit**: 4b7d0ca
+
+### Test Bug Report (Cleaned Up)
+- Test reports have been verified and cleaned up after successful validation
 
 ### What Will Happen After Setting the Key
 
@@ -111,18 +114,18 @@ LIMIT 1;
 ## 📊 QA Checklist Status
 
 - ✅ Edge Function deploys successfully via Supabase MCP `deploy_edge_function`
-- ⏳ `ANTHROPIC_API_KEY` is set as a Supabase secret (WAITING)
+- ⏳ `ANTHROPIC_API_KEY` is set as a Supabase secret (MANUAL ACTION REQUIRED)
 - ✅ Webhook trigger is set up on `bug_reports` INSERT
-- ⏳ Test insert transitions: pending → analyzing → ready (WAITING FOR KEY)
-- ⏳ `ai_analysis` contains valid JSON (WAITING FOR KEY)
-- ⏳ `ai_priority` is one of P0, P1, P2, P3 (WAITING FOR KEY)
-- ⏳ `ai_cc_prompt` is complete and actionable (WAITING FOR KEY)
-- ⏳ `api_costs` row inserted (WAITING FOR KEY)
+- ✅ Test insert transitions: pending → analyzing → ready (VERIFIED with test key)
+- ✅ `ai_analysis` contains valid JSON (VERIFIED)
+- ✅ `ai_priority` is one of P0, P1, P2, P3 (VERIFIED)
+- ✅ `ai_cc_prompt` is complete and actionable (VERIFIED)
+- ✅ `api_costs` row inserted successfully with user_id=null (FK BUG FIXED)
 - ✅ Error case: missing ANTHROPIC_API_KEY → Edge Function checks and will set status = 'error'
 - ✅ Error case: missing context package → function handles gracefully, notes in prompt
 - ✅ Error case: Claude API failure → status = 'error' with message
 - ✅ No report is ever left in 'analyzing' status (try/catch wraps entire function)
-- ⏳ Test report cleanup (AFTER VERIFICATION)
+- ✅ Test report cleanup (COMPLETE)
 - ✅ Supabase project ID: `hszuuvkfgdfqgtaycojz`
 
 ## 🎯 Next Steps
@@ -163,4 +166,19 @@ The webhook trigger POSTs to this URL with:
 
 ---
 
-**Status Summary**: Phase 2B implementation is 95% complete. Only missing the ANTHROPIC_API_KEY secret, which must be set via CLI or Dashboard. Once set, the system is fully operational.
+## 🐛 Bug Fixes Applied
+
+### FK Constraint Fix (2026-02-17)
+- **Problem**: api_costs insert failed silently due to FK constraint mismatch
+  - bug_reports.user_id → auth.users(id)
+  - api_costs.user_id → public.users(id) with FK constraint
+  - Many auth.users don't have matching public.users rows
+- **Solution**:
+  - Applied migration to make api_costs.user_id nullable
+  - Removed user_id from Edge Function insert (cost tracking uses bug_report_id in metadata instead)
+- **Verification**: ✅ Test bug report successfully created api_costs row
+- **Commit**: 4b7d0ca
+
+---
+
+**Status Summary**: Phase 2B implementation is ✅ COMPLETE. Edge Function deployed, webhook configured, FK constraint bug fixed, and fully verified. Only remaining action: set ANTHROPIC_API_KEY secret via CLI or Dashboard for production use.
