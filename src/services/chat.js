@@ -1,6 +1,7 @@
 const { anthropic } = require('../config/ai-clients');
 const { supabaseAdmin } = require('../config/supabase');
 const { assemblePrompt, getGreeting } = require('../config/prospero');
+const peggy = require('../config/peggy');
 
 // CHAT TOOLS - Anthropic format for function calling
 const CHAT_TOOLS = {
@@ -59,6 +60,43 @@ const CHAT_TOOLS = {
   }]
 };
 
+// Peggy tools for bug reports and suggestions
+CHAT_TOOLS.bug_report = [{
+  name: 'submit_bug_report',
+  description: 'Submit the gathered bug report details. Call this when you have all the information about the bug.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      summary: { type: 'string', description: 'One-sentence description of the bug' },
+      category: { type: 'string', enum: ['navigation', 'generation', 'reading', 'interview', 'visual', 'performance', 'feature_request', 'other'], description: 'Bug category' },
+      severity_hint: { type: 'string', enum: ['critical', 'annoying', 'cosmetic', 'idea'], description: 'Severity level' },
+      user_description: { type: 'string', description: 'Full description in user\'s words' },
+      steps_to_reproduce: { type: 'string', description: 'Steps to reproduce the bug, if described' },
+      expected_behavior: { type: 'string', description: 'What the user expected to happen' },
+      sign_off_message: { type: 'string', description: 'Peggy\'s closing line' }
+    },
+    required: ['summary', 'category', 'severity_hint', 'user_description']
+  }
+}];
+
+CHAT_TOOLS.suggestion = [{
+  name: 'submit_bug_report',
+  description: 'Submit the gathered suggestion details. Call this when you have all the information about the feature request.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      summary: { type: 'string', description: 'One-sentence description of the suggestion' },
+      category: { type: 'string', description: 'Should be "feature_request" for suggestions' },
+      severity_hint: { type: 'string', description: 'Should be "idea" for suggestions' },
+      user_description: { type: 'string', description: 'Full description in user\'s words' },
+      steps_to_reproduce: { type: 'string', description: 'Not usually applicable for suggestions' },
+      expected_behavior: { type: 'string', description: 'What the user envisions' },
+      sign_off_message: { type: 'string', description: 'Peggy\'s closing line' }
+    },
+    required: ['summary', 'category', 'severity_hint', 'user_description']
+  }
+}];
+
 // These prompt-building functions are now replaced by prospero.js config
 // Kept as reference but no longer used in createChatSession
 
@@ -72,9 +110,20 @@ const CHAT_TOOLS = {
 async function createChatSession(userId, interviewType, context = {}) {
   console.log(`📝 Creating text chat session for user ${userId}, type: ${interviewType}`);
 
-  // Build system prompt using prospero.js config
-  const systemPrompt = assemblePrompt(interviewType, 'text', context);
-  const greeting = getGreeting(interviewType, context);
+  // Determine persona based on interview type
+  const peggyTypes = ['bug_report', 'suggestion'];
+  const isPeggy = peggyTypes.includes(interviewType);
+
+  let systemPrompt, greeting;
+  if (isPeggy) {
+    // Use Peggy persona for bug reports and suggestions
+    systemPrompt = peggy.assemblePrompt(interviewType, 'text', context);
+    greeting = peggy.getGreeting(interviewType, context);
+  } else {
+    // Use Prospero persona for story interviews
+    systemPrompt = assemblePrompt(interviewType, 'text', context);
+    greeting = getGreeting(interviewType, context);
+  }
 
   // Determine tools based on interview type
   let tools;
@@ -87,6 +136,12 @@ async function createChatSession(userId, interviewType, context = {}) {
       break;
     case 'book_completion':
       tools = CHAT_TOOLS.book_completion;
+      break;
+    case 'bug_report':
+      tools = CHAT_TOOLS.bug_report;
+      break;
+    case 'suggestion':
+      tools = CHAT_TOOLS.suggestion;
       break;
     default:
       throw new Error(`Unknown interview type: ${interviewType}`);
