@@ -3,7 +3,8 @@ const { asyncHandler } = require('../middleware/error-handler');
 const { authenticateUser } = require('../middleware/auth');
 const { requireAIConsentMiddleware } = require('../middleware/consent');
 const { createChatSession, sendMessage, getChatSession } = require('../services/chat');
-const { assemblePrompt, getGreeting } = require('../config/prospero');
+const prospero = require('../config/prospero');
+const peggy = require('../config/peggy');
 
 const router = express.Router();
 
@@ -106,39 +107,26 @@ router.get('/session/:sessionId', authenticateUser, asyncHandler(async (req, res
 
 /**
  * POST /chat/system-prompt
- * Assemble a system prompt for Prospero
+ * Assemble a system prompt for Prospero or Peggy
  *
  * Body:
- *   - interviewType: 'onboarding' | 'returning_user' | 'premise_rejection' | 'book_completion'
+ *   - persona: (optional) 'prospero' | 'peggy' — defaults to 'prospero'
+ *   - interviewType: (for Prospero) 'onboarding' | 'returning_user' | 'premise_rejection' | 'book_completion'
+ *   - reportType: (for Peggy) 'bug_report' | 'suggestion'
  *   - medium: 'voice' | 'text'
- *   - context: (optional) context object with interview-specific data
+ *   - context: (optional) context object with persona-specific data
  *
  * Returns:
  *   - prompt: The complete system prompt
- *   - greeting: The opening greeting for this interview type
+ *   - greeting: The opening greeting
  */
 router.post('/system-prompt', authenticateUser, requireAIConsentMiddleware, asyncHandler(async (req, res) => {
-  const { interviewType, medium, context } = req.body;
-
-  if (!interviewType) {
-    return res.status(400).json({
-      success: false,
-      error: 'Missing interviewType'
-    });
-  }
+  const { persona = 'prospero', interviewType, reportType, medium, context } = req.body;
 
   if (!medium) {
     return res.status(400).json({
       success: false,
       error: 'Missing medium (voice or text)'
-    });
-  }
-
-  const validInterviewTypes = ['onboarding', 'returning_user', 'premise_rejection', 'book_completion'];
-  if (!validInterviewTypes.includes(interviewType)) {
-    return res.status(400).json({
-      success: false,
-      error: `Invalid interviewType. Must be one of: ${validInterviewTypes.join(', ')}`
     });
   }
 
@@ -151,8 +139,48 @@ router.post('/system-prompt', authenticateUser, requireAIConsentMiddleware, asyn
   }
 
   try {
-    const prompt = assemblePrompt(interviewType, medium, context || {});
-    const greeting = getGreeting(interviewType, context || {});
+    let prompt, greeting;
+
+    if (persona === 'peggy') {
+      // Peggy uses reportType instead of interviewType
+      if (!reportType) {
+        return res.status(400).json({
+          success: false,
+          error: 'Missing reportType for Peggy (bug_report or suggestion)'
+        });
+      }
+
+      const validReportTypes = ['bug_report', 'suggestion'];
+      if (!validReportTypes.includes(reportType)) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid reportType. Must be one of: ${validReportTypes.join(', ')}`
+        });
+      }
+
+      prompt = peggy.assemblePrompt(reportType, medium, context || {});
+      greeting = peggy.getGreeting(reportType, context || {});
+
+    } else {
+      // Default to Prospero (backward compatible)
+      if (!interviewType) {
+        return res.status(400).json({
+          success: false,
+          error: 'Missing interviewType for Prospero'
+        });
+      }
+
+      const validInterviewTypes = ['onboarding', 'returning_user', 'premise_rejection', 'book_completion'];
+      if (!validInterviewTypes.includes(interviewType)) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid interviewType. Must be one of: ${validInterviewTypes.join(', ')}`
+        });
+      }
+
+      prompt = prospero.assemblePrompt(interviewType, medium, context || {});
+      greeting = prospero.getGreeting(interviewType, context || {});
+    }
 
     res.json({
       success: true,
