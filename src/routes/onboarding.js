@@ -425,6 +425,60 @@ router.post('/generate-premises', authenticateUser, requireAIConsentMiddleware, 
 }));
 
 /**
+ * POST /onboarding/generate-more-premises
+ * Generate 3 additional story premises, excluding previously shown ones
+ * Used for "Show me more" browsing flow
+ */
+router.post('/generate-more-premises', authenticateUser, requireAIConsentMiddleware, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { excludePremises = [] } = req.body;
+
+  console.log(`🎬 /generate-more-premises called for user: ${userId}`);
+  console.log(`📋 Excluding ${excludePremises.length} previously shown premises`);
+
+  // Fetch user preferences from database
+  console.log('📊 Fetching user preferences from database...');
+  const { data: userPrefs, error: prefsError } = await supabaseAdmin
+    .from('user_preferences')
+    .select('preferences')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (prefsError) {
+    console.log('❌ Error fetching preferences:', prefsError);
+    return res.status(400).json({
+      success: false,
+      error: `Failed to fetch preferences: ${prefsError.message}`
+    });
+  }
+
+  if (!userPrefs) {
+    console.log('❌ No user preferences found for user:', userId);
+    return res.status(400).json({
+      success: false,
+      error: 'Creative instincts not yet captured. Complete onboarding first.'
+    });
+  }
+
+  console.log('✅ User preferences found');
+
+  // Call generation service with excludePremises
+  console.log('🤖 Calling Claude API to generate more premises (excluding previous)...');
+  const { generatePremises } = require('../services/generation');
+  const { premises, premisesId } = await generatePremises(userId, userPrefs.preferences, excludePremises);
+  console.log(`✅ Generated ${premises.length} new premises with ID: ${premisesId}`);
+
+  res.json({
+    success: true,
+    premises,
+    premisesId,
+    message: 'More story premises conjured for your consideration'
+  });
+}));
+
+/**
  * GET /onboarding/premises/:userId
  * Retrieve UNUSED premises for a user (filters out already selected premises)
  */

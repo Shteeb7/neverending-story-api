@@ -420,8 +420,11 @@ async function retryGenerationStep(stepName, storyId, storyTitle, stepFn, maxRet
 
 /**
  * Generate 3 story premises from user preferences
+ * @param {string} userId - User ID
+ * @param {object} preferences - User preferences
+ * @param {array} excludePremises - Optional array of premises to avoid repeating
  */
-async function generatePremises(userId, preferences) {
+async function generatePremises(userId, preferences, excludePremises = []) {
   // Extract preferences with correct field names from normalization
   const {
     genres = [],
@@ -547,6 +550,12 @@ ${historyList}
 
 DISCOVERY TOLERANCE: ${discoveryTolerance.toFixed(2)} (scale 0.0 = comfort-seeker, 1.0 = explorer)
 
+${excludePremises.length > 0 ? `
+PREVIOUSLY SHOWN PREMISES (DO NOT repeat these concepts, settings, or genre+theme combinations):
+${excludePremises.map(p => `- "${p.title}" (${p.tier}): ${p.description}`).join('\n')}
+
+Generate 3 COMPLETELY DIFFERENT premises. Not variations of the above — genuinely new concepts.
+` : ''}
 ---
 
 GENERATE EXACTLY 3 PREMISES with these specific roles:
