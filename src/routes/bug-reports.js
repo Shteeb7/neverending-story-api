@@ -246,7 +246,7 @@ router.get('/updates', authenticateUser, asyncHandler(async (req, res) => {
   // Query for reviewed reports updated since the timestamp
   const { data: updates, error } = await supabaseAdmin
     .from('bug_reports')
-    .select('id, user_description, peggy_summary, status, ai_priority, category, reviewed_at, created_at')
+    .select('id, user_description, peggy_summary, status, ai_priority, category, reviewed_at, created_at, fix_status, github_issue_url, github_pr_url')
     .eq('user_id', userId)
     .in('status', ['approved', 'fixed', 'denied', 'deferred'])
     .gt('reviewed_at', sinceDate)
@@ -262,6 +262,56 @@ router.get('/updates', authenticateUser, asyncHandler(async (req, res) => {
   res.json({
     updates: updates || []
   });
+}));
+
+/**
+ * POST /bug-reports/fix-status
+ * Webhook endpoint for GitHub Actions to report fix progress
+ */
+router.post('/fix-status', asyncHandler(async (req, res) => {
+  // Authenticate with webhook secret
+  const webhookSecret = process.env.PEGGY_WEBHOOK_SECRET;
+  const authHeader = req.headers['x-webhook-secret'];
+
+  if (!webhookSecret || authHeader !== webhookSecret) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+
+  const { github_issue_url, fix_status, github_pr_url } = req.body;
+
+  if (!github_issue_url || !fix_status) {
+    return res.status(400).json({ success: false, error: 'Missing github_issue_url or fix_status' });
+  }
+
+  const validFixStatuses = ['in_progress', 'pr_ready', 'fix_failed'];
+  if (!validFixStatuses.includes(fix_status)) {
+    return res.status(400).json({ success: false, error: `Invalid fix_status: ${fix_status}` });
+  }
+
+  const updates = { fix_status, updated_at: new Date().toISOString() };
+  if (github_pr_url) updates.github_pr_url = github_pr_url;
+  if (fix_status === 'pr_ready' || fix_status === 'fix_failed') {
+    updates.fix_completed_at = new Date().toISOString();
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('bug_reports')
+    .update(updates)
+    .eq('github_issue_url', github_issue_url)
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.error(`❌ Fix-status webhook error:`, error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+
+  if (!data) {
+    return res.status(404).json({ success: false, error: 'No bug report found with that issue URL' });
+  }
+
+  console.log(`🤖 Fix status updated: ${fix_status} for ${github_issue_url}`);
+  res.json({ success: true });
 }));
 
 /**
@@ -477,6 +527,58 @@ router.patch('/:id', authenticateUser, asyncHandler(async (req, res) => {
   }
 
   console.log(`✅ Bug report updated: ${id}, new status: ${status || 'unchanged'}`);
+
+  // Auto-fix pipeline: Create GitHub issue for approved server-side bugs
+  const serverSideCategories = ['generation', 'api', 'auth', 'health_check', 'other'];
+  const isServerSide = serverSideCategories.includes(updatedReport.category);
+
+  if (status === 'approved' && updatedReport.ai_cc_prompt && isServerSide && process.env.GITHUB_WRITE_TOKEN) {
+    try {
+      // PII scrub — remove any user IDs, emails, names from the prompt
+      let sanitizedPrompt = updatedReport.ai_cc_prompt;
+      // Strip UUIDs that look like user IDs
+      sanitizedPrompt = sanitizedPrompt.replace(/user[_-]?id[:\s]+[0-9a-f-]{36}/gi, 'user_id: [REDACTED]');
+
+      const issueBody = sanitizedPrompt;
+      const issueTitle = `🐛 Peggy Fix: ${updatedReport.peggy_summary?.substring(0, 80) || 'Bug fix'}`;
+
+      const ghResponse = await fetch('https://api.github.com/repos/Shteeb7/neverending-story-api/issues', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.GITHUB_WRITE_TOKEN}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: issueTitle,
+          body: issueBody,
+          labels: ['peggy-fix']
+        })
+      });
+
+      if (ghResponse.ok) {
+        const issue = await ghResponse.json();
+        // Update the bug report with fix tracking info
+        await supabaseAdmin
+          .from('bug_reports')
+          .update({
+            fix_status: 'queued',
+            github_issue_url: issue.html_url,
+            fix_started_at: new Date().toISOString()
+          })
+          .eq('id', id);
+
+        console.log(`🤖 [${updatedReport.peggy_summary?.substring(0, 40)}] GitHub issue created: ${issue.html_url}`);
+      } else {
+        const errText = await ghResponse.text();
+        console.error(`❌ Failed to create GitHub issue: ${ghResponse.status} — ${errText}`);
+        // Don't fail the whole PATCH — the approval still stands, auto-fix just didn't trigger
+      }
+    } catch (ghError) {
+      console.error(`❌ GitHub issue creation error:`, ghError.message);
+      // Non-fatal — approval still saved
+    }
+  }
 
   res.json({
     success: true,
