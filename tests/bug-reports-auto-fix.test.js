@@ -354,4 +354,104 @@ describe('Bug Reports Auto-Fix Pipeline', () => {
       );
     });
   });
+
+  describe('POST /bug-reports/:id/merge-pr - Dashboard PR Merge', () => {
+    test('successfully merges PR and updates bug report', async () => {
+      // Mock successful GitHub merge response
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ merged: true, sha: 'abc123' })
+      });
+
+      const response = await request(app)
+        .post('/bug-reports/test-report-id/merge-pr')
+        .send({
+          github_pr_url: 'https://github.com/Shteeb7/neverending-story-api/pull/123'
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+
+      // Verify GitHub API was called with correct merge parameters
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://api.github.com/repos/Shteeb7/neverending-story-api/pulls/123/merge',
+        expect.objectContaining({
+          method: 'PUT',
+          headers: expect.objectContaining({
+            'Authorization': 'Bearer test-token',
+            'Accept': 'application/vnd.github.v3+json'
+          })
+        })
+      );
+
+      // Verify merge method is squash
+      const fetchCall = global.fetch.mock.calls[0][1];
+      const body = JSON.parse(fetchCall.body);
+      expect(body.merge_method).toBe('squash');
+      expect(body.commit_title).toMatch(/Peggy Fix/);
+
+      // Verify bug report was updated
+      expect(mockSupabaseUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fix_status: 'pr_merged',
+          status: 'fixed',
+          fix_completed_at: expect.any(String)
+        })
+      );
+    });
+
+    test('returns 400 for invalid PR URL', async () => {
+      const response = await request(app)
+        .post('/bug-reports/test-report-id/merge-pr')
+        .send({
+          github_pr_url: 'not-a-valid-url'
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain('Invalid PR URL format');
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    test('returns 400 when github_pr_url is missing', async () => {
+      const response = await request(app)
+        .post('/bug-reports/test-report-id/merge-pr')
+        .send({});
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain('Missing github_pr_url');
+    });
+
+    test('handles GitHub merge failure (merge conflict)', async () => {
+      // Mock GitHub merge failure
+      global.fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 405,
+        text: async () => 'Merge conflict'
+      });
+
+      const response = await request(app)
+        .post('/bug-reports/test-report-id/merge-pr')
+        .send({
+          github_pr_url: 'https://github.com/Shteeb7/neverending-story-api/pull/123'
+        });
+
+      expect(response.status).toBe(405);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error).toContain('GitHub merge failed');
+    });
+
+    test('returns 500 when GITHUB_WRITE_TOKEN is missing', async () => {
+      delete process.env.GITHUB_WRITE_TOKEN;
+
+      const response = await request(app)
+        .post('/bug-reports/test-report-id/merge-pr')
+        .send({
+          github_pr_url: 'https://github.com/Shteeb7/neverending-story-api/pull/123'
+        });
+
+      expect(response.status).toBe(500);
+      expect(response.body.error).toContain('GitHub token not configured');
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+  });
 });

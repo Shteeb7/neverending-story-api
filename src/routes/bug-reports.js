@@ -315,6 +315,74 @@ router.post('/fix-status', asyncHandler(async (req, res) => {
 }));
 
 /**
+ * POST /bug-reports/:id/merge-pr
+ * Merge a GitHub PR from the dashboard
+ */
+router.post('/:id/merge-pr', authenticateUser, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { github_pr_url } = req.body;
+
+  if (!github_pr_url) {
+    return res.status(400).json({ success: false, error: 'Missing github_pr_url' });
+  }
+
+  // Extract PR details from URL
+  const match = github_pr_url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+  if (!match) {
+    return res.status(400).json({ success: false, error: 'Invalid PR URL format' });
+  }
+
+  const [, owner, repo, prNumber] = match;
+  const githubToken = process.env.GITHUB_WRITE_TOKEN;
+
+  if (!githubToken) {
+    return res.status(500).json({ success: false, error: 'GitHub token not configured' });
+  }
+
+  try {
+    // Merge the PR via GitHub API
+    const mergeResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/merge`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${githubToken}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        merge_method: 'squash',
+        commit_title: `🐛 Peggy Fix: Auto-fix from bug report (PR #${prNumber})`
+      })
+    });
+
+    if (!mergeResponse.ok) {
+      const errText = await mergeResponse.text();
+      console.error(`❌ Failed to merge PR #${prNumber}: ${mergeResponse.status} — ${errText}`);
+      return res.status(mergeResponse.status).json({
+        success: false,
+        error: `GitHub merge failed: ${mergeResponse.status}`
+      });
+    }
+
+    // Update bug report status
+    await supabaseAdmin
+      .from('bug_reports')
+      .update({
+        fix_status: 'pr_merged',
+        fix_completed_at: new Date().toISOString(),
+        status: 'fixed',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id);
+
+    console.log(`🚀 PR #${prNumber} merged for bug report ${id}`);
+    res.json({ success: true, message: 'PR merged successfully' });
+  } catch (err) {
+    console.error(`❌ Merge PR error:`, err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+}));
+
+/**
  * GET /bug-reports
  * List bug reports with filtering and pagination
  */
