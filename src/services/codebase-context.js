@@ -205,37 +205,21 @@ async function fetchGitHubFile(repoKey, filePath) {
 
 /**
  * Fetch database schema for specified tables
+ * Uses the get_public_schema_info() database function
  */
 async function fetchDatabaseSchema() {
-  const query = `
-    SELECT table_name, column_name, data_type, is_nullable, column_default
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-    AND table_name IN (${DB_TABLES.map(t => `'${t}'`).join(',')})
-    ORDER BY table_name, ordinal_position;
-  `;
-
   try {
-    const { data, error } = await supabaseAdmin.rpc('exec_sql', { sql: query });
+    const { data, error } = await supabaseAdmin.rpc('get_public_schema_info');
 
     if (error) {
-      // Try direct query as fallback
-      const { data: directData, error: directError } = await supabaseAdmin
-        .from('information_schema.columns')
-        .select('table_name, column_name, data_type, is_nullable, column_default')
-        .in('table_name', DB_TABLES);
-
-      if (directError) {
-        throw new Error(`Failed to fetch schema: ${directError.message}`);
-      }
-
-      return buildSchemaObject(directData || []);
+      throw new Error(`Schema query failed: ${error.message}`);
     }
 
-    return buildSchemaObject(data || []);
+    // Filter to only our target tables
+    const filtered = (data || []).filter(row => DB_TABLES.includes(row.table_name));
+    return buildSchemaObject(filtered);
   } catch (error) {
     console.error('Failed to fetch database schema:', error.message);
-    // Return empty schema on error
     return { tables: {} };
   }
 }

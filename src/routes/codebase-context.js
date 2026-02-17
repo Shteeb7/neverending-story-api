@@ -2,20 +2,9 @@ const express = require('express');
 const { buildCodebaseContext } = require('../services/codebase-context');
 const { asyncHandler } = require('../middleware/error-handler');
 const { authenticateUser } = require('../middleware/auth');
+const { isAdmin } = require('../config/admin');
 
 const router = express.Router();
-
-// Admin email list (same as bug-reports.js)
-const ADMIN_EMAILS = [
-  'steven.labrum@gmail.com'
-];
-
-/**
- * Check if a user is an admin based on their email
- */
-function isAdmin(user) {
-  return user && user.email && ADMIN_EMAILS.includes(user.email.toLowerCase());
-}
 
 /**
  * POST /admin/build-context
