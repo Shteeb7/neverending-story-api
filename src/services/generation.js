@@ -472,6 +472,23 @@ async function generatePremises(userId, preferences) {
   console.log(`   Emotional Drivers: ${emotionalDrivers.join(', ') || 'Not yet identified'}`);
   console.log(`   Previous Stories: ${previousTitles.length} titles`);
 
+  // Check if this is a returning user with direction preferences
+  const isReturningUser = preferences.isReturningUser === true;
+  const storyDirection = preferences.storyDirection || 'comfort';
+  const moodShift = preferences.moodShift;
+  const explicitRequest = preferences.explicitRequest;
+  const newInterests = preferences.newInterests || [];
+  const previousStoryTitles = preferences.previousStoryTitles || previousTitles;
+
+  if (isReturningUser) {
+    console.log('🔄 RETURNING USER MODE:');
+    console.log(`   Direction: ${storyDirection}`);
+    console.log(`   Mood Shift: ${moodShift || 'none specified'}`);
+    console.log(`   Explicit Request: ${explicitRequest || 'none'}`);
+    console.log(`   New Interests: ${newInterests.join(', ') || 'none'}`);
+    console.log(`   Previous Story Titles: ${previousStoryTitles.join(', ')}`);
+  }
+
   // Build the three-tier premise prompt
   const genreList = genres.length > 0 ? genres.join(', ') : 'varied';
   const themeList = themes.length > 0 ? themes.join(', ') : 'varied';
@@ -488,6 +505,29 @@ async function generatePremises(userId, preferences) {
     ? 'MEDIUM tolerance — the wildcard should stay in a related genre family but take an unexpected thematic or setting angle they would not have predicted.'
     : 'LOW tolerance — the wildcard should stay within their preferred genres but approach from a surprising angle or subgenre they haven\'t explored. Gentle surprise, not shock.';
 
+  const returningUserContext = isReturningUser ? `
+RETURNING READER CONTEXT:
+This reader has already enjoyed stories with you! They've completed: ${previousStoryTitles.join(', ')}
+
+THEIR REQUEST FOR THIS NEW STORY:
+- Direction: ${storyDirection === 'comfort' ? 'MORE OF WHAT I LOVE — give me another story like my favorites' :
+              storyDirection === 'stretch' ? 'STRETCH ME — push into adjacent genres/themes I haven\'t tried' :
+              storyDirection === 'wildcard' ? 'SURPRISE ME — something unexpected but still tailored to me' :
+              storyDirection === 'specific' ? 'SPECIFIC IDEA — they have something particular in mind' :
+              storyDirection}
+${moodShift ? `- Current Mood: ${moodShift}` : ''}
+${explicitRequest ? `- Specific Request: "${explicitRequest}"` : ''}
+${newInterests.length > 0 ? `- New Interests to Incorporate: ${newInterests.join(', ')}` : ''}
+
+IMPORTANT: Honor their direction preference when generating premises. ${
+  storyDirection === 'comfort' ? 'All three premises should be variations on what they loved before.' :
+  storyDirection === 'stretch' ? 'Push into adjacent territory — related but unexplored.' :
+  storyDirection === 'wildcard' ? 'Be bold with surprises, but keep their reading level and avoid-list sacred.' :
+  storyDirection === 'specific' && explicitRequest ? `Their explicit request takes priority: "${explicitRequest}"` :
+  'Use their preferences as guidance.'
+}
+` : '';
+
   const premisePrompt = `You are Prospero, the master storyteller of Mythweaver. You know this reader deeply and are crafting three story premises — each with a DIFFERENT purpose.
 
 READER PROFILE:
@@ -501,7 +541,7 @@ READER PROFILE:
 - Age Range: ${ageRange} (for context)
 - Emotional Drivers (WHY they read): ${driverList}
 - Stories/Shows/Games They Love: ${belovedList}
-
+${returningUserContext}
 READING HISTORY (do NOT repeat these):
 ${historyList}
 

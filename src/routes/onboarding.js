@@ -264,6 +264,117 @@ router.post('/process-transcript', authenticateUser, requireVoiceConsentMiddlewa
 }));
 
 /**
+ * POST /onboarding/new-story-request
+ * Handle a returning user's request for new stories.
+ * Does NOT overwrite their existing preferences.
+ * Instead, merges direction/mood into context for premise generation.
+ */
+router.post('/new-story-request', authenticateUser, requireAIConsentMiddleware, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { transcript, sessionId, storyRequest } = req.body;
+
+  if (!transcript) {
+    return res.status(400).json({ success: false, error: 'Transcript is required' });
+  }
+
+  console.log(`📖 New story request from returning user ${userId}`);
+  console.log(`   Direction: ${storyRequest?.direction || 'not specified'}`);
+
+  // 1. Fetch EXISTING preferences (do NOT overwrite them)
+  const { data: userPrefs, error: prefsError } = await supabaseAdmin
+    .from('user_preferences')
+    .select('preferences, reading_level')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (prefsError || !userPrefs) {
+    console.log('❌ No existing preferences found — cannot handle returning user request');
+    return res.status(400).json({
+      success: false,
+      error: 'No existing preferences found. Complete onboarding first.'
+    });
+  }
+
+  // 2. Save the transcript (update, don't overwrite preferences)
+  const { error: updateError } = await supabaseAdmin
+    .from('user_preferences')
+    .update({
+      transcript: transcript,
+      session_id: sessionId || 'direct_websocket',
+      updated_at: new Date().toISOString()
+    })
+    .eq('user_id', userId);
+
+  if (updateError) {
+    console.log('⚠️ Failed to save transcript:', updateError);
+  }
+
+  // 3. Fetch user's existing stories for context
+  const { data: existingStories } = await supabaseAdmin
+    .from('stories')
+    .select('title, premise')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(5);
+
+  const previousTitles = existingStories?.map(s => s.title).filter(Boolean) || [];
+
+  // 4. Clear any existing unused premise sets for this user
+  //    (so the new premises replace old ones)
+  const { error: clearError } = await supabaseAdmin
+    .from('premises')
+    .delete()
+    .eq('user_id', userId)
+    .is('story_id', null);
+
+  if (clearError) {
+    console.log('⚠️ Failed to clear old premises:', clearError);
+  } else {
+    console.log('🗑️ Cleared old unused premises');
+  }
+
+  // 5. Generate new premises with BOTH existing preferences AND new direction
+  const { generatePremises } = require('../services/generation');
+
+  // Merge existing preferences with the new story request direction
+  const enrichedPreferences = {
+    ...userPrefs.preferences,
+    // Add returning user context
+    storyDirection: storyRequest?.direction || 'comfort',
+    moodShift: storyRequest?.moodShift || null,
+    explicitRequest: storyRequest?.explicitRequest || null,
+    newInterests: storyRequest?.newInterests || [],
+    previousStoryTitles: previousTitles,
+    isReturningUser: true
+  };
+
+  console.log('🤖 Generating premises with enriched preferences:', {
+    direction: enrichedPreferences.storyDirection,
+    moodShift: enrichedPreferences.moodShift,
+    previousTitles: previousTitles,
+    readingLevel: userPrefs.reading_level
+  });
+
+  const { premises, premisesId } = await generatePremises(userId, enrichedPreferences);
+  console.log(`✅ Generated ${premises.length} new premises for returning user`);
+
+  // Log cost
+  const estimatedTokens = Math.ceil((transcript?.split(/\s+/).length || 0) / 0.75);
+  await logVoiceCost(userId, 'voice_returning_user', estimatedTokens, {
+    sessionId: sessionId || 'direct_websocket',
+    transcriptLength: transcript?.length || 0,
+    direction: storyRequest?.direction
+  });
+
+  res.json({
+    success: true,
+    premises,
+    premisesId,
+    message: 'New story premises conjured for your next adventure'
+  });
+}));
+
+/**
  * POST /onboarding/generate-premises
  * Generate 3 story premises based on user preferences
  */
