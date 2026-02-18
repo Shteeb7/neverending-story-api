@@ -1,65 +1,4 @@
-const { buildCoverPrompt, getArtStyle } = require('../src/services/cover-generation');
-
-describe('Cover Generation - getArtStyle', () => {
-  test('returns digital fantasy art style for LitRPG genre', () => {
-    const style = getArtStyle('LitRPG Adventure');
-    expect(style).toContain('digital fantasy art');
-    expect(style).toContain('glowing UI elements');
-  });
-
-  test('returns sleek sci-fi style for sci-fi genre', () => {
-    const style = getArtStyle('Sci-Fi Thriller');
-    expect(style).toContain('sci-fi concept art');
-    expect(style).toContain('neon accents');
-  });
-
-  test('returns dark gothic style for horror genre', () => {
-    const style = getArtStyle('Gothic Horror');
-    expect(style).toContain('dark gothic');
-    expect(style).toContain('crimson');
-  });
-
-  test('returns whimsical watercolor style for whimsical genre', () => {
-    const style = getArtStyle('Whimsical Fantasy');
-    expect(style).toContain('whimsical watercolor');
-    expect(style).toContain('warm golden tones');
-  });
-
-  test('returns heroic oil painting style for heroic genre', () => {
-    const style = getArtStyle('Heroic Fantasy');
-    expect(style).toContain('oil painting');
-    expect(style).toContain('heroic composition');
-  });
-
-  test('returns default style for unknown genre', () => {
-    const style = getArtStyle('Unknown Genre');
-    expect(style).toContain('richly detailed book cover');
-    expect(style).toContain('vibrant color palette');
-  });
-
-  test('returns default style for null genre', () => {
-    const style = getArtStyle(null);
-    expect(style).toContain('richly detailed book cover');
-  });
-
-  test('returns default style for undefined genre', () => {
-    const style = getArtStyle(undefined);
-    expect(style).toContain('richly detailed book cover');
-  });
-
-  test('returns distinct styles for different genres', () => {
-    const litrpg = getArtStyle('LitRPG');
-    const scifi = getArtStyle('Sci-Fi');
-    const horror = getArtStyle('Horror');
-    const romance = getArtStyle('Romance');
-
-    // Each style should be unique
-    expect(litrpg).not.toBe(scifi);
-    expect(scifi).not.toBe(horror);
-    expect(horror).not.toBe(romance);
-    expect(romance).not.toBe(litrpg);
-  });
-});
+const { buildCoverPrompt } = require('../src/services/cover-generation');
 
 describe('Cover Generation - buildCoverPrompt', () => {
   const mockBibleFull = {
@@ -112,9 +51,11 @@ describe('Cover Generation - buildCoverPrompt', () => {
     expect(prompt).toContain('hope');
   });
 
-  test('includes genre-appropriate art style', () => {
-    const prompt = buildCoverPrompt('Shadow Rising', 'LitRPG', mockBibleFull, 'John Doe');
-    expect(prompt).toContain('digital fantasy art');
+  test('includes AI-driven art style instructions', () => {
+    const prompt = buildCoverPrompt('Shadow Rising', 'Fantasy', mockBibleFull, 'John Doe');
+    expect(prompt).toContain('You are designing a book cover');
+    expect(prompt).toContain('choose an art style, color palette, and composition');
+    expect(prompt).toContain('vibrant and inviting');
   });
 
   test('includes title in uppercase', () => {
@@ -205,15 +146,20 @@ describe('Cover Generation - buildCoverPrompt', () => {
     }).not.toThrow();
   });
 
-  test('returns different prompts for different genres', () => {
+  test('includes genre in prompt for AI to consider', () => {
     const fantasyPrompt = buildCoverPrompt('Shadow Rising', 'Fantasy', mockBibleFull, 'John Doe');
     const litrpgPrompt = buildCoverPrompt('Shadow Rising', 'LitRPG', mockBibleFull, 'John Doe');
     const scifiPrompt = buildCoverPrompt('Shadow Rising', 'Sci-Fi', mockBibleFull, 'John Doe');
 
-    // Each prompt should have different art styles
-    expect(fantasyPrompt).not.toContain('digital fantasy art');
-    expect(litrpgPrompt).toContain('digital fantasy art');
-    expect(scifiPrompt).toContain('sci-fi concept art');
+    // Each prompt should mention its genre
+    expect(fantasyPrompt).toContain('Fantasy novel');
+    expect(litrpgPrompt).toContain('LitRPG novel');
+    expect(scifiPrompt).toContain('Sci-Fi novel');
+
+    // All should have the AI art style selection instructions
+    expect(fantasyPrompt).toContain('You are designing a book cover');
+    expect(litrpgPrompt).toContain('You are designing a book cover');
+    expect(scifiPrompt).toContain('You are designing a book cover');
   });
 
   test('prompt includes requirements section', () => {

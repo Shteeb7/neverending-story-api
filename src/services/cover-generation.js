@@ -163,41 +163,9 @@ function spellOutTitle(title) {
 }
 
 /**
- * Select art style based on genre to create varied, genre-appropriate covers.
- */
-function getArtStyle(genre) {
-  const g = (genre || '').toLowerCase();
-
-  if (g.includes('litrpg') || g.includes('gamelit'))
-    return 'digital fantasy art style, vibrant colors, game-inspired aesthetic with glowing UI elements';
-  if (g.includes('sci-fi') || g.includes('space') || g.includes('protocol'))
-    return 'sleek sci-fi concept art, neon accents, rich metallic tones with vibrant accent colors, cinematic lighting';
-  if (g.includes('horror') || g.includes('gothic') || g.includes('plague'))
-    return 'dark gothic illustration, muted earth tones with splashes of crimson, heavy shadow and atmosphere';
-  if (g.includes('whimsical') || g.includes('gaslamp'))
-    return 'whimsical watercolor illustration, warm golden tones, intricate linework, storybook charm';
-  if (g.includes('heroic') || g.includes('epic'))
-    return 'oil painting style, sweeping heroic composition, warm firelight and cool shadow contrast';
-  if (g.includes('mythic'))
-    return 'luminous mythological painting, celestial color palette, ethereal atmospheric perspective';
-  if (g.includes('dying earth') || g.includes('post'))
-    return 'weathered illustration style, faded maritime palette, textured like aged parchment';
-  if (g.includes('mystery') || g.includes('thriller'))
-    return 'moody noir illustration, high contrast, atmospheric contrast, rich jewel tones with strategic shadow';
-  if (g.includes('romance'))
-    return 'soft romantic illustration, warm sunset palette, flowing organic composition';
-  if (g.includes('adventure'))
-    return 'dynamic adventure illustration, saturated colors, bold composition with sense of movement';
-
-  // Default
-  return 'richly detailed book cover illustration, vibrant color palette, clear and inviting composition';
-}
-
-/**
  * Build the OpenAI image generation prompt for a book cover using story bible data.
  */
 function buildCoverPrompt(title, genre, bible, authorName) {
-  const artStyle = getArtStyle(genre);
   const spelledTitle = spellOutTitle(title);
   const upperTitle = title.toUpperCase();
   const upperAuthor = authorName.toUpperCase();
@@ -244,7 +212,10 @@ ${settingLine}
 The story's central tension: ${conflictDesc}
 Themes: ${themeStr}
 
-ART STYLE: ${artStyle}
+ART STYLE:
+You are designing a book cover for a ${genre} novel. Based on the genre, themes, setting, and characters described above, choose an art style, color palette, and composition that would make this book visually compelling and distinct on a bookshelf. Consider what readers of this genre expect to see on a cover, then add something unexpected.
+
+The cover must be vibrant and inviting. Do not default to dark, muddy, or overly moody palettes unless the story genuinely demands it (e.g., horror, gothic). Every cover in a reader's library should look different from every other cover — avoid a uniform "look."
 
 TEXT LAYOUT:
 At the top: "${upperTitle}" — spelled ${spelledTitle} — in bold, genre-appropriate display font, large and centered, with strong contrast against the background.
@@ -262,6 +233,5 @@ REQUIREMENTS:
 
 module.exports = {
   generateBookCover,
-  buildCoverPrompt,
-  getArtStyle  // Export for testing
+  buildCoverPrompt
 };
