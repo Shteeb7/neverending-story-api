@@ -506,20 +506,28 @@ router.get('/completion-context/:storyId', authenticateUser, asyncHandler(async 
     readingBehavior.rereadChapters = reread;
   }
 
-  // Fetch checkpoint feedback (chapters 3, 6, 9)
+  // Fetch checkpoint feedback (chapters 2, 5, 8)
   const { data: feedbackRows } = await supabaseAdmin
     .from('story_feedback')
-    .select('checkpoint, response, follow_up_action')
+    .select('checkpoint, response, follow_up_action, checkpoint_corrections')
     .eq('story_id', storyId)
     .eq('user_id', userId)
-    .in('checkpoint', ['chapter_3', 'chapter_6', 'chapter_9'])
+    .in('checkpoint', ['chapter_2', 'chapter_5', 'chapter_8'])
     .order('checkpoint', { ascending: true });
 
   const checkpointFeedback = (feedbackRows || []).map(f => ({
     checkpoint: f.checkpoint,
     response: f.response,
-    action: f.follow_up_action
+    action: f.follow_up_action,
+    corrections: f.checkpoint_corrections || null
   }));
+
+  // Fetch reader age from user_preferences
+  const { data: userPrefs } = await supabaseAdmin
+    .from('user_preferences')
+    .select('reader_age')
+    .eq('user_id', userId)
+    .maybeSingle();
 
   res.json({
     success: true,
@@ -530,7 +538,8 @@ router.get('/completion-context/:storyId', authenticateUser, asyncHandler(async 
     },
     bible: bibleData,
     readingBehavior,
-    checkpointFeedback
+    checkpointFeedback,
+    readerAge: userPrefs?.reader_age || null
   });
 }));
 
