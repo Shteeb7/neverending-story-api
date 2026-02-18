@@ -3215,7 +3215,7 @@ Create a NEW adventure that:
 
 Return Book 2 Bible in this EXACT format:
 {
-  "title": "Book 2 Title (continuing from ${book1Bible.title})",
+  "title": "A standalone creative title for Book 2 — NOT a subtitle, NOT 'Book 2 of...', just a strong title like Book 1 had",
   "world_rules": { /* same as Book 1 */ },
   "characters": {
     "protagonist": {
@@ -3260,6 +3260,33 @@ Return Book 2 Bible in this EXACT format:
   console.log(`✅ Generated sequel bible: "${parsed.title}"`);
 
   return parsed;
+}
+
+/**
+ * Generate a creative AI series name for a book series
+ * @param {string} bookTitle - Title of the first book in the series
+ * @param {string} genre - Genre of the series
+ * @returns {Promise<string>} - The generated series name
+ */
+async function generateSeriesName(bookTitle, genre) {
+  const prompt = `You are naming a BOOK SERIES. Book 1 is titled "${bookTitle}" (genre: ${genre || 'fiction'}).
+
+Generate a creative, evocative series name that:
+- Captures the overarching theme/world of the series
+- Works as a label above multiple book titles
+- Is 3-6 words (e.g., "The Whisper of the Webs", "Chronicles of the Ember Court", "The Veiled Kingdoms")
+- Does NOT repeat the book title
+- Does NOT include the word "Series" (that will be added by the UI)
+- Feels like a real published book series name
+
+Return ONLY the series name, nothing else. No quotes, no explanation.`;
+
+  const { response } = await callClaudeWithRetry(
+    [{ role: 'user', content: prompt }],
+    100
+  );
+
+  return response.trim().replace(/^["']|["']$/g, ''); // Strip any quotes
 }
 
 /**
@@ -3452,16 +3479,56 @@ async function resumeStalledGenerations() {
               console.error(`   ❌ Arc recovery failed for ${story.id}:`, err.message);
             })
             .finally(() => clearRecoveryLock(story.id));
-        } else if (chaptersGenerated < 6) {
-          console.log(`   📝 Arc complete, resuming from chapter ${chaptersGenerated + 1}`);
-          // Resume chapter generation
+        } else if (chaptersGenerated < 3) {
+          console.log(`   📝 Arc complete, resuming initial batch from chapter ${chaptersGenerated + 1}`);
+          // Resume initial chapter generation (chapters 1-3)
           orchestratePreGeneration(story.id, story.user_id)
             .catch(err => {
               console.error(`   ❌ Chapter recovery failed for ${story.id}:`, err.message);
             })
             .finally(() => clearRecoveryLock(story.id));
+        } else if (progress.batch_start && progress.batch_end) {
+          // Recovery for checkpoint-triggered batch generation (chapters 4-6, 7-9, 10-12)
+          const batchStart = progress.batch_start;
+          const batchEnd = progress.batch_end;
+          console.log(`   📝 Resuming batch generation: chapters ${batchStart}-${batchEnd}`);
+
+          // Use triggerCheckpointGeneration logic to regenerate the batch
+          const { triggerCheckpointGeneration } = require('../routes/feedback');
+          const checkpointMap = { 4: 'chapter_2', 7: 'chapter_5', 10: 'chapter_8' };
+          const checkpoint = checkpointMap[batchStart];
+
+          if (checkpoint) {
+            triggerCheckpointGeneration(story.id, story.user_id, checkpoint)
+              .catch(err => {
+                console.error(`   ❌ Batch recovery failed for ${story.id}:`, err.message);
+              })
+              .finally(() => clearRecoveryLock(story.id));
+          } else {
+            console.log(`   ⚠️ Unknown batch start ${batchStart}, skipping`);
+            await clearRecoveryLock(story.id);
+          }
+        } else if (chaptersGenerated >= 3 && currentStep.startsWith('generating_')) {
+          // Story has 3+ chapters and is stuck generating — likely a batch generation that didn't set batch_start/batch_end
+          // Determine which batch based on chapter count
+          const batchMap = { 3: { start: 4, end: 6, cp: 'chapter_2' }, 6: { start: 7, end: 9, cp: 'chapter_5' }, 9: { start: 10, end: 12, cp: 'chapter_8' } };
+          const batch = batchMap[chaptersGenerated];
+
+          if (batch) {
+            console.log(`   📝 Inferring batch from chapter count (${chaptersGenerated}): chapters ${batch.start}-${batch.end}`);
+            const { triggerCheckpointGeneration } = require('../routes/feedback');
+            triggerCheckpointGeneration(story.id, story.user_id, batch.cp)
+              .catch(err => {
+                console.error(`   ❌ Inferred batch recovery failed for ${story.id}:`, err.message);
+              })
+              .finally(() => clearRecoveryLock(story.id));
+          } else {
+            console.log(`   ⚠️ Can't determine batch for ${chaptersGenerated} chapters, skipping`);
+            await clearRecoveryLock(story.id);
+          }
         } else {
           console.log('   ✅ Story appears complete, marking as active');
+          await clearRecoveryLock(story.id);
         }
 
         console.log(`   ✅ Recovery initiated for "${story.title}"`);
@@ -3485,6 +3552,7 @@ module.exports = {
   orchestratePreGeneration,
   extractBookContext,
   generateSequelBible,
+  generateSeriesName,
   analyzeUserPreferences,
   getUserWritingPreferences,
   updateDiscoveryTolerance,

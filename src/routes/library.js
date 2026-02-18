@@ -21,10 +21,10 @@ router.get('/:userId', authenticateUser, asyncHandler(async (req, res) => {
     });
   }
 
-  // Fetch all stories for user
+  // Fetch all stories for user with series names
   const { data: stories, error } = await supabaseAdmin
     .from('stories')
-    .select('*')
+    .select('*, series:series_id(name)')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 
@@ -32,7 +32,7 @@ router.get('/:userId', authenticateUser, asyncHandler(async (req, res) => {
     throw new Error(`Failed to fetch library: ${error.message}`);
   }
 
-  // Fetch chapter counts for each story
+  // Fetch chapter counts for each story and flatten series data
   const storiesWithCounts = await Promise.all(
     (stories || []).map(async (story) => {
       const { count } = await supabaseAdmin
@@ -42,7 +42,8 @@ router.get('/:userId', authenticateUser, asyncHandler(async (req, res) => {
 
       return {
         ...story,
-        chapterCount: count || 0
+        chapterCount: count || 0,
+        series_name: story.series?.name || null
       };
     })
   );

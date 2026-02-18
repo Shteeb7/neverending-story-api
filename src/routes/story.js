@@ -417,18 +417,36 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
     });
   }
 
-  // Generate series_id if this is the first sequel
-  const seriesId = book1Story.series_id || crypto.randomUUID();
+  // Generate series_id and name if this is the first sequel
+  let seriesId = book1Story.series_id;
 
-  // Update Book 1 with series_id if not set
-  if (!book1Story.series_id) {
+  if (!seriesId) {
+    // Create series record with AI-generated name
+    const { generateSeriesName } = require('../services/generation');
+    const seriesName = await generateSeriesName(book1Story.title, book1Story.genre);
+
+    const { data: seriesRecord, error: seriesError } = await supabaseAdmin
+      .from('series')
+      .insert({
+        name: seriesName,
+        user_id: userId
+      })
+      .select()
+      .single();
+
+    if (seriesError) {
+      throw new Error(`Failed to create series: ${seriesError.message}`);
+    }
+
+    seriesId = seriesRecord.id;
+
+    // Update Book 1 with series_id
     await supabaseAdmin
       .from('stories')
-      .update({
-        series_id: seriesId,
-        book_number: 1
-      })
+      .update({ series_id: seriesId, book_number: 1 })
       .eq('id', storyId);
+
+    console.log(`📚 Created series "${seriesName}" (${seriesId})`);
   }
 
   // Extract Book 1 context if not already done

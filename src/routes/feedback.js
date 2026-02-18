@@ -80,6 +80,29 @@ async function triggerCheckpointGeneration(storyId, userId, normalizedCheckpoint
     console.log(`🚀 Triggering batch generation: chapters ${startChapter}-${endChapter}`);
     const { buildCourseCorrections, generateBatch } = require('../services/generation');
 
+    // Update generation_progress BEFORE starting batch (so health check can detect failures)
+    const { data: storyForProgress } = await supabaseAdmin
+      .from('stories')
+      .select('generation_progress')
+      .eq('id', storyId)
+      .single();
+
+    const currentProgress = storyForProgress?.generation_progress || {};
+    await supabaseAdmin
+      .from('stories')
+      .update({
+        generation_progress: {
+          ...currentProgress,
+          current_step: `generating_chapter_${startChapter}`,
+          batch_start: startChapter,
+          batch_end: endChapter,
+          last_updated: new Date().toISOString()
+        }
+      })
+      .eq('id', storyId);
+
+    console.log(`📖 Updated progress to generating_chapter_${startChapter} before batch start`);
+
     (async () => {
       try {
         // Fetch all previous checkpoint feedback for this story to build accumulated corrections
@@ -101,9 +124,48 @@ async function triggerCheckpointGeneration(storyId, userId, normalizedCheckpoint
         // Generate batch with course corrections
         await generateBatch(storyId, startChapter, endChapter, userId, courseCorrections);
 
+        // Update progress to awaiting next checkpoint after batch completes
+        const nextAwaitingStep = {
+          6: 'awaiting_chapter_5_feedback',
+          9: 'awaiting_chapter_8_feedback',
+          12: 'chapter_12_complete'
+        };
+
+        await supabaseAdmin
+          .from('stories')
+          .update({
+            generation_progress: {
+              ...currentProgress,
+              chapters_generated: endChapter,
+              current_step: nextAwaitingStep[endChapter] || `chapter_${endChapter}_complete`,
+              batch_start: null,
+              batch_end: null,
+              last_updated: new Date().toISOString()
+            }
+          })
+          .eq('id', storyId);
+
         console.log(`✅ Batch generation complete: chapters ${startChapter}-${endChapter}`);
       } catch (error) {
         console.error(`❌ Failed to generate batch: ${error.message}`);
+        // Mark the failure in generation_progress so health check can find it
+        try {
+          await supabaseAdmin
+            .from('stories')
+            .update({
+              generation_progress: {
+                ...currentProgress,
+                current_step: `generating_chapter_${startChapter}`,
+                batch_start: startChapter,
+                batch_end: endChapter,
+                last_error: error.message,
+                last_updated: new Date().toISOString()
+              }
+            })
+            .eq('id', storyId);
+        } catch (progressError) {
+          console.error(`❌ Failed to update progress after batch error: ${progressError.message}`);
+        }
       }
     })();
   }
