@@ -3268,16 +3268,33 @@ Return Book 2 Bible in this EXACT format:
  * @param {string} genre - Genre of the series
  * @returns {Promise<string>} - The generated series name
  */
-async function generateSeriesName(bookTitle, genre) {
-  const prompt = `You are naming a BOOK SERIES. Book 1 is titled "${bookTitle}" (genre: ${genre || 'fiction'}).
+async function generateSeriesName(bookTitle, genre, bible) {
+  const themesSummary = Array.isArray(bible?.themes)
+    ? bible.themes.slice(0, 3).map(t => typeof t === 'string' ? t.split('—')[0].trim() : t).join(', ')
+    : 'unknown';
+
+  const conflictSummary = bible?.central_conflict?.description
+    ? bible.central_conflict.description.substring(0, 200)
+    : '';
+
+  const antagonist = bible?.characters?.antagonist?.name || '';
+
+  const prompt = `You are naming a BOOK SERIES. Here is what you know about Book 1:
+
+Title: "${bookTitle}"
+Genre: ${genre || 'fiction'}
+Core Themes: ${themesSummary}
+Central Conflict: ${conflictSummary}
+Antagonist: ${antagonist}
 
 Generate a creative, evocative series name that:
-- Captures the overarching theme/world of the series
-- Works as a label above multiple book titles
-- Is 3-6 words (e.g., "The Whisper of the Webs", "Chronicles of the Ember Court", "The Veiled Kingdoms")
-- Does NOT repeat the book title
-- Does NOT include the word "Series" (that will be added by the UI)
+- Captures the overarching world, mood, or thematic arc of the series
+- Works as a label above multiple book titles (like "The Lord of the Rings" or "A Song of Ice and Fire")
+- Is 3-6 words
+- Does NOT repeat the book title or character names
+- Does NOT include the word "Series" (the UI adds that)
 - Feels like a real published book series name
+- Matches the genre/tone (literary fiction gets elegant names, fantasy gets evocative names, comedy gets punchy names, etc.)
 
 Return ONLY the series name, nothing else. No quotes, no explanation.`;
 
