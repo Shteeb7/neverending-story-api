@@ -173,7 +173,7 @@ async function triggerCheckpointGeneration(storyId, userId, normalizedCheckpoint
   return { shouldGenerate, startChapter, endChapter };
 }
 
-module.exports.triggerCheckpointGeneration = triggerCheckpointGeneration;
+// Export moved to bottom of file (after module.exports = router)
 
 /**
  * POST /feedback
@@ -606,3 +606,4 @@ router.get('/completion-context/:storyId', authenticateUser, asyncHandler(async 
 }));
 
 module.exports = router;
+module.exports.triggerCheckpointGeneration = triggerCheckpointGeneration;
