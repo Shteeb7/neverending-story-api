@@ -1905,7 +1905,7 @@ async function updateDiscoveryTolerance(userId) {
 
 /**
  * Build course correction XML block from checkpoint feedback history
- * @param {Array} feedbackHistory - Array of checkpoint feedback objects with dimension fields
+ * @param {Array} feedbackHistory - Array of checkpoint feedback objects with dimension fields OR checkpoint_corrections JSONB
  * @returns {string} Formatted course correction text for prompt injection
  */
 function buildCourseCorrections(feedbackHistory) {
@@ -1913,7 +1913,54 @@ function buildCourseCorrections(feedbackHistory) {
     return '';
   }
 
-  // Mapping dimension values to instruction text
+  // Check if this is new format (checkpoint_corrections JSONB) or old format (dimension fields)
+  const hasNewFormat = feedbackHistory.some(fb => fb.checkpoint_corrections);
+  const hasOldFormat = feedbackHistory.some(fb => fb.pacing_feedback || fb.tone_feedback || fb.character_feedback);
+
+  // NEW FORMAT: Structured interview feedback from Prospero checkpoint conversations
+  if (hasNewFormat) {
+    const checkpointLabels = {
+      'chapter_2': 'CHECKPOINT 1 (after Ch 2)',
+      'chapter_5': 'CHECKPOINT 2 (after Ch 5)',
+      'chapter_8': 'CHECKPOINT 3 (after Ch 8)'
+    };
+
+    let feedbackSections = feedbackHistory
+      .filter(fb => fb.checkpoint_corrections)
+      .map(fb => {
+        const label = checkpointLabels[fb.checkpoint] || fb.checkpoint;
+        const corrections = fb.checkpoint_corrections;
+
+        let section = `${label}:\n`;
+        if (corrections.pacing_note) section += `  PACING: ${corrections.pacing_note}\n`;
+        if (corrections.tone_note) section += `  TONE: ${corrections.tone_note}\n`;
+        if (corrections.character_notes && corrections.character_notes.length > 0) {
+          section += `  CHARACTER: ${corrections.character_notes.join('; ')}\n`;
+        }
+        if (corrections.style_note) section += `  STYLE: ${corrections.style_note}\n`;
+        if (corrections.overall_engagement) section += `  ENGAGEMENT: ${corrections.overall_engagement}\n`;
+        if (corrections.raw_reader_quotes && corrections.raw_reader_quotes.length > 0) {
+          section += `  READER QUOTES: "${corrections.raw_reader_quotes.join('"; "')}"`;
+        }
+
+        return section;
+      })
+      .join('\n\n');
+
+    const wrapperText = feedbackHistory.length === 1
+      ? 'The reader provided feedback in a checkpoint conversation with Prospero.'
+      : 'The reader has had multiple checkpoint conversations with Prospero throughout this story.';
+
+    return `${wrapperText} Apply these as SUBTLE REFINEMENTS. Do not overhaul the story — lean into the changes so the reader feels improvement without feeling like a different book.
+
+${feedbackSections}
+
+IMPORTANT: These are adjustments to HOW the story is told, not WHAT happens.
+The story bible, arc outline, and plot events remain exactly as planned.
+Only the craft of the telling changes.`;
+  }
+
+  // OLD FORMAT: Dimension-based card tap feedback (backward compatibility)
   const pacingInstructions = {
     'hooked': 'Maintain current pacing parameters — reader is engaged',
     'slow': 'Enter scenes later, leave earlier. Shorter paragraphs. More cliffhanger chapter endings. Reduce descriptive passages. Increase action-to-reflection ratio.',

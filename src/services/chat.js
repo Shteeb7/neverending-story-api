@@ -57,6 +57,22 @@ const CHAT_TOOLS = {
       },
       required: ['satisfactionSignal']
     }
+  }],
+  checkpoint: [{
+    name: 'submit_checkpoint_feedback',
+    description: 'Submit checkpoint feedback gathered from the reader. Call when the conversation is complete.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pacing_note: { type: 'string', description: 'Natural language summary of pacing feedback (e.g., "Reader feels hooked and engaged" or "Reader wants more action, less setup")' },
+        tone_note: { type: 'string', description: 'Natural language summary of tone feedback (e.g., "Tone feels just right" or "Reader wants more humor")' },
+        character_notes: { type: 'array', items: { type: 'string' }, description: 'Array of character observations (e.g., ["Loves the protagonist\'s wit", "Wants more vulnerability from supporting cast"])' },
+        style_note: { type: 'string', description: 'Any prose or style observations (e.g., "Reader loves the vivid descriptions" or "Wants shorter paragraphs")' },
+        overall_engagement: { type: 'string', enum: ['deeply_hooked', 'engaged', 'interested', 'lukewarm'], description: 'Overall engagement level' },
+        raw_reader_quotes: { type: 'array', items: { type: 'string' }, description: 'Direct quotes from the reader that capture their raw reaction' }
+      },
+      required: ['overall_engagement']
+    }
   }]
 };
 
@@ -136,6 +152,9 @@ async function createChatSession(userId, interviewType, context = {}) {
       break;
     case 'book_completion':
       tools = CHAT_TOOLS.book_completion;
+      break;
+    case 'checkpoint':
+      tools = CHAT_TOOLS.checkpoint;
       break;
     case 'bug_report':
       tools = CHAT_TOOLS.bug_report;
@@ -241,6 +260,48 @@ async function sendMessage(sessionId, userMessage) {
       arguments: toolUseBlock.input
     };
     sessionComplete = true;
+
+    // Handle checkpoint feedback tool call server-side
+    if (toolUseBlock.name === 'submit_checkpoint_feedback') {
+      console.log('📊 Processing checkpoint feedback tool call...');
+      const { triggerCheckpointGeneration } = require('../routes/feedback');
+
+      const storyId = session.story_id;
+      const userId = session.user_id;
+      const checkpoint = session.context?.checkpoint || 'chapter_2';
+
+      if (storyId) {
+        try {
+          // Store structured feedback in story_feedback.checkpoint_corrections
+          const { data: feedbackRow, error: feedbackError } = await supabaseAdmin
+            .from('story_feedback')
+            .upsert({
+              user_id: userId,
+              story_id: storyId,
+              checkpoint: checkpoint,
+              response: 'checkpoint_interview',
+              checkpoint_corrections: toolUseBlock.input,
+              voice_transcript: null,
+              voice_session_id: null
+            }, {
+              onConflict: 'user_id,story_id,checkpoint'
+            })
+            .select()
+            .single();
+
+          if (feedbackError) {
+            console.error('❌ Failed to store checkpoint feedback:', feedbackError);
+          } else {
+            console.log(`✅ Checkpoint feedback stored for ${checkpoint}`);
+
+            // Trigger generation (non-blocking)
+            await triggerCheckpointGeneration(storyId, userId, checkpoint);
+          }
+        } catch (err) {
+          console.error('❌ Error processing checkpoint feedback:', err);
+        }
+      }
+    }
 
     // Generate a farewell message
     console.log('👋 Generating farewell message...');

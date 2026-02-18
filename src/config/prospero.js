@@ -261,6 +261,155 @@ CRITICAL RULES:
 - This should feel like a craftsman going back to the drawing board with the customer`;
   },
 
+  checkpoint: (context = {}) => {
+    const checkpointNumber = context.checkpoint || 'chapter_2';
+    const checkpointNumeric = checkpointNumber === 'chapter_2' ? 2 : (checkpointNumber === 'chapter_5' ? 5 : 8);
+    const isFirst = checkpointNumeric === 2;
+    const isMiddle = checkpointNumeric === 5;
+    const isFinal = checkpointNumeric === 8;
+
+    const protagonistName = context.protagonistName || 'the protagonist';
+    const characterNames = context.characterNames?.join(', ') || 'the characters';
+    const chapterTitles = context.chapterTitles?.join(', ') || 'the chapters';
+    const readerAge = context.readerAge || 'unknown';
+
+    // Reading behavior - use naturally, don't recite mechanically
+    const lingeredChapters = context.readingBehavior?.lingered || [];
+    const skimmedChapters = context.readingBehavior?.skimmed || [];
+    const rereadChapters = context.readingBehavior?.reread || [];
+
+    let behaviorHints = '';
+    if (lingeredChapters.length > 0) {
+      const chNums = lingeredChapters.map(c => c.chapter).join(', ');
+      behaviorHints += `\n- They lingered on chapter(s) ${chNums} — something hooked them there. You might mention specific moments from those chapters conversationally.`;
+    }
+    if (skimmedChapters.length > 0) {
+      const chNums = skimmedChapters.join(', ');
+      behaviorHints += `\n- They skimmed chapter(s) ${chNums} — possible pacing issue. Gently probe if those chapters felt slow.`;
+    }
+    if (rereadChapters.length > 0) {
+      const chNums = rereadChapters.map(c => c.chapter).join(', ');
+      behaviorHints += `\n- They re-read chapter(s) ${chNums} — strong signal of engagement or confusion. Ask what pulled them back.`;
+    }
+
+    // Prior feedback context
+    let priorFeedbackText = '';
+    if (context.priorCheckpointFeedback && context.priorCheckpointFeedback.length > 0) {
+      const priorSummary = context.priorCheckpointFeedback.map(fb => {
+        const checkpoint = fb.checkpoint;
+        const notes = [];
+        if (fb.pacing_feedback) notes.push(`pacing: ${fb.pacing_feedback}`);
+        if (fb.tone_feedback) notes.push(`tone: ${fb.tone_feedback}`);
+        if (fb.character_feedback) notes.push(`character: ${fb.character_feedback}`);
+        return `${checkpoint} — ${notes.join(', ')}`;
+      }).join('\n');
+      priorFeedbackText = `\n\nPRIOR CHECKPOINT FEEDBACK:\n${priorSummary}\n\nUse this to check: did the adjustments land? Reference what they said last time if relevant.`;
+    }
+
+    let depthGuidance = '';
+    if (isFirst) {
+      depthGuidance = `FIRST CHECKPOINT (Chapter 2) — Keep it light and welcoming:
+- 2-3 exchanges maximum — first impressions, not deep analysis
+- Open with warmth: "How are you feeling about the story so far?"
+- Ask about first impressions: pacing, tone, protagonist
+- If they're hooked, celebrate and let them get back to reading
+- If they're lukewarm, probe gently: what's missing?
+- NO heavy questions yet — save deeper probes for checkpoint 2`;
+    } else if (isMiddle) {
+      depthGuidance = `MIDDLE CHECKPOINT (Chapter 5) — Mid-book check-in with more depth:
+- 3-4 exchanges — enough to understand their experience without exhausting them
+- Reference what they said at checkpoint 1 (if available): "Last time you said X. How's that feeling now?"
+- Probe: pacing (still hooked?), tone (right emotional weight?), character connection (deepening or stalling?)
+- Ask about specific moments: "What's the most memorable scene so far?"
+- If issues are surfacing, dig into specifics without overloading them`;
+    } else {
+      depthGuidance = `FINAL CHECKPOINT (Chapter 8) — Pre-climax pulse check:
+- 3-4 exchanges — you're preparing for the final act, this feedback is CRITICAL
+- This is your last chance to adjust before chapters 10-12 (the climax)
+- Ask: "We're heading into the finale. What do you NEED to see happen?"
+- Probe emotional investment: "Who are you most worried about?"
+- Check expectations: "What would make the ending feel satisfying?"
+- If prior feedback wasn't addressed, acknowledge it: "I tried to add more X. Did that land?"`;
+    }
+
+    return `
+PURPOSE: Quick mid-story check-in with the reader. They've paused at a checkpoint to share how the story is landing. This is a CONVERSATION, not an interview — two friends discussing a book over coffee.
+
+READER CONTEXT:
+- Age: ${readerAge} years old
+- They've read up to chapter ${checkpointNumeric}
+- Chapters so far: ${chapterTitles}
+- Protagonist: ${protagonistName}
+- Key characters: ${characterNames}${behaviorHints}${priorFeedbackText}
+
+${depthGuidance}
+
+YOUR APPROACH — NATURAL CONVERSATION:
+- You're checking in as a storyteller who cares about their experience
+- Keep it warm, conversational, and BRIEF — they want to get back to reading
+- Use their reading behavior naturally ("I noticed you spent extra time on chapter X — what grabbed you there?")
+- DO NOT recite data mechanically. Weave observations into natural questions.
+- React authentically to what they share — excitement, concern, curiosity
+- Gather rich qualitative feedback, not checkboxes
+
+THE CONVERSATION FLOW:
+
+1. WARM OPENING (1 exchange):
+   Start with genuine curiosity about their experience so far.
+   Reference specific chapter moments or character names naturally.
+   ${isFirst ? 'Keep it light — "First impressions?"' : ''}
+   ${isMiddle ? 'Check progress — "How\'s the journey feeling?"' : ''}
+   ${isFinal ? 'Build anticipation — "You\'re heading into the finale. What do you need?"' : ''}
+
+2. PROBE DIMENSIONS (${isFirst ? '1-2' : '2-3'} exchanges):
+   Ask about their experience through natural questions:
+
+   PACING:
+   - "Is the story moving at the right speed for you?"
+   - "Any moments where you felt restless or wanted things to slow down?"
+   - If they lingered: "I saw you spent extra time on chapter X — what hooked you?"
+   - If they skimmed: "Chapter X felt quick — too slow, or just right?"
+
+   TONE:
+   - "How's the FEEL of the story? Too serious? Need more lightness?"
+   - "Are you getting the emotional weight you want, or is it off?"
+
+   CHARACTER CONNECTION:
+   - "How are you feeling about ${protagonistName}?"
+   - "Are you rooting for them, or not quite clicking yet?"
+   - If they re-read: "You went back to chapter X — what pulled you back?"
+
+   STYLE (if they volunteer it):
+   - "Anything about the writing itself that's working or not working?"
+
+3. CAPTURE SPECIFICS (1-2 exchanges):
+   Get concrete examples:
+   - "What's the most memorable moment so far?"
+   - "Any scenes that dragged or felt off?"
+   - "What are you most excited to see happen next?"
+
+4. WRAP (1 exchange):
+   Thank them warmly and confidently signal that you've heard them:
+   "I've got what I need. The next chapters are waiting for you — and I've heard everything you've said."
+   Call submit_checkpoint_feedback with everything gathered.
+
+WHAT TO CAPTURE IN submit_checkpoint_feedback:
+- pacing_note: Natural language summary (e.g., "Reader feels hooked, no pacing issues" or "Wants more action in middle chapters")
+- tone_note: Natural language summary (e.g., "Tone feels right" or "Could use more humor/levity")
+- character_notes: Array of observations (e.g., ["Loves protagonist's wit", "Wants more vulnerability"])
+- style_note: Any prose observations (e.g., "Loves vivid descriptions" or "Wants shorter paragraphs")
+- overall_engagement: deeply_hooked | engaged | interested | lukewarm
+- raw_reader_quotes: Direct quotes that capture their voice
+
+CRITICAL RULES:
+- ${isFirst ? '2-3 exchanges max' : '3-4 exchanges max'} — respect their reading time
+- Use reading behavior data conversationally, NEVER mechanically
+- Adapt depth to checkpoint: light → medium → critical
+- Always end confidently — you've crafted this story, you're adjusting it for them
+- Reference prior feedback if available ("Last time you said X. How's that now?")
+- Capture rich qualitative data in submit_checkpoint_feedback, not simplified checkboxes`;
+  },
+
   book_completion: (context = {}) => {
     const lingeredText = context.lingeredChapters?.length > 0
       ? context.lingeredChapters.map(c => `Ch${c.chapter} (${c.minutes}m)`).join(', ')
@@ -349,7 +498,21 @@ const GREETING_TEMPLATES = {
     `${context.userName || 'Friend'}! You're back — and I'm GLAD. Those tales I conjured clearly weren't worthy of you. Help me understand what missed the mark, and I'll summon something far better.`,
 
   book_completion: (context = {}) =>
-    `${context.userName || 'Friend'}! You've journeyed through "${context.storyTitle || 'the tale'}"! The final page has turned, but before the ink dries — tell me, what moment seized your heart?`
+    `${context.userName || 'Friend'}! You've journeyed through "${context.storyTitle || 'the tale'}"! The final page has turned, but before the ink dries — tell me, what moment seized your heart?`,
+
+  checkpoint: (context = {}) => {
+    const checkpointNumber = context.checkpoint || 'chapter_2';
+    const checkpointNumeric = checkpointNumber === 'chapter_2' ? 2 : (checkpointNumber === 'chapter_5' ? 5 : 8);
+    const protagonistName = context.protagonistName || 'our hero';
+
+    if (checkpointNumeric === 2) {
+      return `Ah! You've reached the first crossroads. Tell me — how are you feeling about the story so far? Is ${protagonistName} pulling you in?`;
+    } else if (checkpointNumeric === 5) {
+      return `We meet again, traveler! You're halfway through the tale. How's the journey? Still hooked, or is something calling for adjustment?`;
+    } else {
+      return `The final checkpoint before the climax! You're heading into the endgame. What do you NEED to see happen in these last chapters?`;
+    }
+  }
 };
 
 /**

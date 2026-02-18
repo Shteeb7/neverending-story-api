@@ -32,10 +32,10 @@ router.post('/start', authenticateUser, requireAIConsentMiddleware, asyncHandler
     });
   }
 
-  if (!['onboarding', 'returning_user', 'book_completion', 'bug_report', 'suggestion'].includes(interviewType)) {
+  if (!['onboarding', 'returning_user', 'book_completion', 'checkpoint', 'bug_report', 'suggestion'].includes(interviewType)) {
     return res.status(400).json({
       success: false,
-      error: 'Invalid interviewType. Must be onboarding, returning_user, book_completion, bug_report, or suggestion'
+      error: 'Invalid interviewType. Must be onboarding, returning_user, book_completion, checkpoint, bug_report, or suggestion'
     });
   }
 
@@ -54,6 +54,92 @@ router.post('/start', authenticateUser, requireAIConsentMiddleware, asyncHandler
       if (prefs.birth_month && now.getMonth() + 1 < prefs.birth_month) age--;
       enrichedContext.readerAge = age;
       enrichedContext.isMinor = prefs.is_minor || false;
+    }
+  }
+
+  // Enrich context for checkpoint interviews
+  if (interviewType === 'checkpoint' && context?.storyId) {
+    const storyId = context.storyId;
+    const checkpointNumber = context.checkpoint || 'chapter_2';
+
+    // Fetch story bible (character names)
+    const { data: bible } = await supabaseAdmin
+      .from('story_bibles')
+      .select('characters')
+      .eq('story_id', storyId)
+      .maybeSingle();
+
+    if (bible?.characters) {
+      enrichedContext.characterNames = bible.characters.map(c => c.name).slice(0, 5); // Top 5 characters
+      enrichedContext.protagonistName = bible.characters[0]?.name || null;
+    }
+
+    // Fetch chapter titles read so far
+    const maxChapter = checkpointNumber === 'chapter_2' ? 2 : (checkpointNumber === 'chapter_5' ? 5 : 8);
+    const { data: chapters } = await supabaseAdmin
+      .from('chapters')
+      .select('chapter_number, title')
+      .eq('story_id', storyId)
+      .lte('chapter_number', maxChapter)
+      .order('chapter_number', { ascending: true });
+
+    enrichedContext.chapterTitles = (chapters || []).map(c => `Ch${c.chapter_number}: ${c.title}`);
+
+    // Fetch reading behavior data from chapter_reading_stats
+    const { data: readingStats } = await supabaseAdmin
+      .from('chapter_reading_stats')
+      .select('chapter_number, total_reading_time_seconds, session_count')
+      .eq('story_id', storyId)
+      .eq('user_id', userId)
+      .lte('chapter_number', maxChapter)
+      .order('chapter_number', { ascending: true });
+
+    if (readingStats && readingStats.length > 0) {
+      // Identify lingered chapters (top 2 by time, > 5 min)
+      const lingered = readingStats
+        .filter(s => s.total_reading_time_seconds > 300)
+        .sort((a, b) => b.total_reading_time_seconds - a.total_reading_time_seconds)
+        .slice(0, 2)
+        .map(s => ({ chapter: s.chapter_number, minutes: Math.round(s.total_reading_time_seconds / 60) }));
+
+      // Identify skimmed chapters (< 3 min)
+      const skimmed = readingStats
+        .filter(s => s.total_reading_time_seconds > 0 && s.total_reading_time_seconds < 180)
+        .map(s => s.chapter_number);
+
+      // Identify reread chapters (session_count > 1)
+      const reread = readingStats
+        .filter(s => s.session_count > 1)
+        .map(s => ({ chapter: s.chapter_number, sessions: s.session_count }));
+
+      enrichedContext.readingBehavior = { lingered, skimmed, reread };
+    }
+
+    // Fetch prior checkpoint feedback (if any)
+    const { data: priorFeedback } = await supabaseAdmin
+      .from('story_feedback')
+      .select('checkpoint, checkpoint_corrections, pacing_feedback, tone_feedback, character_feedback')
+      .eq('story_id', storyId)
+      .eq('user_id', userId)
+      .in('checkpoint', ['chapter_2', 'chapter_5', 'chapter_8'])
+      .order('created_at', { ascending: true });
+
+    if (priorFeedback && priorFeedback.length > 0) {
+      enrichedContext.priorCheckpointFeedback = priorFeedback;
+    }
+
+    // Fetch reader age
+    const { data: prefs } = await supabaseAdmin
+      .from('user_preferences')
+      .select('birth_year, birth_month')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (prefs?.birth_year) {
+      const now = new Date();
+      let age = now.getFullYear() - prefs.birth_year;
+      if (prefs.birth_month && now.getMonth() + 1 < prefs.birth_month) age--;
+      enrichedContext.readerAge = age;
     }
   }
 
@@ -189,7 +275,7 @@ router.post('/system-prompt', authenticateUser, requireAIConsentMiddleware, asyn
         });
       }
 
-      const validInterviewTypes = ['onboarding', 'returning_user', 'premise_rejection', 'book_completion'];
+      const validInterviewTypes = ['onboarding', 'returning_user', 'premise_rejection', 'book_completion', 'checkpoint'];
       if (!validInterviewTypes.includes(interviewType)) {
         return res.status(400).json({
           success: false,

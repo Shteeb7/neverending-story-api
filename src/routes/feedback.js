@@ -6,6 +6,114 @@ const { authenticateUser } = require('../middleware/auth');
 const router = express.Router();
 
 /**
+ * Shared function: Trigger batch generation based on checkpoint
+ * @param {string} storyId - Story ID
+ * @param {string} userId - User ID
+ * @param {string} normalizedCheckpoint - Normalized checkpoint name (chapter_2, chapter_5, or chapter_8)
+ * @returns {Promise<{ shouldGenerate: boolean, startChapter: number|null, endChapter: number|null }>}
+ */
+async function triggerCheckpointGeneration(storyId, userId, normalizedCheckpoint) {
+  // Determine which batch to generate
+  let startChapter = null;
+  let endChapter = null;
+
+  if (normalizedCheckpoint === 'chapter_2') {
+    startChapter = 4;
+    endChapter = 6;
+  } else if (normalizedCheckpoint === 'chapter_5') {
+    startChapter = 7;
+    endChapter = 9;
+  } else if (normalizedCheckpoint === 'chapter_8') {
+    startChapter = 10;
+    endChapter = 12;
+  }
+
+  let shouldGenerate = startChapter !== null && endChapter !== null;
+
+  // Check if the next batch of chapters already exists (legacy beta stories)
+  if (shouldGenerate) {
+    const { count } = await supabaseAdmin
+      .from('chapters')
+      .select('*', { count: 'exact', head: true })
+      .eq('story_id', storyId)
+      .gte('chapter_number', startChapter)
+      .lte('chapter_number', endChapter);
+
+    if (count >= 3) {
+      // Chapters already exist, skip generation
+      console.log(`📖 Chapters ${startChapter}-${endChapter} already exist for story ${storyId}, skipping generation`);
+
+      // Fetch story to get current progress
+      const { data: story } = await supabaseAdmin
+        .from('stories')
+        .select('title, generation_progress')
+        .eq('id', storyId)
+        .single();
+
+      const storyTitle = story?.title || 'Unknown';
+
+      // Update generation_progress to the next awaiting step without regenerating
+      const nextStep = {
+        4: 'awaiting_chapter_5_feedback',
+        7: 'awaiting_chapter_8_feedback',
+        10: 'chapter_12_complete'
+      };
+
+      await supabaseAdmin
+        .from('stories')
+        .update({
+          generation_progress: {
+            ...story.generation_progress,
+            chapters_generated: endChapter,
+            current_step: nextStep[startChapter]
+          }
+        })
+        .eq('id', storyId);
+
+      console.log(`📖 [${storyTitle}] Updated progress to ${nextStep[startChapter]}`);
+
+      return { shouldGenerate: false, startChapter, endChapter };
+    }
+  }
+
+  if (shouldGenerate) {
+    console.log(`🚀 Triggering batch generation: chapters ${startChapter}-${endChapter}`);
+    const { buildCourseCorrections, generateBatch } = require('../services/generation');
+
+    (async () => {
+      try {
+        // Fetch all previous checkpoint feedback for this story to build accumulated corrections
+        const { data: previousFeedback } = await supabaseAdmin
+          .from('story_feedback')
+          .select('checkpoint, pacing_feedback, tone_feedback, character_feedback, protagonist_name, checkpoint_corrections, created_at')
+          .eq('user_id', userId)
+          .eq('story_id', storyId)
+          .in('checkpoint', ['chapter_2', 'chapter_5', 'chapter_8', 'chapter_3', 'chapter_6', 'chapter_9']) // Include old checkpoint names
+          .order('created_at', { ascending: true });
+
+        const feedbackHistory = previousFeedback || [];
+
+        // Build course corrections from accumulated feedback
+        const courseCorrections = buildCourseCorrections(feedbackHistory);
+
+        console.log(`📝 Course corrections built from ${feedbackHistory.length} checkpoint(s)`);
+
+        // Generate batch with course corrections
+        await generateBatch(storyId, startChapter, endChapter, userId, courseCorrections);
+
+        console.log(`✅ Batch generation complete: chapters ${startChapter}-${endChapter}`);
+      } catch (error) {
+        console.error(`❌ Failed to generate batch: ${error.message}`);
+      }
+    })();
+  }
+
+  return { shouldGenerate, startChapter, endChapter };
+}
+
+module.exports.triggerCheckpointGeneration = triggerCheckpointGeneration;
+
+/**
  * POST /feedback
  * Submit simple feedback (e.g., library exit reasons)
  * Called by FeedbackModalView when a reader leaves a story
@@ -129,106 +237,16 @@ router.post('/checkpoint', authenticateUser, asyncHandler(async (req, res) => {
     throw new Error(`Failed to store feedback: ${error.message}`);
   }
 
-  // New trigger logic: chapter_2 → 4-6, chapter_5 → 7-9, chapter_8 → 10-12
-  // Always generate (no satisfaction gate)
-  let startChapter = null;
-  let endChapter = null;
+  // Use shared generation trigger function
+  const { shouldGenerate, startChapter, endChapter } = await triggerCheckpointGeneration(storyId, userId, normalizedCheckpoint);
 
-  // Use normalized checkpoint for trigger logic
-  if (normalizedCheckpoint === 'chapter_2') {
-    startChapter = 4;
-    endChapter = 6;
-  } else if (normalizedCheckpoint === 'chapter_5') {
-    startChapter = 7;
-    endChapter = 9;
-  } else if (normalizedCheckpoint === 'chapter_8') {
-    startChapter = 10;
-    endChapter = 12;
-  }
-
-  let shouldGenerate = startChapter !== null && endChapter !== null;
-
-  // Check if the next batch of chapters already exists (legacy beta stories)
-  if (shouldGenerate) {
-    const { count } = await supabaseAdmin
-      .from('chapters')
-      .select('*', { count: 'exact', head: true })
-      .eq('story_id', storyId)
-      .gte('chapter_number', startChapter)
-      .lte('chapter_number', endChapter);
-
-    if (count >= 3) {
-      // Chapters already exist, skip generation
-      console.log(`📖 Chapters ${startChapter}-${endChapter} already exist for story ${storyId}, skipping generation`);
-
-      // Fetch story to get current progress
-      const { data: story } = await supabaseAdmin
-        .from('stories')
-        .select('title, generation_progress')
-        .eq('id', storyId)
-        .single();
-
-      const storyTitle = story?.title || 'Unknown';
-
-      // Update generation_progress to the next awaiting step without regenerating
-      const nextStep = {
-        4: 'awaiting_chapter_5_feedback',
-        7: 'awaiting_chapter_8_feedback',
-        10: 'chapter_12_complete'
-      };
-
-      await supabaseAdmin
-        .from('stories')
-        .update({
-          generation_progress: {
-            ...story.generation_progress,
-            chapters_generated: endChapter,
-            current_step: nextStep[startChapter]
-          }
-        })
-        .eq('id', storyId);
-
-      console.log(`📖 [${storyTitle}] Updated progress to ${nextStep[startChapter]}`);
-
-      // Return success so the reader continues normally
-      return res.json({
-        success: true,
-        message: 'Chapters already available',
-        courseCorrections: null
-      });
-    }
-  }
-
-  if (shouldGenerate) {
-    console.log(`🚀 Triggering batch generation: chapters ${startChapter}-${endChapter}`);
-    const { buildCourseCorrections, generateBatch } = require('../services/generation');
-
-    (async () => {
-      try {
-        // Fetch all previous checkpoint feedback for this story to build accumulated corrections
-        const { data: previousFeedback } = await supabaseAdmin
-          .from('story_feedback')
-          .select('checkpoint, pacing_feedback, tone_feedback, character_feedback, protagonist_name, created_at')
-          .eq('user_id', userId)
-          .eq('story_id', storyId)
-          .in('checkpoint', ['chapter_2', 'chapter_5', 'chapter_8', 'chapter_3', 'chapter_6', 'chapter_9']) // Include old checkpoint names
-          .order('created_at', { ascending: true });
-
-        const feedbackHistory = previousFeedback || [];
-
-        // Build course corrections from accumulated feedback
-        const courseCorrections = buildCourseCorrections(feedbackHistory);
-
-        console.log(`📝 Course corrections built from ${feedbackHistory.length} checkpoint(s)`);
-
-        // Generate batch with course corrections
-        await generateBatch(storyId, startChapter, endChapter, userId, courseCorrections);
-
-        console.log(`✅ Batch generation complete: chapters ${startChapter}-${endChapter}`);
-      } catch (error) {
-        console.error(`❌ Failed to generate batch: ${error.message}`);
-      }
-    })();
+  // If chapters already existed, return early
+  if (!shouldGenerate && startChapter && endChapter) {
+    return res.json({
+      success: true,
+      message: 'Chapters already available',
+      courseCorrections: null
+    });
   }
 
   // Build human-readable course correction summary for response
