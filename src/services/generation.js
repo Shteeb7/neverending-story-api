@@ -40,8 +40,8 @@ function scanForProseViolations(chapterContent) {
 
   // 1. Count em dashes (—)
   const emDashCount = (chapterContent.match(/—/g) || []).length;
-  if (emDashCount > 5) {
-    violations.push(`Em dashes: ${emDashCount} (limit: 5)`);
+  if (emDashCount > 15) {
+    violations.push(`Em dashes: ${emDashCount} (limit: 15)`);
   }
 
   // 2. Count "Not X, but Y" and "Not X — Y" patterns
