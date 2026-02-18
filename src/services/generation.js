@@ -2731,7 +2731,7 @@ Return ONLY a JSON object in this exact format:
   await updateGenerationProgress(storyId, {
     ...currentProgress,
     chapters_generated: chapterNumber,
-    current_step: `chapter_${chapterNumber}_complete`
+    current_step: `generating_chapter_${chapterNumber}_postprocessing`
   });
 
   // Extract character ledger (wait for completion to ensure intra-batch continuity)
@@ -3329,6 +3329,41 @@ async function resumeStalledGenerations() {
       .select('id, user_id, title, generation_progress, status')
       .eq('status', 'error')
       .not('generation_progress', 'is', null);
+
+    // Query 3: Fix orphaned chapter_X_complete states (from before realtime push migration)
+    const { data: orphanedStories, error: orphanedError } = await supabaseAdmin
+      .from('stories')
+      .select('id, title, generation_progress')
+      .eq('status', 'active')
+      .filter('generation_progress->>current_step', 'like', 'chapter_%_complete');
+
+    if (orphanedStories && orphanedStories.length > 0) {
+      console.log(`🏥 Fixing ${orphanedStories.length} orphaned chapter_X_complete states`);
+      for (const story of orphanedStories) {
+        const step = story.generation_progress?.current_step;
+        const chaptersGenerated = story.generation_progress?.chapters_generated || 0;
+
+        // Determine correct awaiting state based on chapters generated
+        let correctStep;
+        if (chaptersGenerated <= 3) correctStep = 'awaiting_chapter_2_feedback';
+        else if (chaptersGenerated <= 6) correctStep = 'awaiting_chapter_5_feedback';
+        else if (chaptersGenerated <= 9) correctStep = 'awaiting_chapter_8_feedback';
+        else correctStep = 'chapter_12_complete';
+
+        console.log(`🏥 Fixing orphaned state: "${story.title}" ${step} → ${correctStep}`);
+
+        await supabaseAdmin
+          .from('stories')
+          .update({
+            generation_progress: {
+              ...story.generation_progress,
+              current_step: correctStep,
+              last_updated: new Date().toISOString()
+            }
+          })
+          .eq('id', story.id);
+      }
+    }
 
     // Combine both sets
     const allStories = [
