@@ -572,36 +572,4 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
   });
 }));
 
-// TEMPORARY: Test series name generation in isolation
-router.post('/test-series-name/:storyId', asyncHandler(async (req, res) => {
-  const { storyId } = req.params;
-
-  const { data: story } = await supabaseAdmin
-    .from('stories')
-    .select('title, genre')
-    .eq('id', storyId)
-    .single();
-
-  const { data: bible } = await supabaseAdmin
-    .from('story_bibles')
-    .select('title, themes, central_conflict, key_locations, characters')
-    .eq('story_id', storyId)
-    .maybeSingle();
-
-  const { generateSeriesName } = require('../services/generation');
-  const seriesName = await generateSeriesName(story.title, story.genre, bible);
-
-  res.json({
-    success: true,
-    storyTitle: story.title,
-    genre: story.genre,
-    seriesName,
-    bibleContext: {
-      themes: bible?.themes?.slice(0, 3),
-      conflict: bible?.central_conflict?.description?.substring(0, 100),
-      antagonist: bible?.characters?.antagonist?.name
-    }
-  });
-}));
-
 module.exports = router;
