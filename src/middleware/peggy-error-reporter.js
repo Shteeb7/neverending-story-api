@@ -128,10 +128,30 @@ async function reportToPeggy(opts) {
     context = {}
   } = opts;
 
-  // Dedup check
+  // Dedup check — in-memory (fast, same process) + database (survives restarts)
   if (isDuplicate(source, errorMessage)) {
     console.log(`🐞 Peggy: Duplicate suppressed (${source}: ${errorMessage.substring(0, 60)}...)`);
     return;
+  }
+
+  // Database-backed dedup: check for existing Peggy report with same source in last hour
+  try {
+    const { data: existing } = await supabaseAdmin
+      .from('bug_reports')
+      .select('id')
+      .eq('user_id', PEGGY_SYSTEM_USER_ID)
+      .eq('interview_mode', 'automated')
+      .gte('created_at', new Date(Date.now() - 60 * 60 * 1000).toISOString())
+      .filter('metadata->>error_source', 'eq', source)
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      console.log(`🐞 Peggy: DB duplicate suppressed (${source}: ${errorMessage.substring(0, 60)}...)`);
+      return;
+    }
+  } catch (dedupErr) {
+    // Don't let dedup check failure prevent reporting — continue
+    console.warn(`🐞⚠️ Peggy DB dedup check failed: ${dedupErr.message}`);
   }
 
   // Extract source file from stack trace
