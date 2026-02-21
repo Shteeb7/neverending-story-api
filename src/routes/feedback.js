@@ -116,14 +116,32 @@ async function triggerCheckpointGeneration(storyId, userId, normalizedCheckpoint
 
         const feedbackHistory = previousFeedback || [];
 
-        // Generate smart course corrections using AI for tone/character dimensions
-        const { generateSmartCourseCorrections } = require('../services/generation');
-        const courseCorrections = await generateSmartCourseCorrections(storyId, feedbackHistory);
+        // Fetch the arc to get chapter outlines for the upcoming batch
+        const { data: arc } = await supabaseAdmin
+          .from('story_arcs')
+          .select('chapters')
+          .eq('story_id', storyId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-        console.log(`📝 Course corrections generated from ${feedbackHistory.length} checkpoint(s)`);
+        // Get the outlines for the chapters we're about to generate
+        const batchOutlines = arc?.chapters?.filter(ch =>
+          ch.chapter_number >= startChapter && ch.chapter_number <= endChapter
+        ) || [];
 
-        // Generate batch with course corrections
-        await generateBatch(storyId, startChapter, endChapter, userId, courseCorrections);
+        // Generate editor brief with revised outlines (returns null if no corrections needed)
+        const { generateEditorBrief } = require('../services/generation');
+        let editorBrief = null;
+        try {
+          editorBrief = await generateEditorBrief(storyId, feedbackHistory, batchOutlines);
+          console.log(`📝 Editor brief: ${editorBrief ? 'generated with revised outlines' : 'not needed (all positive feedback)'}`);
+        } catch (err) {
+          console.warn(`⚠️ Editor brief generation failed, proceeding without corrections: ${err.message}`);
+        }
+
+        // Generate batch with editor brief (or null for no corrections)
+        await generateBatch(storyId, startChapter, endChapter, userId, editorBrief);
 
         // Update progress to awaiting next checkpoint after batch completes
         const nextAwaitingStep = {

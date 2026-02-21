@@ -1943,172 +1943,220 @@ async function updateDiscoveryTolerance(userId) {
 }
 
 /**
- * Generate story-aware, AI-powered course corrections for tone and character dimensions
- * @param {string} storyId - Story ID
- * @param {Array} feedbackHistory - Array of checkpoint feedback objects
- * @returns {Promise<string>} Formatted course correction text for prompt injection
+ * Generate editor-revised chapter briefs that weave corrections into the outline itself.
+ * Instead of a separate correction block that fights the rest of the prompt,
+ * this produces modified outlines where the corrections are part of the plan.
+ *
+ * @param {string} storyId
+ * @param {Array} feedbackHistory - checkpoint feedback records
+ * @param {Array} chapterOutlines - the 3 chapter outlines for this batch (from story_arcs)
+ * @returns {Promise<Object|null>} { revisedOutlines: [{...}], styleExample: string } or null
  */
-async function generateSmartCourseCorrections(storyId, feedbackHistory) {
-  if (!feedbackHistory || feedbackHistory.length === 0) {
-    return '';
-  }
-
-  // Only use AI-generated corrections for tone and character dimensions
-  // Pacing corrections remain mechanical (they already work)
+async function generateEditorBrief(storyId, feedbackHistory, chapterOutlines) {
   const latestFeedback = feedbackHistory[feedbackHistory.length - 1];
 
-  // If all dimensions are positive/neutral, skip the expensive call
-  const needsToneCorrection = latestFeedback.tone_feedback && latestFeedback.tone_feedback !== 'right';
-  const needsCharacterCorrection = latestFeedback.character_feedback &&
-    latestFeedback.character_feedback !== 'love';
+  // If all dimensions are positive/neutral, no editor brief needed
+  const needsCorrection =
+    (latestFeedback.tone_feedback && latestFeedback.tone_feedback !== 'right') ||
+    (latestFeedback.character_feedback && latestFeedback.character_feedback !== 'love') ||
+    (latestFeedback.pacing_feedback && latestFeedback.pacing_feedback !== 'hooked');
 
-  if (!needsToneCorrection && !needsCharacterCorrection) {
-    // Fall back to mechanical corrections (pacing-only or all positive)
-    return buildCourseCorrections(feedbackHistory);
+  if (!needsCorrection) {
+    return null; // No revisions needed, use original outlines
   }
 
-  console.log(`🎯 Generating AI-powered course corrections for story ${storyId}...`);
+  console.log(`📝 [Story ${storyId}] Generating editor brief with course corrections...`);
 
   try {
-    // Fetch story bible
-    const { data: bible, error: bibleError } = await supabaseAdmin
+    // Fetch story context
+    const { data: bible } = await supabaseAdmin
       .from('story_bibles')
       .select('*')
       .eq('story_id', storyId)
       .single();
 
-    if (bibleError || !bible) {
-      console.warn(`⚠️ Story bible not found for ${storyId}, falling back to mechanical corrections`);
-      return buildCourseCorrections(feedbackHistory);
+    if (!bible) {
+      console.warn(`⚠️ No bible for story ${storyId}, skipping editor brief`);
+      return null;
     }
 
-    // Fetch previous chapters for context
     const { data: chapters } = await supabaseAdmin
       .from('chapters')
-      .select('chapter_number, title, key_events, word_count')
+      .select('chapter_number, title, key_events, content')
       .eq('story_id', storyId)
       .order('chapter_number', { ascending: true });
 
-    // Fetch story for genre/premise context
     const { data: story } = await supabaseAdmin
       .from('stories')
       .select('title, genre, premise')
       .eq('id', storyId)
       .single();
 
+    const protagonist = bible.characters?.protagonist || { name: 'Protagonist', personality: 'Unknown' };
+    const supporting = bible.characters?.supporting || [];
+    const antagonist = bible.characters?.antagonist || { name: 'Antagonist', motivation: 'Unknown' };
+
+    // Get brief content samples from existing chapters (first ~600 chars of each)
+    const proseSamples = chapters && chapters.length > 0
+      ? chapters.slice(-2).map(ch =>
+          `Chapter ${ch.chapter_number} "${ch.title}" opens:\n${(ch.content || '').substring(0, 600)}...`
+        ).join('\n\n')
+      : 'No chapters available';
+
     const chapterSummaries = chapters && chapters.length > 0
       ? chapters.map(ch =>
           `Chapter ${ch.chapter_number} "${ch.title}": ${(ch.key_events || []).join('; ')}`
         ).join('\n')
-      : 'No chapters generated yet';
+      : 'No chapters yet';
 
-    // Extract character info from bible
-    const protagonist = bible.characters?.protagonist || bible.characters?.[0] || { name: 'Protagonist', personality: 'Unknown' };
-    const supporting = Array.isArray(bible.characters?.supporting)
-      ? bible.characters.supporting
-      : (Array.isArray(bible.characters) ? bible.characters.slice(1, 4) : []);
-    const antagonist = bible.characters?.antagonist || { name: 'Antagonist', motivation: 'Unknown' };
+    const outlineText = chapterOutlines.map(ch =>
+      `Chapter ${ch.chapter_number} "${ch.title}":
+  Events: ${ch.events_summary}
+  Character focus: ${ch.character_focus}
+  Tension level: ${ch.tension_level}
+  Word count target: ${ch.word_count_target}`
+    ).join('\n\n');
 
-    // Build the correction generation prompt
-    const correctionPrompt = `You are a senior fiction editor. A reader has given feedback on a story after reading chapters 1-3. Your job is to write SPECIFIC, ACTIONABLE craft instructions that the author (an AI) will follow when writing chapters 4-6.
+    // Build feedback description
+    const feedbackDesc = [];
+    if (latestFeedback.pacing_feedback && latestFeedback.pacing_feedback !== 'hooked') {
+      feedbackDesc.push(`PACING: Reader says "${latestFeedback.pacing_feedback}" — ${latestFeedback.pacing_feedback === 'slow' ? 'story feels sluggish, needs more momentum and forward drive' : 'story is rushing, needs more breathing room and emotional landing'}`);
+    }
+    if (latestFeedback.tone_feedback && latestFeedback.tone_feedback !== 'right') {
+      feedbackDesc.push(`TONE: Reader says "${latestFeedback.tone_feedback}" — ${latestFeedback.tone_feedback === 'serious' ? 'story is too relentlessly heavy, needs moments of levity, warmth, dry humor, or human absurdity woven between the tension' : 'story is too breezy, needs higher emotional stakes and more weight to the consequences'}`);
+    }
+    if (latestFeedback.character_feedback && latestFeedback.character_feedback !== 'love') {
+      feedbackDesc.push(`CHARACTER: Reader says "${latestFeedback.character_feedback}" — ${latestFeedback.character_feedback === 'warming' ? 'reader is starting to connect but wants more vulnerability, interior thought, and relatable human moments from the protagonist' : 'reader is not connecting at all — protagonist needs more agency, a more distinctive voice, and moments that make the reader root for them'}`);
+    }
 
-<story_info>
-  Title: ${story.title}
-  Genre: ${story.genre}
-  Premise: ${story.premise}
+    const editorPrompt = `You are a senior fiction editor reviewing chapter outlines for a novel-in-progress. A reader has finished chapters 1-3 and given feedback. Your job is to ANNOTATE the chapter outlines for chapters 4-6 with specific micro-beats that address the feedback — and write one short example passage showing the target prose style.
 
-  Protagonist: ${protagonist.name} — ${protagonist.personality || 'Unknown'}
-  Voice notes: ${protagonist.voice_notes || 'N/A'}
+CRITICAL RULES:
+- You are making SUBTLE adjustments, not overhauling the story. The reader should feel the story warming up, not lurching into a different book.
+- Add 2-3 specific beats per chapter. A "beat" is a concrete moment: "When [character] does [action], add [specific adjustment]."
+- Do NOT change what happens in the plot. Only change HOW scenes are written.
+- The evolution should be GRADUAL. Chapter 4 shifts 10-15% from the established tone. Not 50%.
 
-  Supporting characters: ${supporting.length > 0 ? supporting.map(sc => `${sc.name} (${sc.role || 'supporting'}): ${sc.personality || 'Unknown'}`).join('; ') : 'None specified'}
+<story_context>
+Title: ${story.title}
+Genre: ${story.genre}
+Premise: ${story.premise}
 
-  Antagonist: ${antagonist.name} — ${antagonist.motivation || 'Unknown'}
+Protagonist: ${protagonist.name} — ${protagonist.personality || 'Unknown'}
+Voice: ${protagonist.voice_notes || 'Not specified'}
+Flaws: ${(protagonist.flaws || []).join(', ') || 'Not specified'}
 
-  Tone/mood from bible: ${bible.tone || JSON.stringify(bible.themes || [])}
-</story_info>
+Supporting: ${supporting.map(sc => `${sc.name} (${sc.role || 'supporting'})`).join(', ') || 'None'}
+Antagonist: ${antagonist.name}
+</story_context>
 
-<chapters_so_far>
+<what_happened_so_far>
 ${chapterSummaries}
-</chapters_so_far>
+</what_happened_so_far>
+
+<current_prose_style>
+${proseSamples}
+</current_prose_style>
 
 <reader_feedback>
-  Pacing: ${latestFeedback.pacing_feedback || 'not provided'} ${latestFeedback.pacing_feedback === 'hooked' ? '(satisfied — no change needed)' : latestFeedback.pacing_feedback === 'slow' ? '(reader finds it too slow — needs more momentum)' : latestFeedback.pacing_feedback === 'fast' ? '(reader finds it too fast — needs more breathing room)' : ''}
-
-  Tone: ${latestFeedback.tone_feedback || 'not provided'} ${latestFeedback.tone_feedback === 'right' ? '(satisfied — no change needed)' : latestFeedback.tone_feedback === 'serious' ? '(reader finds it too heavy/serious — needs levity, warmth, or humor)' : latestFeedback.tone_feedback === 'light' ? '(reader finds it too light — needs more emotional weight and stakes)' : ''}
-
-  Character: ${latestFeedback.character_feedback || 'not provided'} ${latestFeedback.character_feedback === 'love' ? '(satisfied — no change needed)' : latestFeedback.character_feedback === 'warming' ? '(reader is starting to connect but not fully invested — needs more interiority, vulnerability, relatability)' : latestFeedback.character_feedback === 'detached' || latestFeedback.character_feedback === 'not_clicking' ? '(reader is NOT connecting with the protagonist — needs major adjustments to voice, agency, and likability)' : ''}
+${feedbackDesc.join('\n')}
 </reader_feedback>
 
-Write correction instructions for ONLY the dimensions that need change (skip any that are "satisfied"). Your instructions must:
+<chapter_outlines_to_revise>
+${outlineText}
+</chapter_outlines_to_revise>
 
-1. Reference specific characters BY NAME
-2. Reference specific types of scenes from chapters 1-3 (e.g., "the logistics/hacking scenes", "the combat sequences", "the family dinner scenes")
-3. Give concrete EXAMPLES of what the correction looks like in practice (e.g., "When Jinx is scanning supply manifests, let her internal monologue include sardonic observations about imperial bureaucracy — 'four hundred metric tons of decorative bunting, priority-shipped to a station that's rationing water'")
-4. Specify WHERE in each chapter the correction should appear (e.g., "at least one moment per major scene", "especially in dialogue between X and Y")
-5. Explain what to STOP DOING as clearly as what to START DOING
+Now produce TWO things:
 
-FORMAT: Return a JSON object:
-{
-  "tone_corrections": "...(specific instructions, 150-300 words, or null if tone is fine)...",
-  "character_corrections": "...(specific instructions, 150-300 words, or null if characters are fine)...",
-  "pacing_corrections": "...(specific instructions, 80-150 words, or null if pacing is fine)..."
-}
+PART 1 — REVISED OUTLINES
+For each chapter (4, 5, 6), return the original outline PLUS an "editor_notes" field with 2-3 specific beat annotations. Each annotation should:
+- Name a character
+- Describe a specific moment or scene type
+- Say exactly what the adjustment looks like
 
-Be bold. Be specific. These instructions will be injected directly into the chapter generation prompt. Vague advice like "add humor" will fail — the writing AI needs to know exactly WHERE the humor goes, WHAT KIND of humor fits this world, and HOW to execute it without breaking the story's core identity.`;
+Example of a good annotation: "When Jinx is reviewing supply data in the logistics bay, give her one sardonic internal observation about an absurd line item — something that reveals her dark humor without breaking the espionage tension. Think a single wry thought, not a comedy routine."
+
+Example of a bad annotation: "Add more humor to this chapter."
+
+PART 2 — STYLE EXAMPLE
+Write an original 80-120 word passage that demonstrates how this story should sound WITH the corrections applied. Use the actual character names. Match the genre. Show the adjustment in action — don't describe it, demonstrate it. This passage doesn't need to be from any specific chapter; it's a TONE TARGET for the writer to pattern-match against.
+
+Return as XML (NOT JSON — avoid quote escaping issues):
+
+<editor_brief>
+  <revised_outline chapter="4">
+    <title>[original title]</title>
+    <events_summary>[original events]</events_summary>
+    <character_focus>[original focus]</character_focus>
+    <tension_level>[original level]</tension_level>
+    <word_count_target>[original target]</word_count_target>
+    <editor_notes>
+      [2-3 specific beat annotations, each on its own line]
+    </editor_notes>
+  </revised_outline>
+  <revised_outline chapter="5">
+    [same structure]
+  </revised_outline>
+  <revised_outline chapter="6">
+    [same structure]
+  </revised_outline>
+  <style_example>
+    [80-120 word original passage demonstrating corrected tone with actual character names]
+  </style_example>
+</editor_brief>`;
+
+    console.log(`📝 [${story.title}] Calling editor brief generation...`);
 
     const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
-      [{ role: 'user', content: correctionPrompt }],
-      4000,
-      { operation: 'generate_course_corrections', storyId, storyTitle: story.title }
+      [{ role: 'user', content: editorPrompt }],
+      6000,
+      { operation: 'generate_editor_brief', storyId, storyTitle: story.title }
     );
 
-    await logApiCost(null, 'generate_course_corrections', inputTokens, outputTokens, { storyId });
+    await logApiCost(null, 'generate_editor_brief', inputTokens, outputTokens, { storyId });
 
-    const parsed = parseAndValidateJSON(response, []);
+    // Parse XML response (much more robust than JSON for long-form text)
+    const revisedOutlines = [];
+    const outlineMatches = response.matchAll(/<revised_outline chapter="(\d+)">([\s\S]*?)<\/revised_outline>/g);
 
-    console.log(`🎯 [${story.title}] Smart course corrections generated:`);
-    if (parsed.tone_corrections) console.log(`  TONE: ${parsed.tone_corrections.substring(0, 100)}...`);
-    if (parsed.character_corrections) console.log(`  CHARACTER: ${parsed.character_corrections.substring(0, 100)}...`);
-    if (parsed.pacing_corrections) console.log(`  PACING: ${parsed.pacing_corrections.substring(0, 100)}...`);
+    for (const match of outlineMatches) {
+      const chapterNum = parseInt(match[1]);
+      const content = match[2];
 
-    // Build the final correction block with emphasis
-    let sections = [];
-
-    if (parsed.pacing_corrections) {
-      sections.push(`PACING CORRECTION — MANDATORY:\n${parsed.pacing_corrections}`);
-    } else if (latestFeedback.pacing_feedback && latestFeedback.pacing_feedback !== 'hooked') {
-      // Fall back to mechanical pacing corrections (they work fine)
-      const mechanicalPacing = {
-        'slow': 'Enter scenes later, leave earlier. Shorter paragraphs. More cliffhanger chapter endings. Reduce descriptive passages. Increase action-to-reflection ratio.',
-        'fast': 'Add sensory grounding moments. Longer scene transitions. More internal reflection. Let emotional beats land before moving on.'
+      const getTag = (tag) => {
+        const m = content.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`));
+        return m ? m[1].trim() : '';
       };
-      if (mechanicalPacing[latestFeedback.pacing_feedback]) {
-        sections.push(`PACING CORRECTION — MANDATORY:\n${mechanicalPacing[latestFeedback.pacing_feedback]}`);
-      }
+
+      revisedOutlines.push({
+        chapter_number: chapterNum,
+        title: getTag('title'),
+        events_summary: getTag('events_summary'),
+        character_focus: getTag('character_focus'),
+        tension_level: getTag('tension_level'),
+        word_count_target: getTag('word_count_target'),
+        editor_notes: getTag('editor_notes')
+      });
     }
 
-    if (parsed.tone_corrections) {
-      sections.push(`TONE CORRECTION — MANDATORY:\n${parsed.tone_corrections}`);
+    const styleMatch = response.match(/<style_example>([\s\S]*?)<\/style_example>/);
+    const styleExample = styleMatch ? styleMatch[1].trim() : null;
+
+    if (revisedOutlines.length === 0) {
+      console.warn(`⚠️ [${story.title}] Editor brief parsing found 0 outlines, falling back`);
+      return null;
     }
 
-    if (parsed.character_corrections) {
-      sections.push(`CHARACTER CORRECTION — MANDATORY:\n${parsed.character_corrections}`);
-    }
+    console.log(`🎯 [${story.title}] Editor brief generated: ${revisedOutlines.length} revised outlines, style example: ${styleExample ? 'yes' : 'no'}`);
+    revisedOutlines.forEach(o => {
+      console.log(`  Ch${o.chapter_number}: ${o.editor_notes.substring(0, 120)}...`);
+    });
 
-    if (sections.length === 0) {
-      return buildCourseCorrections(feedbackHistory); // Fallback
-    }
-
-    return `CRITICAL — READER COURSE CORRECTIONS. These corrections are based on direct reader feedback and are NON-NEGOTIABLE adjustments. Apply ALL of them consistently across every chapter in this batch. These are NOT suggestions — they are requirements equal in priority to the prose craft rules.
-
-${sections.join('\n\n')}
-
-IMPORTANT: These corrections change HOW the story is told, not WHAT happens. The story bible, arc outline, and plot events remain exactly as planned. But the CRAFT — the tone, the character voice, the emotional register — must shift as described above. The reader has spoken. Honor their feedback.`;
+    return { revisedOutlines, styleExample };
 
   } catch (error) {
-    console.error(`❌ Failed to generate smart course corrections for story ${storyId}: ${error.message}`);
-    console.warn(`⚠️ Falling back to mechanical corrections`);
-    return buildCourseCorrections(feedbackHistory);
+    console.error(`❌ [${story.title}] Editor brief generation failed: ${error.message}`);
+    return null;
   }
 }
 
@@ -2282,7 +2330,7 @@ Only the craft of the telling changes.`;
  * @param {string} userId - User ID for cost tracking
  * @param {string} courseCorrections - Optional course correction text to inject into prompts
  */
-async function generateBatch(storyId, startChapter, endChapter, userId, courseCorrections = null) {
+async function generateBatch(storyId, startChapter, endChapter, userId, editorBrief = null) {
   const { data: story } = await supabaseAdmin
     .from('stories')
     .select('title')
@@ -2291,13 +2339,13 @@ async function generateBatch(storyId, startChapter, endChapter, userId, courseCo
 
   const storyTitle = story?.title || 'Unknown';
 
-  console.log(`🚀 [${storyTitle}] Batch generation: chapters ${startChapter}-${endChapter}${courseCorrections ? ' with course corrections' : ''}`);
+  console.log(`🚀 [${storyTitle}] Batch generation: chapters ${startChapter}-${endChapter}${editorBrief ? ' with editor brief' : ''}`);
 
   for (let i = startChapter; i <= endChapter; i++) {
     console.log(`📖 [${storyTitle}] Chapter ${i}: starting generation...`);
     const chapterStartTime = Date.now();
 
-    const chapter = await generateChapter(storyId, i, userId, courseCorrections);
+    const chapter = await generateChapter(storyId, i, userId, editorBrief);
 
     const chapterDuration = ((Date.now() - chapterStartTime) / 1000).toFixed(1);
     const charCount = chapter?.content?.length || 0;
@@ -2317,9 +2365,9 @@ async function generateBatch(storyId, startChapter, endChapter, userId, courseCo
  * @param {string} storyId - The story ID
  * @param {number} chapterNumber - The chapter number to generate
  * @param {string} userId - User ID for cost tracking
- * @param {string} courseCorrections - Optional course correction text to inject into prompt (default: null)
+ * @param {Object} editorBrief - Optional editor brief with revised outlines and style example (default: null)
  */
-async function generateChapter(storyId, chapterNumber, userId, courseCorrections = null) {
+async function generateChapter(storyId, chapterNumber, userId, editorBrief = null) {
   // Check if chapter already exists (prevents duplicate generation for legacy stories or recovery loops)
   const { data: existingChapter } = await supabaseAdmin
     .from('chapters')
@@ -2414,6 +2462,18 @@ async function generateChapter(storyId, chapterNumber, userId, courseCorrections
     throw new Error(`Chapter ${chapterNumber} not found in arc outline`);
   }
 
+  // If editor brief exists, use the revised outline for this chapter
+  let effectiveOutline = chapterOutline;
+  let editorNotes = '';
+  if (editorBrief && editorBrief.revisedOutlines) {
+    const revised = editorBrief.revisedOutlines.find(o => o.chapter_number === chapterNumber);
+    if (revised) {
+      effectiveOutline = { ...chapterOutline, ...revised }; // Revised fields override originals
+      editorNotes = revised.editor_notes || '';
+      console.log(`📝 [${storyTitle}] Ch${chapterNumber} using editor-revised outline`);
+    }
+  }
+
   // Build context from previous chapters
   const previousContext = previousChapters && previousChapters.length > 0
     ? previousChapters.reverse().map(ch =>
@@ -2447,18 +2507,6 @@ async function generateChapter(storyId, chapterNumber, userId, courseCorrections
     console.log(`⚙️ [${storyTitle}] Adaptive preferences DISABLED by generation_config`);
   }
 
-  // Build course correction block from real-time checkpoint feedback
-  let courseCorrectionsBlock = '';
-  if (courseCorrections && config.course_corrections !== false) {
-    courseCorrectionsBlock = `
-
-<reader_course_correction>
-  ${courseCorrections}
-</reader_course_correction>`;
-  } else if (courseCorrections && config.course_corrections === false) {
-    console.log(`⚙️ [${storyTitle}] Course corrections DISABLED by generation_config (feedback ignored)`);
-  }
-
   // Build character continuity block from previous ledger entries
   const { buildCharacterContinuityBlock } = require('./character-intelligence');
   const characterContinuityBlock = config.character_ledger !== false
@@ -2468,6 +2516,21 @@ async function generateChapter(storyId, chapterNumber, userId, courseCorrections
   if (config.character_ledger === false) {
     console.log(`⚙️ [${storyTitle}] Character ledger DISABLED by generation_config`);
   }
+
+  // Prepare style example - use editor brief's example if available, otherwise use generic
+  const styleExampleContent = editorBrief?.styleExample
+    ? `Prose standard to aim for — this example captures the specific tone and voice this story should have going forward:
+
+${editorBrief.styleExample}
+
+Match this tone, rhythm, and emotional register in your chapter.`
+    : `Prose standard to aim for:
+
+The door stood open. She didn't remember leaving it that way. Mira pressed her back against the hallway wall and counted to three. The brick bit through her jacket. No sound from inside.
+
+She slipped through. The apartment looked rearranged. Someone had been careful. Couch cushions perfectly straight. Mail on the counter lined up like soldiers. Her breathing went shallow. Whoever did this wanted her to know.
+
+Notice: no em dashes. Short sentences for tension. Physical sensation instead of named emotions. No "not X but Y." Just clean prose that trusts the reader.`;
 
   const generatePrompt = `You are an award-winning fiction author known for prose that shows instead of tells, vivid character work, and compulsive page-turning narratives.
 
@@ -2535,13 +2598,19 @@ Write Chapter ${chapterNumber} of "${bible.title}" following this outline and cr
 
 <chapter_outline>
   <chapter_number>${chapterNumber}</chapter_number>
-  <title>${chapterOutline.title}</title>
-  <events_summary>${chapterOutline.events_summary}</events_summary>
-  <character_focus>${chapterOutline.character_focus}</character_focus>
-  <tension_level>${chapterOutline.tension_level}</tension_level>
-  <word_count_target>${chapterOutline.word_count_target}</word_count_target>
+  <title>${effectiveOutline.title}</title>
+  <events_summary>${effectiveOutline.events_summary}</events_summary>
+  <character_focus>${effectiveOutline.character_focus}</character_focus>
+  <tension_level>${effectiveOutline.tension_level}</tension_level>
+  <word_count_target>${effectiveOutline.word_count_target}</word_count_target>
+${editorNotes ? `  <editor_notes>
+  These notes from the story editor describe specific beats to include in this chapter.
+  Weave them naturally into the scenes — they are part of the chapter plan, not afterthoughts.
+
+  ${editorNotes}
+  </editor_notes>` : ''}
 </chapter_outline>
-${courseCorrectionsBlock}
+
 <previous_chapters>
 ${previousContext}
 </previous_chapters>
@@ -2624,13 +2693,7 @@ ${previousContext}
 </writing_craft_rules>
 
 <style_example>
-Prose standard to aim for:
-
-The door stood open. She didn't remember leaving it that way. Mira pressed her back against the hallway wall and counted to three. The brick bit through her jacket. No sound from inside.
-
-She slipped through. The apartment looked rearranged. Someone had been careful. Couch cushions perfectly straight. Mail on the counter lined up like soldiers. Her breathing went shallow. Whoever did this wanted her to know.
-
-Notice: no em dashes. Short sentences for tension. Physical sensation instead of named emotions. No "not X but Y." Just clean prose that trusts the reader.
+${styleExampleContent}
 </style_example>
 
 <word_count>
@@ -3874,7 +3937,7 @@ module.exports = {
   updateDiscoveryTolerance,
   resumeStalledGenerations,
   buildCourseCorrections,
-  generateSmartCourseCorrections,
+  generateEditorBrief,
   generateBatch,
   // Export utilities for testing
   calculateCost,
