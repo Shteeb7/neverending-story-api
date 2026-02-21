@@ -16,7 +16,7 @@
 const { supabaseAdmin } = require('../config/supabase');
 
 // Fixed UUID for Peggy's system user (no auth.users record needed — no FK constraint)
-const PEGGY_SYSTEM_USER_ID = '00000000-0000-0000-0000-peggy0000qa';
+const PEGGY_SYSTEM_USER_ID = '00000000-0000-0000-0000-00ee000000aa';
 
 // In-memory dedup cache: key → last reported timestamp
 const recentErrors = new Map();
