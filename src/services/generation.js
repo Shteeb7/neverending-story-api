@@ -1904,6 +1904,176 @@ async function updateDiscoveryTolerance(userId) {
 }
 
 /**
+ * Generate story-aware, AI-powered course corrections for tone and character dimensions
+ * @param {string} storyId - Story ID
+ * @param {Array} feedbackHistory - Array of checkpoint feedback objects
+ * @returns {Promise<string>} Formatted course correction text for prompt injection
+ */
+async function generateSmartCourseCorrections(storyId, feedbackHistory) {
+  if (!feedbackHistory || feedbackHistory.length === 0) {
+    return '';
+  }
+
+  // Only use AI-generated corrections for tone and character dimensions
+  // Pacing corrections remain mechanical (they already work)
+  const latestFeedback = feedbackHistory[feedbackHistory.length - 1];
+
+  // If all dimensions are positive/neutral, skip the expensive call
+  const needsToneCorrection = latestFeedback.tone_feedback && latestFeedback.tone_feedback !== 'right';
+  const needsCharacterCorrection = latestFeedback.character_feedback &&
+    latestFeedback.character_feedback !== 'love';
+
+  if (!needsToneCorrection && !needsCharacterCorrection) {
+    // Fall back to mechanical corrections (pacing-only or all positive)
+    return buildCourseCorrections(feedbackHistory);
+  }
+
+  console.log(`🎯 Generating AI-powered course corrections for story ${storyId}...`);
+
+  try {
+    // Fetch story bible
+    const { data: bible, error: bibleError } = await supabaseAdmin
+      .from('story_bibles')
+      .select('*')
+      .eq('story_id', storyId)
+      .single();
+
+    if (bibleError || !bible) {
+      console.warn(`⚠️ Story bible not found for ${storyId}, falling back to mechanical corrections`);
+      return buildCourseCorrections(feedbackHistory);
+    }
+
+    // Fetch previous chapters for context
+    const { data: chapters } = await supabaseAdmin
+      .from('chapters')
+      .select('chapter_number, title, key_events, word_count')
+      .eq('story_id', storyId)
+      .order('chapter_number', { ascending: true });
+
+    // Fetch story for genre/premise context
+    const { data: story } = await supabaseAdmin
+      .from('stories')
+      .select('title, genre, premise')
+      .eq('id', storyId)
+      .single();
+
+    const chapterSummaries = chapters && chapters.length > 0
+      ? chapters.map(ch =>
+          `Chapter ${ch.chapter_number} "${ch.title}": ${(ch.key_events || []).join('; ')}`
+        ).join('\n')
+      : 'No chapters generated yet';
+
+    // Extract character info from bible
+    const protagonist = bible.characters?.protagonist || bible.characters?.[0] || { name: 'Protagonist', personality: 'Unknown' };
+    const supporting = Array.isArray(bible.characters?.supporting)
+      ? bible.characters.supporting
+      : (Array.isArray(bible.characters) ? bible.characters.slice(1, 4) : []);
+    const antagonist = bible.characters?.antagonist || { name: 'Antagonist', motivation: 'Unknown' };
+
+    // Build the correction generation prompt
+    const correctionPrompt = `You are a senior fiction editor. A reader has given feedback on a story after reading chapters 1-3. Your job is to write SPECIFIC, ACTIONABLE craft instructions that the author (an AI) will follow when writing chapters 4-6.
+
+<story_info>
+  Title: ${story.title}
+  Genre: ${story.genre}
+  Premise: ${story.premise}
+
+  Protagonist: ${protagonist.name} — ${protagonist.personality || 'Unknown'}
+  Voice notes: ${protagonist.voice_notes || 'N/A'}
+
+  Supporting characters: ${supporting.length > 0 ? supporting.map(sc => `${sc.name} (${sc.role || 'supporting'}): ${sc.personality || 'Unknown'}`).join('; ') : 'None specified'}
+
+  Antagonist: ${antagonist.name} — ${antagonist.motivation || 'Unknown'}
+
+  Tone/mood from bible: ${bible.tone || JSON.stringify(bible.themes || [])}
+</story_info>
+
+<chapters_so_far>
+${chapterSummaries}
+</chapters_so_far>
+
+<reader_feedback>
+  Pacing: ${latestFeedback.pacing_feedback || 'not provided'} ${latestFeedback.pacing_feedback === 'hooked' ? '(satisfied — no change needed)' : latestFeedback.pacing_feedback === 'slow' ? '(reader finds it too slow — needs more momentum)' : latestFeedback.pacing_feedback === 'fast' ? '(reader finds it too fast — needs more breathing room)' : ''}
+
+  Tone: ${latestFeedback.tone_feedback || 'not provided'} ${latestFeedback.tone_feedback === 'right' ? '(satisfied — no change needed)' : latestFeedback.tone_feedback === 'serious' ? '(reader finds it too heavy/serious — needs levity, warmth, or humor)' : latestFeedback.tone_feedback === 'light' ? '(reader finds it too light — needs more emotional weight and stakes)' : ''}
+
+  Character: ${latestFeedback.character_feedback || 'not provided'} ${latestFeedback.character_feedback === 'love' ? '(satisfied — no change needed)' : latestFeedback.character_feedback === 'warming' ? '(reader is starting to connect but not fully invested — needs more interiority, vulnerability, relatability)' : latestFeedback.character_feedback === 'detached' || latestFeedback.character_feedback === 'not_clicking' ? '(reader is NOT connecting with the protagonist — needs major adjustments to voice, agency, and likability)' : ''}
+</reader_feedback>
+
+Write correction instructions for ONLY the dimensions that need change (skip any that are "satisfied"). Your instructions must:
+
+1. Reference specific characters BY NAME
+2. Reference specific types of scenes from chapters 1-3 (e.g., "the logistics/hacking scenes", "the combat sequences", "the family dinner scenes")
+3. Give concrete EXAMPLES of what the correction looks like in practice (e.g., "When Jinx is scanning supply manifests, let her internal monologue include sardonic observations about imperial bureaucracy — 'four hundred metric tons of decorative bunting, priority-shipped to a station that's rationing water'")
+4. Specify WHERE in each chapter the correction should appear (e.g., "at least one moment per major scene", "especially in dialogue between X and Y")
+5. Explain what to STOP DOING as clearly as what to START DOING
+
+FORMAT: Return a JSON object:
+{
+  "tone_corrections": "...(specific instructions, 150-300 words, or null if tone is fine)...",
+  "character_corrections": "...(specific instructions, 150-300 words, or null if characters are fine)...",
+  "pacing_corrections": "...(specific instructions, 80-150 words, or null if pacing is fine)..."
+}
+
+Be bold. Be specific. These instructions will be injected directly into the chapter generation prompt. Vague advice like "add humor" will fail — the writing AI needs to know exactly WHERE the humor goes, WHAT KIND of humor fits this world, and HOW to execute it without breaking the story's core identity.`;
+
+    const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
+      [{ role: 'user', content: correctionPrompt }],
+      4000,
+      { operation: 'generate_course_corrections', storyId, storyTitle: story.title }
+    );
+
+    await logApiCost(null, 'generate_course_corrections', inputTokens, outputTokens, { storyId });
+
+    const parsed = parseAndValidateJSON(response, []);
+
+    console.log(`🎯 [${story.title}] Smart course corrections generated:`);
+    if (parsed.tone_corrections) console.log(`  TONE: ${parsed.tone_corrections.substring(0, 100)}...`);
+    if (parsed.character_corrections) console.log(`  CHARACTER: ${parsed.character_corrections.substring(0, 100)}...`);
+    if (parsed.pacing_corrections) console.log(`  PACING: ${parsed.pacing_corrections.substring(0, 100)}...`);
+
+    // Build the final correction block with emphasis
+    let sections = [];
+
+    if (parsed.pacing_corrections) {
+      sections.push(`PACING CORRECTION — MANDATORY:\n${parsed.pacing_corrections}`);
+    } else if (latestFeedback.pacing_feedback && latestFeedback.pacing_feedback !== 'hooked') {
+      // Fall back to mechanical pacing corrections (they work fine)
+      const mechanicalPacing = {
+        'slow': 'Enter scenes later, leave earlier. Shorter paragraphs. More cliffhanger chapter endings. Reduce descriptive passages. Increase action-to-reflection ratio.',
+        'fast': 'Add sensory grounding moments. Longer scene transitions. More internal reflection. Let emotional beats land before moving on.'
+      };
+      if (mechanicalPacing[latestFeedback.pacing_feedback]) {
+        sections.push(`PACING CORRECTION — MANDATORY:\n${mechanicalPacing[latestFeedback.pacing_feedback]}`);
+      }
+    }
+
+    if (parsed.tone_corrections) {
+      sections.push(`TONE CORRECTION — MANDATORY:\n${parsed.tone_corrections}`);
+    }
+
+    if (parsed.character_corrections) {
+      sections.push(`CHARACTER CORRECTION — MANDATORY:\n${parsed.character_corrections}`);
+    }
+
+    if (sections.length === 0) {
+      return buildCourseCorrections(feedbackHistory); // Fallback
+    }
+
+    return `CRITICAL — READER COURSE CORRECTIONS. These corrections are based on direct reader feedback and are NON-NEGOTIABLE adjustments. Apply ALL of them consistently across every chapter in this batch. These are NOT suggestions — they are requirements equal in priority to the prose craft rules.
+
+${sections.join('\n\n')}
+
+IMPORTANT: These corrections change HOW the story is told, not WHAT happens. The story bible, arc outline, and plot events remain exactly as planned. But the CRAFT — the tone, the character voice, the emotional register — must shift as described above. The reader has spoken. Honor their feedback.`;
+
+  } catch (error) {
+    console.error(`❌ Failed to generate smart course corrections for story ${storyId}: ${error.message}`);
+    console.warn(`⚠️ Falling back to mechanical corrections`);
+    return buildCourseCorrections(feedbackHistory);
+  }
+}
+
+/**
  * Build course correction XML block from checkpoint feedback history
  * @param {Array} feedbackHistory - Array of checkpoint feedback objects with dimension fields OR checkpoint_corrections JSONB
  * @returns {string} Formatted course correction text for prompt injection
@@ -2332,7 +2502,7 @@ Write Chapter ${chapterNumber} of "${bible.title}" following this outline and cr
   <tension_level>${chapterOutline.tension_level}</tension_level>
   <word_count_target>${chapterOutline.word_count_target}</word_count_target>
 </chapter_outline>
-
+${courseCorrectionsBlock}
 <previous_chapters>
 ${previousContext}
 </previous_chapters>
@@ -2449,7 +2619,7 @@ Notice: no em dashes. Short sentences for tension. Physical sensation instead of
 
   IMPORTANT: If the reader mentioned specific beloved stories, match THAT prose level, not a generic age-based level. A 12-year-old who loves Hunger Games should get prose closer to Suzanne Collins than to Jeff Kinney.
 </reading_level>
-${learnedPreferencesBlock}${courseCorrectionsBlock}${characterContinuityBlock}
+${learnedPreferencesBlock}${characterContinuityBlock}
 
 Return ONLY a JSON object in this exact format:
 {
@@ -3610,6 +3780,7 @@ module.exports = {
   updateDiscoveryTolerance,
   resumeStalledGenerations,
   buildCourseCorrections,
+  generateSmartCourseCorrections,
   generateBatch,
   // Export utilities for testing
   calculateCost,

@@ -116,10 +116,11 @@ async function triggerCheckpointGeneration(storyId, userId, normalizedCheckpoint
 
         const feedbackHistory = previousFeedback || [];
 
-        // Build course corrections from accumulated feedback
-        const courseCorrections = buildCourseCorrections(feedbackHistory);
+        // Generate smart course corrections using AI for tone/character dimensions
+        const { generateSmartCourseCorrections } = require('../services/generation');
+        const courseCorrections = await generateSmartCourseCorrections(storyId, feedbackHistory);
 
-        console.log(`📝 Course corrections built from ${feedbackHistory.length} checkpoint(s)`);
+        console.log(`📝 Course corrections generated from ${feedbackHistory.length} checkpoint(s)`);
 
         // Generate batch with course corrections
         await generateBatch(storyId, startChapter, endChapter, userId, courseCorrections);
