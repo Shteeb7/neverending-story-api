@@ -1,5 +1,6 @@
 const { anthropic } = require('../config/ai-clients');
 const { supabaseAdmin } = require('../config/supabase');
+const { reportToPeggy } = require('../middleware/peggy-error-reporter');
 const crypto = require('crypto');
 
 /**
@@ -426,6 +427,18 @@ async function retryGenerationStep(stepName, storyId, storyTitle, stepFn, maxRet
           })
           .eq('id', storyId);
 
+        // Peggy: Report code bugs immediately
+        reportToPeggy({
+          source: `generation:${stepName}`,
+          category: 'generation',
+          severity: 'critical',
+          errorMessage: `Repeated error (code bug): ${error.message}`,
+          stackTrace: error.stack,
+          storyId,
+          storyTitle,
+          context: { step: stepName, attempt, retry_count: progress.retry_count }
+        }).catch(() => {}); // fire and forget
+
         throw error; // Stop immediately, don't continue retrying
       }
 
@@ -443,6 +456,19 @@ async function retryGenerationStep(stepName, storyId, storyTitle, stepFn, maxRet
           .eq('id', storyId);
 
         console.error(`❌ [${storyTitle}] Step "${stepName}" failed after ${maxRetries + 1} attempts`);
+
+        // Peggy: Report exhausted retries
+        reportToPeggy({
+          source: `generation:${stepName}`,
+          category: 'generation',
+          severity: 'high',
+          errorMessage: `${stepName} failed after ${maxRetries + 1} attempts: ${error.message}`,
+          stackTrace: error.stack,
+          storyId,
+          storyTitle,
+          context: { step: stepName, max_retries: maxRetries + 1 }
+        }).catch(() => {});
+
         throw error;
       }
 
@@ -966,6 +992,19 @@ Return ONLY a JSON object in this exact format:
         }
       })
       .eq('id', storyId);
+
+    // Peggy: Report bible generation failures
+    reportToPeggy({
+      source: 'generation:generateStoryBible',
+      category: 'generation',
+      severity: 'high',
+      errorMessage: `Bible generation failed: ${apiError.message}`,
+      stackTrace: apiError.stack,
+      storyId,
+      storyTitle: 'unknown',
+      context: { step: 'bible_generation' }
+    }).catch(() => {});
+
     throw apiError;
   }
 
@@ -3018,6 +3057,15 @@ async function orchestratePreGeneration(storyId, userId) {
           console.log(`🎨 [${storyTitle}] Cover: uploaded ✅`);
         }).catch(err => {
           console.error(`⚠️ [${storyTitle}] Cover generation failed (non-blocking): ${err.message}`);
+          reportToPeggy({
+            source: 'generation:cover',
+            category: 'generation',
+            severity: 'medium',
+            errorMessage: `Cover generation failed: ${err.message}`,
+            stackTrace: err.stack,
+            storyId,
+            storyTitle
+          }).catch(() => {});
         });
       } else {
         console.log(`📖 [${storyTitle}] Skipping cover generation — name not yet confirmed`);
@@ -3094,6 +3142,18 @@ async function orchestratePreGeneration(storyId, userId) {
     console.log(`📖 [${storyTitle}] Pipeline complete! All chapters generated (${pipelineDuration}s total)`);
   } catch (error) {
     console.error(`❌ [${storyTitle}] Pipeline failed:`, error.message);
+
+    // Peggy: Report pipeline-level failures
+    reportToPeggy({
+      source: 'generation:pipeline',
+      category: 'generation',
+      severity: 'critical',
+      errorMessage: `Pipeline failed: ${error.message}`,
+      stackTrace: error.stack,
+      storyId,
+      storyTitle,
+      context: { pipeline_duration_s: ((Date.now() - pipelineStartTime) / 1000).toFixed(1) }
+    }).catch(() => {});
 
     // Error handling is now in retryGenerationStep, but catch any other errors
     // Update story with error status if not already set
@@ -3619,6 +3679,19 @@ async function resumeStalledGenerations() {
             }
           })
           .eq('id', story.id);
+
+        // Peggy: Report permanently failed stories
+        reportToPeggy({
+          source: 'health-check:max-retries',
+          category: 'generation',
+          severity: 'critical',
+          errorMessage: `Story permanently failed after ${healthCheckRetries} recovery attempts. Last error: ${lastError || 'unknown'}`,
+          storyId: story.id,
+          storyTitle: story.title,
+          affectedUserId: story.user_id,
+          context: { current_step: currentStep, chapters_generated: chaptersGenerated, stall_minutes: stallMinutes }
+        }).catch(() => {});
+
         continue; // Skip this story, DO NOT retry
       }
 
@@ -3756,12 +3829,33 @@ async function resumeStalledGenerations() {
         console.log(`   ✅ Recovery initiated for "${story.title}"`);
       } catch (error) {
         console.error(`   ❌ Failed to initiate recovery for ${story.id}:`, error.message);
+
+        // Peggy: Report recovery initiation failures
+        reportToPeggy({
+          source: 'health-check:recovery-failed',
+          category: 'health_check',
+          severity: 'high',
+          errorMessage: `Recovery initiation failed: ${error.message}`,
+          stackTrace: error.stack,
+          storyId: story.id,
+          storyTitle: story.title,
+          affectedUserId: story.user_id
+        }).catch(() => {});
       }
     }
 
     console.log('\n✅ Stalled/failed generation check complete\n');
   } catch (error) {
     console.error('❌ Error in resumeStalledGenerations:', error);
+
+    // Peggy: Report health check system-level failures
+    reportToPeggy({
+      source: 'health-check:system-error',
+      category: 'health_check',
+      severity: 'critical',
+      errorMessage: `Health check system error: ${error.message}`,
+      stackTrace: error.stack
+    }).catch(() => {});
   }
 }
 

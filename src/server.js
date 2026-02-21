@@ -4,7 +4,7 @@ const cors = require('cors');
 
 // Import middleware
 const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
-const { peggyErrorReporter } = require('./middleware/peggy-error-reporter');
+const { peggyErrorReporter, railwayWebhookHandler } = require('./middleware/peggy-error-reporter');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -112,6 +112,9 @@ app.use('/chat', chatRoutes);
 app.use('/settings', settingsRoutes);
 app.use('/bug-reports', bugReportRoutes);
 app.use('/', codebaseContextRoutes);
+
+// Railway deploy webhook (no auth — Railway sends these directly)
+app.post('/webhooks/railway', railwayWebhookHandler);
 
 // =========================
 // Error Handling
