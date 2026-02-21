@@ -227,10 +227,23 @@ router.get('/:storyId/chapters', authenticateUser, asyncHandler(async (req, res)
     }
   }
 
+  // Fetch synopsis from story_bibles (central_conflict description)
+  let synopsis = null;
+  const { data: bible } = await supabaseAdmin
+    .from('story_bibles')
+    .select('central_conflict')
+    .eq('story_id', storyId)
+    .maybeSingle();
+
+  if (bible?.central_conflict?.description) {
+    synopsis = bible.central_conflict.description;
+  }
+
   res.json({
     success: true,
     storyId,
-    chapters: uniqueChapters || []
+    chapters: uniqueChapters || [],
+    synopsis
   });
 }));
 

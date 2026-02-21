@@ -1982,7 +1982,7 @@ async function generateEditorBrief(storyId, feedbackHistory, chapterOutlines) {
 
     const { data: chapters } = await supabaseAdmin
       .from('chapters')
-      .select('chapter_number, title, key_events, content')
+      .select('chapter_number, title, metadata, content')
       .eq('story_id', storyId)
       .order('chapter_number', { ascending: true });
 
@@ -2005,7 +2005,7 @@ async function generateEditorBrief(storyId, feedbackHistory, chapterOutlines) {
 
     const chapterSummaries = chapters && chapters.length > 0
       ? chapters.map(ch =>
-          `Chapter ${ch.chapter_number} "${ch.title}": ${(ch.key_events || []).join('; ')}`
+          `Chapter ${ch.chapter_number} "${ch.title}": ${(ch.metadata?.key_events || []).join('; ')}`
         ).join('\n')
       : 'No chapters yet';
 
@@ -2449,7 +2449,7 @@ async function generateChapter(storyId, chapterNumber, userId, editorBrief = nul
   // Get last 3 chapters for context
   const { data: previousChapters } = await supabaseAdmin
     .from('chapters')
-    .select('chapter_number, title, content, key_events')
+    .select('chapter_number, title, content, metadata')
     .eq('story_id', storyId)
     .lt('chapter_number', chapterNumber)
     .order('chapter_number', { ascending: false })
@@ -2474,10 +2474,10 @@ async function generateChapter(storyId, chapterNumber, userId, editorBrief = nul
     }
   }
 
-  // Build context from previous chapters
+  // Build context from previous chapters (key_events lives in metadata JSONB, not a direct column)
   const previousContext = previousChapters && previousChapters.length > 0
     ? previousChapters.reverse().map(ch =>
-        `Chapter ${ch.chapter_number}: ${ch.title}\nKey events: ${ch.key_events?.join(', ') || 'N/A'}`
+        `Chapter ${ch.chapter_number}: ${ch.title}\nKey events: ${(ch.metadata?.key_events || []).join(', ') || 'N/A'}`
       ).join('\n\n')
     : 'This is the first chapter.';
 
@@ -3679,10 +3679,11 @@ async function resumeStalledGenerations() {
         }
       }
 
-      // Check if story has been retried too many times (max 3 health-check retries)
+      // Check if story has been retried too many times (max 2 health-check retries)
+      // NOTE: Must match circuit breaker threshold at line ~3731 (healthCheckRetries >= 2)
       const healthCheckRetries = progress.health_check_retries || 0;
-      if (healthCheckRetries >= 3) {
-        return false; // Give up after 3 health-check level retries
+      if (healthCheckRetries >= 2) {
+        return false; // Give up after 2 health-check level retries (matches circuit breaker)
       }
 
       // For stalled active stories: must be older than 10 minutes
