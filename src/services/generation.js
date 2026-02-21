@@ -1094,23 +1094,44 @@ async function generateStoryBibleForExistingStory(storyId, premiseId, userId) {
   }
 
   // Find the specific premise by ID within the arrays
+  // NOTE: premiseId could be either:
+  //   - The individual premise UUID (from happy path / select-premise route)
+  //   - The story_premises batch record ID (from health check recovery, which reads stories.premise_id)
+  // We check both: first search inside premise arrays by individual ID,
+  // then fall back to matching by batch record ID + story title
   let selectedPremise = null;
   let preferencesUsed = null;
 
+  // Strategy 1: Search by individual premise ID inside arrays
   for (const record of premiseRecords) {
     if (Array.isArray(record.premises)) {
       const found = record.premises.find(p => p.id === premiseId);
       if (found) {
         selectedPremise = found;
         preferencesUsed = record.preferences_used;
-        console.log(`✅ Found premise: "${found.title}"`);
+        console.log(`✅ Found premise by individual ID: "${found.title}"`);
         break;
       }
     }
   }
 
+  // Strategy 2: If not found, premiseId might be the batch record ID (stories.premise_id FK)
+  // Match by batch record ID + story title
   if (!selectedPremise) {
-    console.log('❌ Premise ID not found in any records');
+    const matchingRecord = premiseRecords.find(r => r.id === premiseId);
+    if (matchingRecord && Array.isArray(matchingRecord.premises)) {
+      // Find the premise within this batch that matches the story title
+      const found = matchingRecord.premises.find(p => p.title === storyTitle);
+      if (found) {
+        selectedPremise = found;
+        preferencesUsed = matchingRecord.preferences_used;
+        console.log(`✅ Found premise by batch record ID + title match: "${found.title}"`);
+      }
+    }
+  }
+
+  if (!selectedPremise) {
+    console.log(`❌ Premise ID ${premiseId} not found by individual ID or batch+title match`);
     throw new Error(`Premise with ID ${premiseId} not found`);
   }
 
@@ -1355,12 +1376,14 @@ async function generateArcOutline(storyId, userId) {
     throw new Error(`Story not found: ${storyError?.message || 'No story returned'}`);
   }
 
-  // Fetch bible separately using story_id
+  // Fetch bible separately using story_id (use maybeSingle to handle potential duplicates)
   const { data: bible, error: bibleError } = await supabaseAdmin
     .from('story_bibles')
     .select('*')
     .eq('story_id', storyId)
-    .single();
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (bibleError || !bible) {
     throw new Error(`Bible not found for story ${storyId}: ${bibleError?.message || 'No bible returned'}`);
@@ -3511,33 +3534,66 @@ Create a NEW adventure that:
 4. AGE-APPROPRIATE: ${ageRange} years old
 5. INCORPORATE reader preferences where appropriate
 
+CRITICAL FORMAT INSTRUCTIONS:
+- Return ONLY valid JSON — no markdown, no code blocks, no commentary
+- Keep values CONCISE — 1-3 sentences per field, not paragraphs
+- Supporting characters: MAX 4 entries
+- Key locations: MAX 5 entries
+- Do NOT duplicate Book 1 world_rules verbatim — summarize changes/additions only
+
 Return Book 2 Bible in this EXACT format:
 {
   "title": "A standalone creative title for Book 2 — NOT a subtitle, NOT 'Book 2 of...', just a strong title like Book 1 had",
-  "world_rules": { /* same as Book 1 */ },
+  "world_rules": {
+    "magic_system": "brief summary of magic rules (1-2 sentences)",
+    "technology_level": "brief (1 sentence)",
+    "social_structure": "brief (1 sentence)",
+    "key_rules": ["rule 1", "rule 2", "rule 3"],
+    "changes_from_book1": "what changed in the world since Book 1 (1-2 sentences)"
+  },
   "characters": {
     "protagonist": {
       "name": "${book1Bible.content.characters.protagonist.name}",
       "age": ${book1Bible.content.characters.protagonist.age + 1},
-      "personality": "evolved from Book 1",
-      "strengths": ["include Book 1 skills", "new skills"],
-      "flaws": ["new challenges to overcome"],
-      "goals": "new goal for Book 2",
-      "fears": "new or evolved fears"
+      "personality": "1-2 sentences",
+      "strengths": ["strength 1", "strength 2", "strength 3"],
+      "flaws": ["flaw 1", "flaw 2"],
+      "goals": "1 sentence",
+      "fears": "1 sentence"
     },
-    "antagonist": { /* NEW antagonist or evolved threat */ },
-    "supporting": [ /* mix of returning and new characters */ ]
+    "antagonist": {
+      "name": "name",
+      "role": "1 sentence",
+      "motivation": "1 sentence",
+      "connection_to_book1": "1 sentence"
+    },
+    "supporting": [
+      {"name": "name", "role": "1 sentence", "arc": "1 sentence"}
+    ]
   },
-  "central_conflict": { /* NEW conflict */ },
-  "stakes": { /* higher stakes */ },
+  "central_conflict": {
+    "description": "2-3 sentences",
+    "connection_to_book1": "1 sentence",
+    "escalation": "1 sentence"
+  },
+  "stakes": {
+    "personal": "1 sentence",
+    "world": "1 sentence"
+  },
   "themes": ${JSON.stringify(book1Bible.themes)},
-  "key_locations": [ /* mix of new and familiar */ ],
-  "timeline": { /* Book 2 timeframe */ }
+  "key_locations": [
+    {"name": "location", "description": "1 sentence", "new_or_returning": "new/returning"}
+  ],
+  "timeline": {
+    "time_after_book1": "e.g. 3 months later",
+    "duration": "e.g. spans 2 weeks",
+    "season": "e.g. early winter"
+  }
 }`;
 
   const { response: bibleJson, inputTokens, outputTokens } = await callClaudeWithRetry(
     [{ role: 'user', content: sequelPrompt }],
-    32000
+    8000  // Reduced from 32000 — constrained format keeps response compact, prevents JSON corruption on long outputs
   );
 
   await logApiCost(userId, 'generate_sequel_bible', inputTokens, outputTokens, {
@@ -3926,13 +3982,44 @@ async function resumeStalledGenerations() {
           const batch = batchMap[chaptersGenerated];
 
           if (batch) {
-            console.log(`   📝 Inferring batch from chapter count (${chaptersGenerated}): chapters ${batch.start}-${batch.end}`);
-            const { triggerCheckpointGeneration } = require('../routes/feedback');
-            triggerCheckpointGeneration(story.id, story.user_id, batch.cp)
-              .catch(err => {
-                console.error(`   ❌ Inferred batch recovery failed for ${story.id}:`, err.message);
-              })
-              .finally(() => clearRecoveryLock(story.id));
+            // GUARD: Only trigger batch generation if the prerequisite checkpoint feedback actually exists.
+            // Without this check, the health check can fire during the brief window between
+            // "chapter 3 generated" and "pipeline sets awaiting_chapter_2_feedback", causing
+            // runaway generation of chapters 4-6 without the reader ever giving feedback.
+            const { data: feedbackExists } = await supabase
+              .from('story_feedback')
+              .select('id')
+              .eq('story_id', story.id)
+              .eq('checkpoint', batch.cp)
+              .limit(1);
+
+            if (feedbackExists && feedbackExists.length > 0) {
+              console.log(`   📝 Inferring batch from chapter count (${chaptersGenerated}): chapters ${batch.start}-${batch.end} (feedback verified)`);
+              const { triggerCheckpointGeneration } = require('../routes/feedback');
+              triggerCheckpointGeneration(story.id, story.user_id, batch.cp)
+                .catch(err => {
+                  console.error(`   ❌ Inferred batch recovery failed for ${story.id}:`, err.message);
+                })
+                .finally(() => clearRecoveryLock(story.id));
+            } else {
+              // No feedback found — this is a race condition. The initial batch just finished
+              // but the pipeline hasn't set the awaiting state yet. DON'T trigger the next batch.
+              // Instead, just set the correct awaiting state.
+              const awaitingStep = `awaiting_${batch.cp}_feedback`;
+              console.log(`   ⚠️ No feedback for checkpoint "${batch.cp}" — race condition detected. Setting ${awaitingStep} instead of triggering batch.`);
+              await supabase
+                .from('stories')
+                .update({
+                  generation_progress: {
+                    ...progress,
+                    current_step: awaitingStep,
+                    chapters_generated: chaptersGenerated,
+                    last_updated: new Date().toISOString()
+                  }
+                })
+                .eq('id', story.id);
+              await clearRecoveryLock(story.id);
+            }
           } else {
             console.log(`   ⚠️ Can't determine batch for ${chaptersGenerated} chapters, skipping`);
             await clearRecoveryLock(story.id);
