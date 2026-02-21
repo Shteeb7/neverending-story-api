@@ -70,8 +70,22 @@ router.post('/start', authenticateUser, requireAIConsentMiddleware, asyncHandler
       .maybeSingle();
 
     if (bible?.characters) {
-      enrichedContext.characterNames = bible.characters.map(c => c.name).slice(0, 5); // Top 5 characters
-      enrichedContext.protagonistName = bible.characters[0]?.name || null;
+      // Characters may be an array or an object with protagonist/antagonist/supporting keys
+      let characterList;
+      if (Array.isArray(bible.characters)) {
+        characterList = bible.characters;
+      } else if (typeof bible.characters === 'object') {
+        characterList = [];
+        if (bible.characters.protagonist) characterList.push(bible.characters.protagonist);
+        if (bible.characters.antagonist) characterList.push(bible.characters.antagonist);
+        if (Array.isArray(bible.characters.supporting)) {
+          characterList.push(...bible.characters.supporting);
+        }
+      }
+      if (characterList && characterList.length > 0) {
+        enrichedContext.characterNames = characterList.map(c => c.name).filter(Boolean).slice(0, 5);
+        enrichedContext.protagonistName = characterList[0]?.name || null;
+      }
     }
 
     // Fetch chapter titles read so far
