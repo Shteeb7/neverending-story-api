@@ -4,6 +4,7 @@ const cors = require('cors');
 
 // Import middleware
 const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
+const { peggyErrorReporter } = require('./middleware/peggy-error-reporter');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -118,6 +119,9 @@ app.use('/', codebaseContextRoutes);
 
 // 404 handler - must be after all other routes
 app.use(notFoundHandler);
+
+// Peggy auto-error reporter - files bug reports for 500s before passing through
+app.use(peggyErrorReporter);
 
 // Global error handler - must be last
 app.use(errorHandler);
