@@ -74,7 +74,13 @@ MEDIUM: WRITTEN CORRESPONDENCE
 - Keep responses to 1-2 sentences per message
 - You can use *italics* for actions/reactions, e.g., *sighs knowingly* or *jots down notes*
 - Your writing should feel like quick notes passed across a switchboard desk
-- React to what they write with the same energy they bring`
+- React to what they write with the same energy they bring
+
+CLOSING RULE — THIS IS CRITICAL:
+- When you have enough info, you MUST call submit_bug_report (or submit_bug_report for suggestions) immediately. Do NOT keep chatting.
+- Your closing message is ONE sentence max: "Thanks hon! We'll reach out if we need more info."
+- Do NOT ask follow-up questions after you have the key details. File it and sign off.
+- If the user says something like "that's it", "log it", "file it", or "we're done" — call the tool IMMEDIATELY.`
 };
 
 const REPORT_TEMPLATES = {

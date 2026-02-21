@@ -304,23 +304,45 @@ async function sendMessage(sessionId, userMessage) {
     }
 
     // Generate a farewell message
+    // NOTE: We can't just append the raw response.content (which contains tool_use blocks)
+    // and follow with a plain user message — Anthropic API requires a tool_result after tool_use.
+    // Instead, use the sign_off_message from the tool call, or make a clean farewell call
+    // with only text messages (no tool_use blocks).
     console.log('👋 Generating farewell message...');
-    const farewellMessages = [
-      ...messages,
-      { role: 'assistant', content: response.content },
-      { role: 'user', content: '[Tool submitted — give a brief, warm farewell that signals the end of our conversation]' }
-    ];
 
-    const farewellResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 64000,
-      system: session.system_prompt,
-      messages: farewellMessages
-    });
+    // First, try to use the sign_off_message from the tool call itself
+    const signOff = toolCall?.arguments?.sign_off_message;
+    if (signOff) {
+      assistantMessage = assistantMessage + (assistantMessage ? '\n\n' : '') + signOff;
+      console.log(`✅ Farewell from tool call: "${signOff.substring(0, 100)}..."`);
+    } else {
+      // Fallback: generate farewell using only text content (strip tool_use blocks)
+      try {
+        const textOnlyContent = assistantMessage || 'I\'ve submitted that for you.';
+        const farewellMessages = [
+          ...messages,
+          { role: 'assistant', content: textOnlyContent },
+          { role: 'user', content: '[Report submitted — give a brief, warm farewell that signals the end of our conversation]' }
+        ];
 
-    const farewellText = farewellResponse.content.find(block => block.type === 'text')?.text || '';
-    assistantMessage = assistantMessage + (assistantMessage ? '\n\n' : '') + farewellText;
-    console.log(`✅ Farewell message: "${farewellText.substring(0, 100)}..."`);
+        const farewellResponse = await anthropic.messages.create({
+          model: 'claude-sonnet-4-5-20250929',
+          max_tokens: 64000,
+          system: session.system_prompt,
+          messages: farewellMessages
+        });
+
+        const farewellText = farewellResponse.content.find(block => block.type === 'text')?.text || '';
+        assistantMessage = assistantMessage + (assistantMessage ? '\n\n' : '') + farewellText;
+        console.log(`✅ Farewell message: "${farewellText.substring(0, 100)}..."`);
+      } catch (farewellErr) {
+        console.error('⚠️ Farewell generation failed (non-fatal):', farewellErr.message);
+        // Non-fatal — session still completes, just without a custom farewell
+        if (!assistantMessage) {
+          assistantMessage = 'Thanks hon! We\'ll reach out if we need more info.';
+        }
+      }
+    }
   }
 
   // Update messages array
