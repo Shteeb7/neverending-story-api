@@ -3605,8 +3605,40 @@ Return ONLY the series name, nothing else. No quotes, no explanation.`;
 }
 
 /**
+ * Determine if an error message indicates a transient (infrastructure) failure
+ * vs a code bug. Transient errors will resolve on their own — keep retrying.
+ * Code bugs won't fix themselves — circuit breaker should trip.
+ */
+function isTransientError(errorMessage) {
+  if (!errorMessage) return false;
+  const transientPatterns = [
+    /overloaded/i,
+    /529/,
+    /503/,
+    /rate.?limit/i,
+    /too many requests/i,
+    /ETIMEDOUT/i,
+    /ECONNRESET/i,
+    /ECONNREFUSED/i,
+    /socket hang up/i,
+    /network/i,
+    /timeout/i,
+    /temporarily unavailable/i,
+    /service unavailable/i,
+    /capacity/i
+  ];
+  return transientPatterns.some(pattern => pattern.test(errorMessage));
+}
+
+/**
  * Self-healing health check: Resume stalled story generations
  * Runs on server startup and every 30 minutes thereafter
+ *
+ * Retry strategy:
+ * - Transient errors (529, 503, timeouts): unlimited retries on 5-min intervals.
+ *   These are infrastructure issues that resolve on their own.
+ * - Code errors (400, parse failures, constraint violations): max 2 retries then
+ *   circuit breaker trips. These won't fix themselves.
  */
 async function resumeStalledGenerations() {
   console.log('\n🏥 Health check running...');
@@ -3684,12 +3716,15 @@ async function resumeStalledGenerations() {
         }
       }
 
-      // Check if story has been retried too many times (max 2 health-check retries)
-      // NOTE: Must match circuit breaker threshold at line ~3731 (healthCheckRetries >= 2)
+      // Check retry limits — transient errors get unlimited retries, code errors max 2
       const healthCheckRetries = progress.health_check_retries || 0;
-      if (healthCheckRetries >= 2) {
-        return false; // Give up after 2 health-check level retries (matches circuit breaker)
+      const lastError = progress.last_error || '';
+      const transient = isTransientError(lastError);
+
+      if (!transient && healthCheckRetries >= 2) {
+        return false; // Code error: give up after 2 retries (won't fix itself)
       }
+      // Transient errors (529, timeout, etc): always eligible for retry — they'll resolve
 
       // For stalled active stories: must be older than 10 minutes
       if (story.status === 'active') {
@@ -3733,9 +3768,12 @@ async function resumeStalledGenerations() {
       const lastUpdated = new Date(progress.last_updated || story.created_at);
       const stallMinutes = Math.round((Date.now() - lastUpdated.getTime()) / (1000 * 60));
 
-      // CIRCUIT BREAKER: Hard cap on recovery attempts (max 2 total)
-      if (healthCheckRetries >= 2) {
-        storyLog(story.id, story.title, `🛑 [${story.title}] Max recovery attempts reached (${healthCheckRetries}). Giving up.`);
+      // CIRCUIT BREAKER: Distinguish transient errors from code bugs
+      const transient = isTransientError(lastError);
+
+      if (!transient && healthCheckRetries >= 2) {
+        // CODE ERROR: Won't fix itself. Stop retrying and report.
+        storyLog(story.id, story.title, `🛑 [${story.title}] Code error — max recovery attempts reached (${healthCheckRetries}). Giving up.`);
         await supabaseAdmin
           .from('stories')
           .update({
@@ -3755,7 +3793,7 @@ async function resumeStalledGenerations() {
           source: 'health-check:max-retries',
           category: 'generation',
           severity: 'critical',
-          errorMessage: `Story permanently failed after ${healthCheckRetries} recovery attempts. Last error: ${lastError || 'unknown'}`,
+          errorMessage: `Story permanently failed after ${healthCheckRetries} recovery attempts (code error). Last error: ${lastError || 'unknown'}`,
           storyId: story.id,
           storyTitle: story.title,
           affectedUserId: story.user_id,
@@ -3765,7 +3803,15 @@ async function resumeStalledGenerations() {
         continue; // Skip this story, DO NOT retry
       }
 
-      console.log(`🏥 Recovering: [${story.title}] (stuck at: ${currentStep}, stalled for ${stallMinutes}m, attempt ${healthCheckRetries + 1}/2)`);
+      // TRANSIENT ERROR: Infrastructure issue (529, timeout, etc). Keep trying.
+      if (transient && healthCheckRetries >= 2) {
+        console.log(`🏥 [${story.title}] Transient error (${lastError.substring(0, 80)}), retry #${healthCheckRetries + 1} — will keep trying until resolved`);
+      }
+
+      const retryLabel = transient
+        ? `transient retry #${healthCheckRetries + 1} (no limit)`
+        : `attempt ${healthCheckRetries + 1}/2`;
+      console.log(`🏥 Recovering: [${story.title}] (stuck at: ${currentStep}, stalled for ${stallMinutes}m, ${retryLabel})`);
 
       try {
         // Increment health check retry counter and set recovery lock
