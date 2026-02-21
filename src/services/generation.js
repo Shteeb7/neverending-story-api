@@ -1,6 +1,7 @@
 const { anthropic } = require('../config/ai-clients');
 const { supabaseAdmin } = require('../config/supabase');
 const { reportToPeggy } = require('../middleware/peggy-error-reporter');
+const { storyLog, getStoryLogs, clearStoryLogs } = require('./story-logger');
 const crypto = require('crypto');
 
 /**
@@ -392,7 +393,7 @@ async function retryGenerationStep(stepName, storyId, storyTitle, stepFn, maxRet
       return await stepFn();
     } catch (error) {
       const isLastAttempt = attempt > maxRetries;
-      console.error(`🔄 [${storyTitle}] Retrying step "${stepName}" — attempt ${attempt}/${maxRetries + 1}: ${error.message}`);
+      storyLog(storyId, storyTitle, `🔄 [${storyTitle}] Retrying step "${stepName}" — attempt ${attempt}/${maxRetries + 1}: ${error.message}`);
 
       // Update progress with retry info
       const { data: story } = await supabaseAdmin
@@ -413,10 +414,11 @@ async function retryGenerationStep(stepName, storyId, storyTitle, stepFn, maxRet
       // CIRCUIT BREAKER: Same-error detection
       // If error is identical to previous error, it's a code bug not a transient failure
       if (attempt > 1 && previousError === error.message) {
-        console.log(`🛑 [${storyTitle}] Same error repeated — this is a code bug, not a transient failure. Stopping.`);
+        storyLog(storyId, storyTitle, `🛑 [${storyTitle}] Same error repeated — this is a code bug, not a transient failure. Stopping.`);
         progress.current_step = 'permanently_failed';
         progress.permanently_failed_at = new Date().toISOString();
         progress.repeated_error = true;
+        progress.error_logs = getStoryLogs(storyId);
 
         await supabaseAdmin
           .from('stories')
@@ -445,6 +447,7 @@ async function retryGenerationStep(stepName, storyId, storyTitle, stepFn, maxRet
       if (isLastAttempt) {
         progress.current_step = 'generation_failed';
         progress.error = error.message;
+        progress.error_logs = getStoryLogs(storyId);
 
         await supabaseAdmin
           .from('stories')
@@ -455,7 +458,7 @@ async function retryGenerationStep(stepName, storyId, storyTitle, stepFn, maxRet
           })
           .eq('id', storyId);
 
-        console.error(`❌ [${storyTitle}] Step "${stepName}" failed after ${maxRetries + 1} attempts`);
+        storyLog(storyId, storyTitle, `❌ [${storyTitle}] Step "${stepName}" failed after ${maxRetries + 1} attempts`);
 
         // Peggy: Report exhausted retries
         reportToPeggy({
@@ -479,7 +482,7 @@ async function retryGenerationStep(stepName, storyId, storyTitle, stepFn, maxRet
         .eq('id', storyId);
 
       const backoffMs = attempt * 15000; // 15s, 30s
-      console.log(`⏳ [${storyTitle}] Waiting ${backoffMs/1000}s before retry...`);
+      storyLog(storyId, storyTitle, `⏳ [${storyTitle}] Waiting ${backoffMs/1000}s before retry...`);
       await new Promise(resolve => setTimeout(resolve, backoffMs));
     }
   }
@@ -1076,7 +1079,7 @@ async function generateStoryBibleForExistingStory(storyId, premiseId, userId) {
     .single();
 
   const storyTitle = storyData?.title || 'Unknown';
-  console.log(`📖 [${storyTitle}] Bible: calling Claude API...`);
+  storyLog(storyId, storyTitle, `📖 [${storyTitle}] Bible: calling Claude API...`);
 
   // Fetch all premise records for this user (premises are stored as arrays)
   const { data: premiseRecords, error: premiseError } = await supabaseAdmin
@@ -1329,7 +1332,7 @@ Return ONLY a JSON object in this exact format:
 
     const bibleDuration = ((Date.now() - bibleStartTime) / 1000).toFixed(1);
     const bibleChars = JSON.stringify(parsed).length;
-    console.log(`📖 [${storyTitle}] Bible: generated ✅ (${bibleChars.toLocaleString()} chars, ${bibleDuration}s)`);
+    storyLog(storyId, storyTitle, `📖 [${storyTitle}] Bible: generated ✅ (${bibleChars.toLocaleString()} chars, ${bibleDuration}s)`);
 
     return { bible, inputTokens: apiResult.inputTokens, outputTokens: apiResult.outputTokens };
   });
@@ -1493,7 +1496,7 @@ Return ONLY a JSON object in this exact format:
     .maybeSingle();
 
   if (existingArc) {
-    console.log(`📖 [${storyTitle}] Arc already exists (id: ${existingArc.id}), skipping creation`);
+    storyLog(storyId, storyTitle, `📖 [${storyTitle}] Arc already exists (id: ${existingArc.id}), skipping creation`);
     // Update story progress to reflect arc is complete
     await updateGenerationProgress(storyId, {
       bible_complete: true,
@@ -2339,17 +2342,17 @@ async function generateBatch(storyId, startChapter, endChapter, userId, editorBr
 
   const storyTitle = story?.title || 'Unknown';
 
-  console.log(`🚀 [${storyTitle}] Batch generation: chapters ${startChapter}-${endChapter}${editorBrief ? ' with editor brief' : ''}`);
+  storyLog(storyId, storyTitle, `🚀 [${storyTitle}] Batch generation: chapters ${startChapter}-${endChapter}${editorBrief ? ' with editor brief' : ''}`);
 
   for (let i = startChapter; i <= endChapter; i++) {
-    console.log(`📖 [${storyTitle}] Chapter ${i}: starting generation...`);
+    storyLog(storyId, storyTitle, `📖 [${storyTitle}] Chapter ${i}: starting generation...`);
     const chapterStartTime = Date.now();
 
     const chapter = await generateChapter(storyId, i, userId, editorBrief);
 
     const chapterDuration = ((Date.now() - chapterStartTime) / 1000).toFixed(1);
     const charCount = chapter?.content?.length || 0;
-    console.log(`📖 [${storyTitle}] Chapter ${i}: saved ✅ (${charCount.toLocaleString()} chars, ${chapterDuration}s)`);
+    storyLog(storyId, storyTitle, `📖 [${storyTitle}] Chapter ${i}: saved ✅ (${charCount.toLocaleString()} chars, ${chapterDuration}s)`);
 
     // 1-second pause between chapters
     if (i < endChapter) {
@@ -2357,7 +2360,7 @@ async function generateBatch(storyId, startChapter, endChapter, userId, editorBr
     }
   }
 
-  console.log(`✅ [${storyTitle}] Batch complete: chapters ${startChapter}-${endChapter}`);
+  storyLog(storyId, storyTitle, `✅ [${storyTitle}] Batch complete: chapters ${startChapter}-${endChapter}`);
 }
 
 /**
@@ -2770,8 +2773,8 @@ Return ONLY a JSON object in this exact format:
     // Prose violations scan (before quality review)
     const proseScan = scanForProseViolations(chapter.content);
     if (!proseScan.passed) {
-      console.log(`⚠️ [${storyTitle}] Chapter ${chapterNumber} failed prose scan (attempt ${regenerationCount + 1}/3)`);
-      console.log(`   Violations: ${proseScan.violations.join(', ')}`);
+      storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] Chapter ${chapterNumber} failed prose scan (attempt ${regenerationCount + 1}/3)`);
+      storyLog(storyId, storyTitle, `   Violations: ${proseScan.violations.join(', ')}`);
 
       if (regenerationCount < 2) {
         regenerationCount++;
@@ -2790,7 +2793,7 @@ Return ONLY a JSON object in this exact format:
         };
         continue; // Retry generation
       } else {
-        console.log(`⚠️ [${storyTitle}] Chapter ${chapterNumber} still has prose violations after 3 attempts. Proceeding to quality review.`);
+        storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] Chapter ${chapterNumber} still has prose violations after 3 attempts. Proceeding to quality review.`);
       }
     }
 
@@ -3011,9 +3014,9 @@ Return ONLY a JSON object in this exact format:
   if (config.character_ledger !== false) {
     try {
       await extractCharacterLedger(storyId, chapterNumber, chapter.content, userId);
-      console.log(`📚 [${storyTitle}] Character ledger extracted for chapter ${chapterNumber}`);
+      storyLog(storyId, storyTitle, `📚 [${storyTitle}] Character ledger extracted for chapter ${chapterNumber}`);
     } catch (err) {
-      console.error(`⚠️ [${storyTitle}] Character ledger extraction failed for chapter ${chapterNumber}: ${err.message}`);
+      storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] Character ledger extraction failed for chapter ${chapterNumber}: ${err.message}`);
     }
   } else {
     console.log(`⚙️ [${storyTitle}] Skipping ledger extraction (character_ledger disabled)`);
@@ -3024,18 +3027,18 @@ Return ONLY a JSON object in this exact format:
     try {
       const voiceReview = await reviewCharacterVoices(storyId, chapterNumber, chapter.content, userId);
       if (voiceReview) {
-        console.log(`🎭 [${storyTitle}] Voice review complete for chapter ${chapterNumber} (${voiceReview.voice_checks?.length || 0} characters reviewed)`);
+        storyLog(storyId, storyTitle, `🎭 [${storyTitle}] Voice review complete for chapter ${chapterNumber} (${voiceReview.voice_checks?.length || 0} characters reviewed)`);
 
         // Check if revision is needed
         const revisedContent = await applyVoiceRevisions(storyId, chapterNumber, chapter.content, voiceReview, userId);
         if (revisedContent) {
-          console.log(`🎭 [${storyTitle}] Voice revision applied to chapter ${chapterNumber}`);
+          storyLog(storyId, storyTitle, `🎭 [${storyTitle}] Voice revision applied to chapter ${chapterNumber}`);
           // Update the storedChapter reference with new content
           storedChapter.content = revisedContent;
         }
       }
     } catch (err) {
-      console.error(`⚠️ [${storyTitle}] Voice review failed for chapter ${chapterNumber}: ${err.message}`);
+      storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] Voice review failed for chapter ${chapterNumber}: ${err.message}`);
     }
   } else {
     console.log(`⚙️ [${storyTitle}] Skipping voice review (voice_review disabled)`);
@@ -3070,7 +3073,7 @@ async function orchestratePreGeneration(storyId, userId) {
     const arcComplete = !!progress.arc_complete;
     const bibleComplete = !!progress.bible_complete;
 
-    console.log(`📖 [${storyTitle}] Pipeline started (chapters=${chaptersAlreadyGenerated}/3, arc=${arcComplete}, bible=${bibleComplete})`);
+    storyLog(storyId, storyTitle, `📖 [${storyTitle}] Pipeline started (chapters=${chaptersAlreadyGenerated}/3, arc=${arcComplete}, bible=${bibleComplete})`);
 
     // Verify bible exists
     const { data: bible } = await supabaseAdmin
@@ -3111,15 +3114,15 @@ async function orchestratePreGeneration(storyId, userId) {
     // 2. Name has been confirmed (ensures correct author name on cover)
     if (!storyData?.cover_image_url) {
       if (nameConfirmed) {
-        console.log(`🎨 [${storyTitle}] Cover: generating in background...`);
+        storyLog(storyId, storyTitle, `🎨 [${storyTitle}] Cover: generating in background...`);
         generateBookCover(storyId, {
           title: storyData?.title || bible.title,
           genre: storyData?.genre || 'fiction',
           bible: bible  // Pass the entire bible for unique cover generation
         }, authorName).then(url => {
-          console.log(`🎨 [${storyTitle}] Cover: uploaded ✅`);
+          storyLog(storyId, storyTitle, `🎨 [${storyTitle}] Cover: uploaded ✅`);
         }).catch(err => {
-          console.error(`⚠️ [${storyTitle}] Cover generation failed (non-blocking): ${err.message}`);
+          storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] Cover generation failed (non-blocking): ${err.message}`);
           reportToPeggy({
             source: 'generation:cover',
             category: 'generation',
@@ -3146,15 +3149,15 @@ async function orchestratePreGeneration(storyId, userId) {
         current_step: 'generating_arc'
       });
 
-      console.log(`📖 [${storyTitle}] Arc: starting generation...`);
+      storyLog(storyId, storyTitle, `📖 [${storyTitle}] Arc: starting generation...`);
       const arcResult = await retryGenerationStep('Arc generation', storyId, storyTitle, async () => {
         return await generateArcOutline(storyId, userId);
       });
 
       const chapterCount = arcResult?.outline?.length || 6;
-      console.log(`📖 [${storyTitle}] Arc: complete ✅ (${chapterCount} chapters outlined)`);
+      storyLog(storyId, storyTitle, `📖 [${storyTitle}] Arc: complete ✅ (${chapterCount} chapters outlined)`);
     } else {
-      console.log(`📖 [${storyTitle}] Arc: already exists, skipping`);
+      storyLog(storyId, storyTitle, `📖 [${storyTitle}] Arc: already exists, skipping`);
     }
 
     // Step 3: Generate Chapters (resume from where we left off)
@@ -3166,7 +3169,7 @@ async function orchestratePreGeneration(storyId, userId) {
         current_step: `generating_chapter_${i}`
       });
 
-      console.log(`📖 [${storyTitle}] Chapter ${i}/3: starting generation...`);
+      storyLog(storyId, storyTitle, `📖 [${storyTitle}] Chapter ${i}/3: starting generation...`);
       const chapterStartTime = Date.now();
 
       const chapter = await retryGenerationStep(`Chapter ${i} generation`, storyId, storyTitle, async () => {
@@ -3175,7 +3178,7 @@ async function orchestratePreGeneration(storyId, userId) {
 
       const chapterDuration = ((Date.now() - chapterStartTime) / 1000).toFixed(1);
       const charCount = chapter?.content?.length || 0;
-      console.log(`📖 [${storyTitle}] Chapter ${i}/3: saved ✅ (${charCount.toLocaleString()} chars, ${chapterDuration}s)`);
+      storyLog(storyId, storyTitle, `📖 [${storyTitle}] Chapter ${i}/3: saved ✅ (${charCount.toLocaleString()} chars, ${chapterDuration}s)`);
 
       // 1-second pause between chapters to avoid rate limits
       if (i < 3) {
@@ -3202,9 +3205,10 @@ async function orchestratePreGeneration(storyId, userId) {
     await clearRecoveryLock(storyId);
 
     const pipelineDuration = ((Date.now() - pipelineStartTime) / 1000).toFixed(1);
-    console.log(`📖 [${storyTitle}] Pipeline complete! All chapters generated (${pipelineDuration}s total)`);
+    storyLog(storyId, storyTitle, `📖 [${storyTitle}] Pipeline complete! All chapters generated (${pipelineDuration}s total)`);
+    clearStoryLogs(storyId); // Success — free the buffer
   } catch (error) {
-    console.error(`❌ [${storyTitle}] Pipeline failed:`, error.message);
+    storyLog(storyId, storyTitle, `❌ [${storyTitle}] Pipeline failed: ${error.message}`);
 
     // Peggy: Report pipeline-level failures
     reportToPeggy({
@@ -3237,7 +3241,8 @@ async function orchestratePreGeneration(storyId, userId) {
             ...progress,
             last_error: error.message,
             last_error_at: new Date().toISOString(),
-            current_step: 'generation_failed'
+            current_step: 'generation_failed',
+            error_logs: getStoryLogs(storyId)
           }
         })
         .eq('id', storyId);
@@ -3730,7 +3735,7 @@ async function resumeStalledGenerations() {
 
       // CIRCUIT BREAKER: Hard cap on recovery attempts (max 2 total)
       if (healthCheckRetries >= 2) {
-        console.log(`🛑 [${story.title}] Max recovery attempts reached (${healthCheckRetries}). Giving up.`);
+        storyLog(story.id, story.title, `🛑 [${story.title}] Max recovery attempts reached (${healthCheckRetries}). Giving up.`);
         await supabaseAdmin
           .from('stories')
           .update({
@@ -3739,7 +3744,8 @@ async function resumeStalledGenerations() {
             generation_progress: {
               ...progress,
               current_step: 'permanently_failed',
-              permanently_failed_at: new Date().toISOString()
+              permanently_failed_at: new Date().toISOString(),
+              error_logs: getStoryLogs(story.id)
             }
           })
           .eq('id', story.id);
