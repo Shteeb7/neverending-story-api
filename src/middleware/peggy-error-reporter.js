@@ -14,6 +14,7 @@
  */
 
 const { supabaseAdmin } = require('../config/supabase');
+const { pullRecentLogs, formatLogsForStorage } = require('../services/railway-logs');
 
 // Fixed UUID for Peggy's system user (no auth.users record needed — no FK constraint)
 const PEGGY_SYSTEM_USER_ID = '00000000-0000-0000-0000-00ee000000aa';
@@ -158,6 +159,19 @@ async function reportToPeggy(opts) {
   const sourceMatch = stackTrace.match(/at .+\((.+:\d+:\d+)\)/);
   const sourceLocation = sourceMatch ? sourceMatch[1] : 'unknown';
 
+  // Pull Railway logs for context (non-blocking — don't let this slow down reporting)
+  let railwayLogSnippet = '';
+  try {
+    const { logs, error: logError } = await pullRecentLogs({ minutes: 5, limit: 100 });
+    if (logs?.length > 0) {
+      railwayLogSnippet = formatLogsForStorage(logs);
+    } else if (logError) {
+      railwayLogSnippet = `[Railway logs unavailable: ${logError}]`;
+    }
+  } catch (railwayErr) {
+    railwayLogSnippet = `[Railway log pull failed: ${railwayErr.message}]`;
+  }
+
   // Build summary
   const titlePrefix = storyTitle ? `[${storyTitle}] ` : '';
   const summary = `${titlePrefix}${source}: ${errorMessage}`.substring(0, 500);
@@ -175,7 +189,8 @@ async function reportToPeggy(opts) {
     affectedUserId ? `Affected User: ${affectedUserId}` : null,
     ``,
     stackTrace ? `Stack Trace:\n${stackTrace.substring(0, 3000)}` : null,
-    Object.keys(context).length > 0 ? `\nContext:\n${JSON.stringify(context, null, 2)}` : null
+    Object.keys(context).length > 0 ? `\nContext:\n${JSON.stringify(context, null, 2)}` : null,
+    railwayLogSnippet ? `\nRailway Logs (last 5 min):\n${railwayLogSnippet.substring(0, 5000)}` : null
   ].filter(Boolean).join('\n');
 
   const { error: insertError } = await supabaseAdmin
@@ -203,6 +218,7 @@ async function reportToPeggy(opts) {
         affected_user_id: affectedUserId,
         server_timestamp: new Date().toISOString(),
         node_env: process.env.NODE_ENV || 'unknown',
+        railway_logs: railwayLogSnippet ? railwayLogSnippet.substring(0, 10000) : null,
         ...context
       },
       status: 'ready'
