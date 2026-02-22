@@ -326,7 +326,7 @@ async function sendMessage(sessionId, userMessage) {
         // Use a more dramatic farewell prompt for onboarding interviews
         const isOnboarding = session.interview_type === 'onboarding';
         const farewellPrompt = isOnboarding
-          ? '[Preferences submitted — Give a grand, magical farewell speech. You now have everything you need to craft their story. Express wonder and excitement about the adventure ahead. Signal clearly that this conversation is complete and the portal to their library is about to open. Be dramatic, mystical, and warm — this is a ceremonial moment. 2-3 paragraphs.]'
+          ? '[Preferences submitted — Give a warm, magical farewell. ONE short paragraph only, 3-4 sentences max. You have everything you need. Signal the portal is about to open. Be mystical but concise.]'
           : '[Report submitted — give a brief, warm farewell that signals the end of our conversation]';
 
         const farewellMessages = [
