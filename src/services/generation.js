@@ -3897,6 +3897,56 @@ async function resumeStalledGenerations() {
           })
           .eq('id', story.id);
 
+        // STATE DRIFT CHECK: Before attempting any recovery, verify that the actual
+        // database state matches what generation_progress claims. If all expected chapters
+        // exist but the progress tracker is stuck (e.g. "generating_chapter_10" when ch10
+        // already exists), just correct the state instead of regenerating.
+        const { data: actualChapters } = await supabaseAdmin
+          .from('chapters')
+          .select('chapter_number')
+          .eq('story_id', story.id)
+          .order('chapter_number', { ascending: true });
+
+        const actualChapterCount = actualChapters?.length || 0;
+
+        if (actualChapterCount > chaptersGenerated) {
+          console.log(`🏥 [${story.title}] State drift detected: progress says ${chaptersGenerated} chapters, DB has ${actualChapterCount}`);
+
+          // Determine the correct state based on actual chapter count
+          let correctStep;
+          if (actualChapterCount >= 12) {
+            correctStep = 'completed';
+          } else if (actualChapterCount >= 9) {
+            correctStep = 'awaiting_chapter_8_feedback';
+          } else if (actualChapterCount >= 6) {
+            correctStep = 'awaiting_chapter_5_feedback';
+          } else if (actualChapterCount >= 3) {
+            correctStep = 'awaiting_chapter_2_feedback';
+          } else {
+            correctStep = `generating_chapter_${actualChapterCount + 1}`;
+          }
+
+          console.log(`🏥 [${story.title}] Correcting state: ${currentStep} → ${correctStep} (${actualChapterCount} chapters in DB)`);
+
+          await supabaseAdmin
+            .from('stories')
+            .update({
+              status: 'active',
+              error_message: null,
+              generation_progress: {
+                ...updatedProgress,
+                current_step: correctStep,
+                chapters_generated: actualChapterCount,
+                health_check_retries: 0, // Reset — this wasn't a real failure
+                last_updated: new Date().toISOString()
+              }
+            })
+            .eq('id', story.id);
+
+          await clearRecoveryLock(story.id);
+          continue; // State corrected, no regeneration needed
+        }
+
         // Determine what needs to be retried based on progress
         const hasBible = !!progress.bible_complete;
         const hasArc = !!progress.arc_complete;
