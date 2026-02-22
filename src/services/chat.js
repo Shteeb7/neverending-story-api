@@ -322,10 +322,17 @@ async function sendMessage(sessionId, userMessage) {
       // Fallback: generate farewell using only text content (strip tool_use blocks)
       try {
         const textOnlyContent = assistantMessage || 'I\'ve submitted that for you.';
+
+        // Use a more dramatic farewell prompt for onboarding interviews
+        const isOnboarding = session.interview_type === 'onboarding';
+        const farewellPrompt = isOnboarding
+          ? '[Preferences submitted — Give a grand, magical farewell speech. You now have everything you need to craft their story. Express wonder and excitement about the adventure ahead. Signal clearly that this conversation is complete and the portal to their library is about to open. Be dramatic, mystical, and warm — this is a ceremonial moment. 2-3 paragraphs.]'
+          : '[Report submitted — give a brief, warm farewell that signals the end of our conversation]';
+
         const farewellMessages = [
           ...messages,
           { role: 'assistant', content: textOnlyContent },
-          { role: 'user', content: '[Report submitted — give a brief, warm farewell that signals the end of our conversation]' }
+          { role: 'user', content: farewellPrompt }
         ];
 
         const farewellResponse = await anthropic.messages.create({
