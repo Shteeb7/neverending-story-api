@@ -150,6 +150,9 @@ async function createChatSession(userId, interviewType, context = {}) {
     case 'returning_user':
       tools = CHAT_TOOLS.returning_user;
       break;
+    case 'premise_rejection':
+      tools = CHAT_TOOLS.onboarding; // Same tool — refines preferences
+      break;
     case 'book_completion':
       tools = CHAT_TOOLS.book_completion;
       break;

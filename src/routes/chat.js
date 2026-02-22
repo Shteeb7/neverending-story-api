@@ -14,7 +14,7 @@ const router = express.Router();
  * Start a new text chat session with Prospero
  *
  * Body:
- *   - interviewType: 'onboarding' | 'returning_user' | 'book_completion' | 'bug_report' | 'suggestion'
+ *   - interviewType: 'onboarding' | 'returning_user' | 'premise_rejection' | 'book_completion' | 'checkpoint' | 'bug_report' | 'suggestion'
  *   - context: (optional) context object for returning_user or book_completion
  *
  * Returns:
@@ -32,10 +32,10 @@ router.post('/start', authenticateUser, requireAIConsentMiddleware, asyncHandler
     });
   }
 
-  if (!['onboarding', 'returning_user', 'book_completion', 'checkpoint', 'bug_report', 'suggestion'].includes(interviewType)) {
+  if (!['onboarding', 'returning_user', 'premise_rejection', 'book_completion', 'checkpoint', 'bug_report', 'suggestion'].includes(interviewType)) {
     return res.status(400).json({
       success: false,
-      error: 'Invalid interviewType. Must be onboarding, returning_user, book_completion, checkpoint, bug_report, or suggestion'
+      error: 'Invalid interviewType. Must be onboarding, returning_user, premise_rejection, book_completion, checkpoint, bug_report, or suggestion'
     });
   }
 
