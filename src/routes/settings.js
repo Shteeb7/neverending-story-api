@@ -69,13 +69,15 @@ router.post('/voice-consent', authenticateUser, asyncHandler(async (req, res) =>
 
   console.log(`🎙️ User ${userId} granting voice consent`);
 
-  // Set voice_consent = true and record timestamp
+  // Set voice_consent = true and also ai_consent = true (voice is a superset of AI consent)
   const { error } = await supabaseAdmin
     .from('user_preferences')
     .upsert({
       user_id: userId,
       voice_consent: true,
       voice_consent_date: new Date().toISOString(),
+      ai_consent: true,
+      ai_consent_date: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }, {
       onConflict: 'user_id'
