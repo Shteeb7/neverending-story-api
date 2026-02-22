@@ -3530,7 +3530,7 @@ Create a NEW adventure that:
    - Requires NEW skills (not just Book 1 skills)
    - Introduces new locations while honoring established ones
 
-3. SAME THEMES but evolved
+3. EVOLVED THEMES — Each theme MUST evolve from Book 1. Show how the sequel explores a NEW dimension or complication of the same core theme. Do NOT copy Book 1 theme descriptions verbatim. The theme's essence stays, but the lens changes.
 4. AGE-APPROPRIATE: ${ageRange} years old
 5. INCORPORATE reader preferences where appropriate
 
@@ -3580,7 +3580,7 @@ Return Book 2 Bible in this EXACT format:
     "personal": "1 sentence",
     "world": "1 sentence"
   },
-  "themes": ${JSON.stringify(book1Bible.themes)},
+  "themes": ["EVOLVE theme 1 from Book 1 — same core idea, new angle/complication", "EVOLVE theme 2...", "etc — one evolved entry per Book 1 theme: ${book1Bible.themes.map(t => typeof t === 'string' ? t.substring(0, 40) : JSON.stringify(t).substring(0, 40)).join('; ')}"],
   "key_locations": [
     {"name": "location", "description": "1 sentence", "new_or_returning": "new/returning"}
   ],
@@ -3786,18 +3786,26 @@ async function resumeStalledGenerations() {
       if (story.status === 'active') {
         const lastUpdated = new Date(progress.last_updated);
         const isStalled = lastUpdated < new Date(tenMinutesAgo);
-        const isGenerating = progress.current_step?.startsWith('generating_');
-        return isStalled && isGenerating;
+
+        // Steps that indicate active generation or a mid-pipeline stall.
+        // We must catch ALL steps where the pipeline stopped and needs recovery,
+        // not just `generating_*`. Transitional steps like `bible_created` and
+        // `arc_created` mean the pipeline crashed between completing one phase
+        // and starting the next. Failed steps like `bible_generation_failed`
+        // mean an error occurred but status wasn't set to 'error'.
+        const step = progress.current_step || '';
+        const needsRecoveryStep =
+          step.startsWith('generating_') ||      // Active generation (bible, arc, chapters, postprocessing)
+          step === 'bible_created' ||             // Bible done, arc never started
+          step === 'arc_created' ||               // Arc done, chapters never started
+          step === 'bible_generation_failed' ||   // Bible failed, status still 'active'
+          step === 'generation_failed';           // Generic failure, status still 'active'
+
+        return isStalled && needsRecoveryStep;
       }
 
       // For error'd stories: always eligible (up to retry limit)
       if (story.status === 'error') {
-        return true;
-      }
-
-      // For stories with generation_failed step but still 'active' status
-      // (happens when DB constraint blocks the error status update)
-      if (progress.current_step === 'generation_failed') {
         return true;
       }
 
