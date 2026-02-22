@@ -271,7 +271,29 @@ async function sendMessage(sessionId, userMessage) {
 
       const storyId = session.story_id;
       const userId = session.user_id;
-      const checkpoint = session.context?.checkpoint || 'chapter_2';
+
+      // Derive checkpoint from context, but VALIDATE it — iOS sometimes sends empty string
+      // due to SwiftUI fullScreenCover capture timing. Fall back to deriving from generation_progress.
+      let checkpoint = session.context?.checkpoint;
+      if (!checkpoint) {
+        console.warn('⚠️ Empty checkpoint in session context — deriving from generation_progress');
+        const { data: storyForCheckpoint } = await supabaseAdmin
+          .from('stories')
+          .select('generation_progress')
+          .eq('id', storyId)
+          .single();
+
+        const currentStep = storyForCheckpoint?.generation_progress?.current_step || '';
+        // Map awaiting steps to checkpoint names
+        if (currentStep === 'awaiting_chapter_5_feedback' || currentStep.includes('generating_chapter_7')) {
+          checkpoint = 'chapter_5';
+        } else if (currentStep === 'awaiting_chapter_8_feedback' || currentStep.includes('generating_chapter_10')) {
+          checkpoint = 'chapter_8';
+        } else {
+          checkpoint = 'chapter_2'; // Only default to chapter_2 when we're actually at the first checkpoint
+        }
+        console.log(`📊 Derived checkpoint from generation_progress: ${checkpoint} (step was: ${currentStep})`);
+      }
 
       if (storyId) {
         try {
