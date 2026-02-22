@@ -374,6 +374,47 @@ async function sendMessage(sessionId, userMessage) {
 
   console.log(`✅ Session updated. Complete: ${sessionComplete}`);
 
+  // SERVER-SIDE PREMISE GENERATION for onboarding text chat sessions.
+  // The iOS client's text chat path was missing the generatePremises() call that the
+  // voice path has. Rather than relying solely on the client fix, handle it server-side
+  // so completed onboarding interviews always trigger premise generation.
+  if (sessionComplete && session.interview_type === 'onboarding' && toolCall?.arguments) {
+    const userId = session.user_id;
+    console.log(`📝 Onboarding text chat complete — saving preferences and generating premises for user ${userId}`);
+
+    try {
+      // 1. Save extracted preferences to user_preferences (upsert)
+      const extractedPrefs = toolCall.arguments;
+      const { error: prefsError } = await supabaseAdmin
+        .from('user_preferences')
+        .upsert({
+          user_id: userId,
+          preferences: extractedPrefs,
+          reading_level: extractedPrefs.readingLevel || 'adult',
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'user_id' });
+
+      if (prefsError) {
+        console.error('❌ Failed to save text chat preferences:', prefsError);
+      } else {
+        console.log('✅ Text chat preferences saved to user_preferences');
+      }
+
+      // 2. Trigger premise generation (fire-and-forget — client will poll)
+      const { generatePremises } = require('./generation');
+      generatePremises(userId, extractedPrefs)
+        .then(result => {
+          console.log(`✅ Premises generated after text chat: ${result.premises?.length || 0} premises`);
+        })
+        .catch(err => {
+          console.error('❌ Premise generation after text chat failed:', err.message);
+        });
+    } catch (err) {
+      console.error('❌ Post-onboarding text chat processing failed:', err.message);
+      // Non-fatal — session is already saved, client can still trigger manually
+    }
+  }
+
   return {
     message: assistantMessage,
     toolCall: toolCall,
