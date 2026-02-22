@@ -744,7 +744,9 @@ router.post('/confirm-name', authenticateUser, asyncHandler(async (req, res) => 
 
 /**
  * POST /onboarding/discard-premises
- * Log discarded premises when user chooses "Talk to Prospero" without selecting
+ * Log discarded premises when user chooses "Talk to Prospero" without selecting.
+ * Discards ALL non-discarded premise sets for the user (not just the specified one),
+ * so "Show me more" rounds are also cleared.
  */
 router.post('/discard-premises', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req;
@@ -757,21 +759,22 @@ router.post('/discard-premises', authenticateUser, asyncHandler(async (req, res)
     });
   }
 
-  console.log(`🗑️ Discarding premises for user ${userId}, premises set: ${premisesId}`);
+  console.log(`🗑️ Discarding ALL premise sets for user ${userId} (triggered by set: ${premisesId})`);
 
-  // Fetch the story_premises record
-  const { data: premiseSet, error: fetchError } = await supabaseAdmin
+  // Fetch ALL non-discarded premise sets for this user
+  const { data: premiseSets, error: fetchError } = await supabaseAdmin
     .from('story_premises')
-    .select('premises')
-    .eq('id', premisesId)
+    .select('id, premises')
     .eq('user_id', userId)
-    .single();
+    .neq('status', 'discarded');
 
-  if (fetchError || !premiseSet) {
-    return res.status(404).json({
-      success: false,
-      error: 'Premise set not found'
-    });
+  if (fetchError) {
+    console.error('Failed to fetch premise sets:', fetchError);
+    return res.status(500).json({ success: false, error: 'Failed to fetch premise sets' });
+  }
+
+  if (!premiseSets || premiseSets.length === 0) {
+    return res.json({ success: true, discardedCount: 0 });
   }
 
   // Get all stories created by this user to identify which premises were used
@@ -782,44 +785,53 @@ router.post('/discard-premises', authenticateUser, asyncHandler(async (req, res)
 
   const usedTitles = new Set(stories?.map(s => s.title) || []);
 
-  // Filter out premises that were already used (selected)
-  const premises = premiseSet.premises || [];
-  const discardedPremises = premises.filter(p => !usedTitles.has(p.title));
+  // Collect all discarded premises across ALL sets for logging
+  let totalDiscarded = 0;
+  const allDiscardedPremises = [];
 
-  console.log(`   Total premises in set: ${premises.length}`);
-  console.log(`   Already used: ${premises.length - discardedPremises.length}`);
-  console.log(`   Discarded: ${discardedPremises.length}`);
+  for (const premiseSet of premiseSets) {
+    const premises = premiseSet.premises || [];
+    const discarded = premises.filter(p => !usedTitles.has(p.title));
+    totalDiscarded += discarded.length;
+    allDiscardedPremises.push(...discarded);
+  }
 
-  // Log the discarded premises
-  if (discardedPremises.length > 0) {
+  console.log(`   Found ${premiseSets.length} non-discarded premise sets`);
+  console.log(`   Total premises discarded: ${totalDiscarded}`);
+
+  // Log discarded premises (use the primary premisesId for the log record)
+  if (allDiscardedPremises.length > 0) {
     const { error: insertError } = await supabaseAdmin
       .from('premise_discards')
       .insert({
         user_id: userId,
         premises_id: premisesId,
-        discarded_premises: discardedPremises,
+        discarded_premises: allDiscardedPremises,
         created_at: new Date().toISOString()
       });
 
     if (insertError) {
       console.error('Failed to log premise discards:', insertError);
-      // Don't throw - this is a learning signal, not critical
     }
   }
 
-  // Update the story_premises record status to 'discarded'
+  // Mark ALL non-discarded premise sets as discarded
+  const setIds = premiseSets.map(s => s.id);
   const { error: updateError } = await supabaseAdmin
     .from('story_premises')
     .update({ status: 'discarded' })
-    .eq('id', premisesId);
+    .in('id', setIds);
 
   if (updateError) {
-    console.error('Failed to update premise set status:', updateError);
+    console.error('Failed to update premise set statuses:', updateError);
+  } else {
+    console.log(`   ✅ Marked ${setIds.length} premise sets as discarded`);
   }
 
   res.json({
     success: true,
-    discardedCount: discardedPremises.length
+    discardedCount: totalDiscarded,
+    setsDiscarded: setIds.length
   });
 }));
 
