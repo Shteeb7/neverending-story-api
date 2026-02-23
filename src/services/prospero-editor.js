@@ -310,9 +310,15 @@ ${relevantEntities}
 
 INSTRUCTIONS:
 1. Determine if the reader has found a genuine inconsistency with the story bible or previously established facts.
-2. If YES (genuine issue): provide the corrected version of ONLY the highlighted passage. Change the minimum words necessary. Keep style, voice, and flow identical.
-3. If NO (text is actually correct): explain why, using an IN-WORLD explanation (reference story events, not technical details).
+2. If YES (genuine issue): provide corrected_text that is a DROP-IN REPLACEMENT for the exact highlighted text shown above. The corrected_text will be spliced directly into the sentence at the exact position of the highlighted text — so it must fit grammatically and seamlessly into the surrounding words. Do NOT repeat words that already appear before or after the highlight. Change the minimum words necessary.
+3. If NO (text is actually correct): explain why, using an IN-WORLD explanation (reference story events, not technical details). Set corrected_text to null.
 4. Categorize the issue type.
+
+CRITICAL — corrected_text RULES:
+- corrected_text replaces ONLY the highlighted text, nothing more
+- It must read naturally when inserted between the words immediately before and after the highlight
+- Match the story's prose style, voice, and literary register exactly — no clinical or robotic phrasing
+- Example: if the surrounding text is "She'd noticed that [HIGHLIGHTED]in Chapter 3[/HIGHLIGHTED] the patterns..." and the fix removes the meta-reference, corrected_text should be something like "over the past few days" — NOT "She'd noticed that over the past few days" (that would duplicate the lead-in)
 
 You are Prospero, the story's narrator-guide. Your response to the reader must be:
 - In character: warm, slightly theatrical, but CONCISE
@@ -325,7 +331,7 @@ Return ONLY valid JSON:
   "is_genuine_issue": true/false,
   "prospero_response": "Your 1-2 sentence in-character response to the reader",
   "category": "name_inconsistency|timeline_error|description_drift|world_rule|plot_thread|other",
-  "corrected_text": "The corrected version of the highlighted passage (null if no issue)",
+  "corrected_text": "Drop-in replacement for ONLY the highlighted text (null if no issue)",
   "reasoning": "Brief internal reasoning about what you found (not shown to reader)"
 }`;
 }
