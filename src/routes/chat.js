@@ -155,6 +155,16 @@ router.post('/start', authenticateUser, requireAIConsentMiddleware, asyncHandler
       if (prefs.birth_month && now.getMonth() + 1 < prefs.birth_month) age--;
       enrichedContext.readerAge = age;
     }
+
+    // Check if this is the user's first book AND first checkpoint (chapter_2)
+    // If so, Prospero should introduce the Editor feature
+    if (checkpointNumber === 'chapter_2') {
+      const { hasUsedProsperosEditor } = require('../services/prospero-editor');
+      const hasUsedEditor = await hasUsedProsperosEditor(userId);
+      if (!hasUsedEditor) {
+        enrichedContext.introduceEditorFeature = true;
+      }
+    }
   }
 
   const result = await createChatSession(userId, interviewType, enrichedContext);

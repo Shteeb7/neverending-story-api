@@ -335,6 +335,14 @@ CRITICAL RULES:
     }
 
     let depthGuidance = '';
+    // Prospero's Editor feature discovery (first book only)
+    let editorDiscovery = '';
+    if (context.introduceEditorFeature) {
+      editorDiscovery = `
+IMPORTANT — INTRODUCE THE EDITOR FEATURE:
+Near the end of the conversation (before wrapping up), naturally mention that the reader can highlight any passage while reading and call on you if something seems off. Work it in organically — do NOT make it sound like a tutorial or feature announcement. Something like: "And should you ever find a thread that seems out of place — a name, a detail that doesn't quite fit — simply highlight the passage and call on me. I welcome a sharp-eyed reader." Keep it to ONE sentence, in character, warm. This is an invitation from a craftsman, not a product walkthrough.`;
+    }
+
     if (isFirst) {
       depthGuidance = `FIRST CHECKPOINT (Chapter 2) — Keep it light and welcoming:
 - 2-3 exchanges maximum — first impressions, not deep analysis
@@ -342,7 +350,7 @@ CRITICAL RULES:
 - Ask about first impressions: pacing, tone, protagonist
 - If they're hooked, celebrate and let them get back to reading
 - If they're lukewarm, probe gently: what's missing?
-- NO heavy questions yet — save deeper probes for checkpoint 2`;
+- NO heavy questions yet — save deeper probes for checkpoint 2${editorDiscovery}`;
     } else if (isMiddle) {
       depthGuidance = `MIDDLE CHECKPOINT (Chapter 5) — Mid-book check-in with more depth:
 - 3-4 exchanges — enough to understand their experience without exhausting them

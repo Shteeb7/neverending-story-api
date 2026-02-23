@@ -585,4 +585,148 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
   });
 }));
 
+/**
+ * POST /story/investigate-passage
+ * Prospero's Editor: Reader highlights a passage and asks Prospero to investigate.
+ * Returns Prospero's in-character response + correction if genuine issue found.
+ */
+router.post('/investigate-passage', authenticateUser, asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const { storyId, chapterId, chapterNumber, highlightedText, highlightStart, highlightEnd, readerDescription } = req.body;
+
+  if (!storyId || !chapterId || !highlightedText || !readerDescription) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required fields: storyId, chapterId, highlightedText, readerDescription'
+    });
+  }
+
+  if (typeof highlightStart !== 'number' || typeof highlightEnd !== 'number') {
+    return res.status(400).json({
+      success: false,
+      error: 'highlightStart and highlightEnd must be numbers'
+    });
+  }
+
+  // Determine if user is the story author
+  const { data: story } = await supabaseAdmin
+    .from('stories')
+    .select('user_id')
+    .eq('id', storyId)
+    .single();
+
+  if (!story) {
+    return res.status(404).json({ success: false, error: 'Story not found' });
+  }
+
+  const isAuthor = story.user_id === userId;
+  const authorId = story.user_id;
+
+  const { investigatePassage } = require('../services/prospero-editor');
+  const result = await investigatePassage({
+    storyId,
+    chapterId,
+    chapterNumber: chapterNumber || 0,
+    highlightedText,
+    highlightStart,
+    highlightEnd,
+    readerDescription,
+    userId,
+    authorId,
+    isAuthor
+  });
+
+  res.json({
+    success: true,
+    prosperoResponse: result.prosperoResponse,
+    wasCorrection: result.wasCorrection,
+    correctedText: result.correctedText,
+    isGenuineIssue: result.isGenuineIssue,
+    correctionId: result.correctionId,
+    investigationTimeMs: result.investigationTimeMs
+  });
+}));
+
+/**
+ * GET /story/:storyId/contribution-stats
+ * Get the reader's contribution stats for a specific story.
+ */
+router.get('/:storyId/contribution-stats', authenticateUser, asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const { storyId } = req.params;
+
+  const { data: stats } = await supabaseAdmin
+    .from('reader_contribution_stats')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('story_id', storyId)
+    .maybeSingle();
+
+  res.json({
+    success: true,
+    stats: stats || { total_flags: 0, successful_catches: 0, explanations_received: 0, categories_caught: {} }
+  });
+}));
+
+/**
+ * GET /story/has-used-editor
+ * Check if user has ever used Prospero's Editor (for feature discovery).
+ */
+router.get('/has-used-editor', authenticateUser, asyncHandler(async (req, res) => {
+  const { hasUsedProsperosEditor } = require('../services/prospero-editor');
+  const hasUsed = await hasUsedProsperosEditor(req.user.id);
+  res.json({ success: true, hasUsed });
+}));
+
+/**
+ * POST /story/:storyId/archive
+ * "Release to the Mists" — archives a book from user's library
+ * Transfers ownership to dead-books account, preserves all data
+ */
+router.post('/:storyId/archive', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { storyId } = req.params;
+  const DEAD_BOOKS_USER_ID = '00000000-0000-0000-0000-dead00b00c5a';
+
+  // Verify user owns this story
+  const { data: story, error: fetchError } = await supabaseAdmin
+    .from('stories')
+    .select('id, title, user_id, status')
+    .eq('id', storyId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (fetchError || !story) {
+    return res.status(404).json({ success: false, error: 'Story not found or not owned by user' });
+  }
+
+  if (story.status === 'archived') {
+    return res.status(400).json({ success: false, error: 'Story is already archived' });
+  }
+
+  console.log(`📖 [${story.title}] Archiving — user ${userId} releasing to the Mists`);
+
+  // Transfer to dead-books account with full provenance
+  const { error: archiveError } = await supabaseAdmin
+    .from('stories')
+    .update({
+      user_id: DEAD_BOOKS_USER_ID,
+      status: 'archived',
+      title: `${story.title} [RELEASED]`,
+      archived_at: new Date().toISOString(),
+      archived_from_user_id: userId,
+      archive_reason: 'user_released'
+    })
+    .eq('id', storyId);
+
+  if (archiveError) {
+    console.error(`❌ [${story.title}] Archive failed:`, archiveError);
+    return res.status(500).json({ success: false, error: 'Failed to archive story' });
+  }
+
+  console.log(`✅ [${story.title}] Released to the Mists successfully`);
+
+  res.json({ success: true, message: 'Story released' });
+}));
+
 module.exports = router;
