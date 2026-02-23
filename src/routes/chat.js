@@ -39,8 +39,24 @@ router.post('/start', authenticateUser, requireAIConsentMiddleware, asyncHandler
     });
   }
 
-  // Enrich context with reader age for onboarding interviews
+  // Enrich context for all interview types
   const enrichedContext = context || {};
+
+  // Fetch reader's name for ALL non-onboarding interviews
+  // (Onboarding asks for the name as part of the conversation)
+  if (interviewType !== 'onboarding' && !enrichedContext.userName && !enrichedContext.user_name) {
+    const { data: namePrefs } = await supabaseAdmin
+      .from('user_preferences')
+      .select('preferences')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (namePrefs?.preferences?.name) {
+      enrichedContext.userName = namePrefs.preferences.name;   // Prospero convention
+      enrichedContext.user_name = namePrefs.preferences.name;  // Peggy convention
+    }
+  }
+
   if (interviewType === 'onboarding') {
     const { data: prefs } = await supabaseAdmin
       .from('user_preferences')
@@ -269,6 +285,23 @@ router.post('/system-prompt', authenticateUser, requireAIConsentMiddleware, asyn
 
   try {
     let prompt, greeting;
+    const enrichedContext = context || {};
+    const userId = req.userId;
+
+    // Fetch reader's name for ALL non-onboarding interviews (both Prospero and Peggy)
+    // Onboarding asks for the name as part of the conversation
+    if (interviewType !== 'onboarding' && !enrichedContext.userName && !enrichedContext.user_name) {
+      const { data: namePrefs } = await supabaseAdmin
+        .from('user_preferences')
+        .select('preferences')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (namePrefs?.preferences?.name) {
+        enrichedContext.userName = namePrefs.preferences.name;   // Prospero convention
+        enrichedContext.user_name = namePrefs.preferences.name;  // Peggy convention
+      }
+    }
 
     if (persona === 'peggy') {
       // Peggy uses reportType instead of interviewType
@@ -287,8 +320,8 @@ router.post('/system-prompt', authenticateUser, requireAIConsentMiddleware, asyn
         });
       }
 
-      prompt = peggy.assemblePrompt(reportType, medium, context || {});
-      greeting = peggy.getGreeting(reportType, context || {});
+      prompt = peggy.assemblePrompt(reportType, medium, enrichedContext);
+      greeting = peggy.getGreeting(reportType, enrichedContext);
 
     } else {
       // Default to Prospero (backward compatible)
@@ -306,10 +339,6 @@ router.post('/system-prompt', authenticateUser, requireAIConsentMiddleware, asyn
           error: `Invalid interviewType. Must be one of: ${validInterviewTypes.join(', ')}`
         });
       }
-
-      // Enrich context with reader age for onboarding interviews
-      const enrichedContext = context || {};
-      const userId = req.userId;
 
       if (interviewType === 'onboarding') {
         const { data: prefs } = await supabaseAdmin
