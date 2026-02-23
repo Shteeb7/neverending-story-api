@@ -360,6 +360,68 @@ router.post('/checkpoint', authenticateUser, asyncHandler(async (req, res) => {
 }));
 
 /**
+ * POST /feedback/voice-checkpoint
+ * Submit checkpoint feedback gathered via voice interview with Prospero.
+ * Accepts the structured tool call output (pacing_note, tone_note, etc.)
+ * and triggers next chapter batch generation — same as the text chat path.
+ */
+router.post('/voice-checkpoint', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { storyId, checkpoint, transcript, preferences } = req.body;
+
+  if (!storyId || !checkpoint) {
+    return res.status(400).json({
+      success: false,
+      error: 'storyId and checkpoint are required'
+    });
+  }
+
+  // Normalize checkpoint name (backward compatibility)
+  const checkpointMap = {
+    'chapter_3': 'chapter_2',
+    'chapter_6': 'chapter_5',
+    'chapter_9': 'chapter_8'
+  };
+  const normalizedCheckpoint = checkpointMap[checkpoint] || checkpoint;
+
+  console.log(`🎤 Voice checkpoint feedback: story=${storyId}, checkpoint=${normalizedCheckpoint}`);
+  console.log(`   Engagement: ${preferences?.overall_engagement || 'unknown'}`);
+
+  // Store in story_feedback with checkpoint_corrections = structured Prospero feedback
+  const { data, error } = await supabaseAdmin
+    .from('story_feedback')
+    .upsert({
+      user_id: userId,
+      story_id: storyId,
+      checkpoint: normalizedCheckpoint,
+      response: 'voice_checkpoint_interview',
+      checkpoint_corrections: preferences || null,
+      voice_transcript: transcript || null,
+      voice_session_id: null
+    }, {
+      onConflict: 'user_id,story_id,checkpoint'
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to store voice checkpoint feedback: ${error.message}`);
+  }
+
+  console.log(`✅ Voice checkpoint feedback stored for ${normalizedCheckpoint}`);
+
+  // Trigger next batch generation (same logic as text checkpoint path)
+  const { shouldGenerate, startChapter, endChapter } = await triggerCheckpointGeneration(storyId, userId, normalizedCheckpoint);
+
+  res.json({
+    success: true,
+    feedback: data,
+    generatingChapters: shouldGenerate ? Array.from({ length: endChapter - startChapter + 1 }, (_, i) => startChapter + i) : [],
+    alreadyGenerated: !shouldGenerate && startChapter && endChapter
+  });
+}));
+
+/**
  * GET /feedback/status/:storyId/:checkpoint
  */
 router.get('/status/:storyId/:checkpoint', authenticateUser, asyncHandler(async (req, res) => {
