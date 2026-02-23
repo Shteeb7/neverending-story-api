@@ -3045,6 +3045,22 @@ Return ONLY a JSON object in this exact format:
     console.log(`⚙️ [${storyTitle}] Skipping ledger extraction (character_ledger disabled)`);
   }
 
+  // Entity validation (check consistency against story bible + prior chapters)
+  if (config.entity_validation !== false) {
+    try {
+      const { validateChapter } = require('./chapter-validation');
+      const validationResult = await validateChapter(storyId, storedChapter.id, chapterNumber, storedChapter.content, bible, userId);
+      storyLog(storyId, storyTitle, `🔍 [${storyTitle}] Entity validation for chapter ${chapterNumber}: severity=${validationResult.severity}${validationResult.wasRevised ? ' (surgically revised)' : ''}`);
+      if (validationResult.revisedContent) {
+        storedChapter.content = validationResult.revisedContent;
+      }
+    } catch (err) {
+      storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] Entity validation failed for chapter ${chapterNumber}: ${err.message}`);
+    }
+  } else {
+    console.log(`⚙️ [${storyTitle}] Skipping entity validation (entity_validation disabled)`);
+  }
+
   // Character voice review (Sonnet pass — checks character authenticity against ledger)
   if (config.voice_review !== false) {
     try {
@@ -4137,9 +4153,10 @@ module.exports = {
   buildCourseCorrections,
   generateEditorBrief,
   generateBatch,
-  // Export utilities for testing
+  // Export utilities for testing and cross-service use
   calculateCost,
   parseAndValidateJSON,
   attemptJsonRepair,
-  mapAgeRange
+  mapAgeRange,
+  logApiCost
 };
