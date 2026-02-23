@@ -311,22 +311,29 @@ router.post('/:storyId/generate-next', authenticateUser, asyncHandler(async (req
 /**
  * POST /story/:storyId/progress
  * Update user's reading position in a story
- * Expects: chapterNumber (int), scrollPosition (double)
+ * Expects: chapterNumber (int), scrollPosition (double), paragraphIndex (int, optional)
  */
 router.post('/:storyId/progress', authenticateUser, asyncHandler(async (req, res) => {
   const { storyId } = req.params;
   const { userId } = req;
-  const { chapterNumber, scrollPosition } = req.body;
+  const { chapterNumber, scrollPosition, paragraphIndex } = req.body;
 
-  const { data, error} = await supabaseAdmin
-    .from('reading_progress')
-    .upsert({
+  const upsertData = {
       user_id: userId,
       story_id: storyId,
       chapter_number: chapterNumber,
       scroll_position: scrollPosition,
       updated_at: new Date().toISOString()
-    }, {
+  };
+
+  // Include paragraph_index if provided (backward compatible)
+  if (paragraphIndex != null) {
+    upsertData.paragraph_index = paragraphIndex;
+  }
+
+  const { data, error} = await supabaseAdmin
+    .from('reading_progress')
+    .upsert(upsertData, {
       onConflict: 'user_id,story_id'
     })
     .select()
