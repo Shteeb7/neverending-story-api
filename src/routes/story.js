@@ -648,6 +648,35 @@ router.post('/investigate-passage', authenticateUser, asyncHandler(async (req, r
 }));
 
 /**
+ * POST /story/pushback
+ * Reader disagrees with Prospero's initial assessment. One round only.
+ */
+router.post('/pushback', authenticateUser, asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const { correctionId, pushbackText } = req.body;
+
+  if (!correctionId || !pushbackText) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required fields: correctionId, pushbackText'
+    });
+  }
+
+  const { handlePushback } = require('../services/prospero-editor');
+  const result = await handlePushback({ correctionId, pushbackText, userId });
+
+  res.json({
+    success: true,
+    prosperoResponse: result.prosperoResponse,
+    wasCorrection: result.wasCorrection,
+    correctedText: result.correctedText,
+    reconsidered: result.reconsidered,
+    isGenuineIssue: result.isGenuineIssue,
+    investigationTimeMs: result.investigationTimeMs
+  });
+}));
+
+/**
  * GET /story/:storyId/contribution-stats
  * Get the reader's contribution stats for a specific story.
  */

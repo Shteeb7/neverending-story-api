@@ -436,8 +436,185 @@ async function getUserCorrectionPatterns(userId) {
   };
 }
 
+/**
+ * Handle a reader's pushback when they disagree with Prospero's initial assessment.
+ * Prospero reconsiders more carefully, but this is the FINAL word — no more rounds.
+ *
+ * @param {object} params
+ * @param {string} params.correctionId - The original reader_corrections record
+ * @param {string} params.pushbackText - What the reader said in disagreement
+ * @param {string} params.userId
+ * @returns {object} { prosperoResponse, wasCorrection, correctedText, reconsidered }
+ */
+async function handlePushback(params) {
+  const { correctionId, pushbackText, userId } = params;
+  const startTime = Date.now();
+
+  // Fetch the original investigation record
+  const { data: original } = await supabaseAdmin
+    .from('reader_corrections')
+    .select('*')
+    .eq('id', correctionId)
+    .single();
+
+  if (!original) {
+    throw new Error(`Correction record ${correctionId} not found`);
+  }
+
+  // Fetch context for reconsideration
+  const [chapterResult, bibleResult, entitiesResult] = await Promise.all([
+    supabaseAdmin
+      .from('chapters')
+      .select('content, title')
+      .eq('id', original.chapter_id)
+      .single(),
+    supabaseAdmin
+      .from('story_bibles')
+      .select('*')
+      .eq('story_id', original.story_id)
+      .single(),
+    supabaseAdmin
+      .from('chapter_entities')
+      .select('entity_type, entity_name, fact, canonical_value, chapter_number')
+      .eq('story_id', original.story_id)
+      .order('chapter_number', { ascending: true })
+  ]);
+
+  const chapter = chapterResult.data;
+  const bible = bibleResult.data;
+  const entities = entitiesResult.data || [];
+
+  const surroundingContext = extractSurroundingContext(
+    chapter.content, original.highlight_start, original.highlight_end
+  );
+  const relevantEntities = buildRelevantEntityContext(entities, original.highlighted_text, pushbackText);
+  const bibleReference = buildBibleReference(bible);
+
+  // Build the reconsideration prompt — deeper thinking this time
+  const prompt = `You are Prospero, narrator-guide of a novel. A reader flagged a passage and you gave an initial assessment. The reader is now PUSHING BACK on your assessment. You must reconsider MORE CAREFULLY this time.
+
+HIGHLIGHTED PASSAGE:
+"${original.highlighted_text}"
+
+SURROUNDING CONTEXT:
+...${surroundingContext.before}[HIGHLIGHTED]${surroundingContext.highlighted}[/HIGHLIGHTED]${surroundingContext.after}...
+
+READER'S ORIGINAL CONCERN:
+"${original.reader_description}"
+
+YOUR INITIAL ASSESSMENT:
+"${original.prospero_response}"
+You said this was ${original.investigation_result?.is_genuine_issue ? 'a genuine issue' : 'NOT an issue'}.
+
+READER'S PUSHBACK:
+"${pushbackText}"
+
+STORY BIBLE (canonical reference):
+${bibleReference}
+
+ENTITY LEDGER (facts established in prior chapters):
+${relevantEntities}
+
+INSTRUCTIONS:
+The reader disagrees with you. Take their argument seriously and reconsider with FRESH EYES. Look more carefully at the evidence. The reader may have noticed something you missed, OR your original assessment may have been correct.
+
+- If you NOW agree with the reader: provide corrected_text (same drop-in rules as before — replaces ONLY the highlighted text, fits seamlessly into surrounding words, matches the story's prose style).
+- If you STILL disagree: stand your ground warmly but firmly. This is your FINAL WORD.
+
+Either way, this is the last exchange. Your response should feel like a graceful closing — you're sending the reader back to the story.
+
+Return ONLY valid JSON:
+{
+  "reconsidered": true/false (did you change your mind?),
+  "is_genuine_issue": true/false,
+  "prospero_response": "Your 1-2 sentence in-character response. If standing firm, end with something warm that sends them back to reading.",
+  "category": "${original.correction_category || 'other'}",
+  "corrected_text": "Drop-in replacement for ONLY the highlighted text (null if standing firm)",
+  "reasoning": "Brief internal reasoning (not shown to reader)"
+}`;
+
+  const response = await anthropic.messages.create({
+    model: EDITOR_MODEL,
+    max_tokens: 2048,
+    messages: [{ role: 'user', content: prompt }]
+  });
+
+  const inputTokens = response.usage?.input_tokens || 0;
+  const outputTokens = response.usage?.output_tokens || 0;
+  const rawResponse = response.content[0]?.text || '';
+
+  let reconsideration;
+  try {
+    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON found in response');
+    reconsideration = JSON.parse(jsonMatch[0]);
+  } catch (parseErr) {
+    console.error('❌ [Prospero Editor] Failed to parse pushback response:', parseErr.message);
+    reconsideration = {
+      reconsidered: false,
+      is_genuine_issue: false,
+      prospero_response: "Perhaps we see this passage through different lenses, dear reader. Let's leave this one on the page for now and find out what happens next!",
+      category: original.correction_category || 'other',
+      corrected_text: null
+    };
+  }
+
+  const investigationTimeMs = Date.now() - startTime;
+
+  // Determine if author + genuine issue = correction
+  const isAuthor = original.is_author;
+  const wasCorrection = reconsideration.is_genuine_issue === true && isAuthor && reconsideration.corrected_text;
+
+  if (wasCorrection) {
+    // Apply the correction to the chapter
+    const updatedContent = chapter.content.substring(0, original.highlight_start)
+      + reconsideration.corrected_text
+      + chapter.content.substring(original.highlight_end);
+
+    await supabaseAdmin
+      .from('chapters')
+      .update({ content: updatedContent })
+      .eq('id', original.chapter_id);
+  }
+
+  // Update the original correction record with pushback info
+  await supabaseAdmin
+    .from('reader_corrections')
+    .update({
+      investigation_result: {
+        ...original.investigation_result,
+        pushback_text: pushbackText,
+        pushback_response: reconsideration,
+        reconsidered: reconsideration.reconsidered
+      },
+      was_corrected: wasCorrection || original.was_corrected,
+      corrected_text: wasCorrection ? reconsideration.corrected_text : original.corrected_text
+    })
+    .eq('id', correctionId);
+
+  // Log API cost
+  await logApiCost(userId, 'prospero_editor_pushback', inputTokens, outputTokens, {
+    storyId: original.story_id,
+    chapterNumber: original.chapter_number,
+    reconsidered: reconsideration.reconsidered,
+    investigationTimeMs
+  });
+
+  console.log(`🔍 [Prospero Editor] Pushback handled: ${reconsideration.reconsidered ? 'RECONSIDERED' : 'STOOD FIRM'} in ${investigationTimeMs}ms`);
+
+  return {
+    prosperoResponse: reconsideration.prospero_response,
+    wasCorrection: !!wasCorrection,
+    correctedText: wasCorrection ? reconsideration.corrected_text : null,
+    reconsidered: reconsideration.reconsidered,
+    isGenuineIssue: reconsideration.is_genuine_issue,
+    investigationTimeMs
+  };
+}
+
 module.exports = {
   investigatePassage,
+  handlePushback,
   hasUsedProsperosEditor,
   getUserCorrectionPatterns
 };
