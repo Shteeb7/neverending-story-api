@@ -523,6 +523,77 @@ async function generatePremises(userId, preferences, excludePremises = []) {
   const emotionalDrivers = userPrefs?.preferences?.emotionalDrivers || userPrefs?.preferences?.emotional_drivers || [];
   const belovedStories = userPrefs?.preferences?.belovedStories || userPrefs?.preferences?.beloved_stories || [];
 
+  // Fetch learned writing preferences (populated after 2+ completed books)
+  const writingPrefs = await getUserWritingPreferences(userId);
+  let learnedPreferencesBlock = '';
+  if (writingPrefs && writingPrefs.stories_analyzed >= 2 && writingPrefs.confidence_score >= 0.5) {
+    console.log(`📚 Injecting learned preferences into premise generation (confidence: ${writingPrefs.confidence_score}, ${writingPrefs.stories_analyzed} books analyzed)`);
+    const customInstructions = writingPrefs.custom_instructions?.length
+      ? writingPrefs.custom_instructions.map(i => `  - ${i}`).join('\n')
+      : '  None yet';
+    const avoidPatterns = writingPrefs.avoid_patterns?.length
+      ? writingPrefs.avoid_patterns.map(p => `  - ${p}`).join('\n')
+      : '  None yet';
+    learnedPreferencesBlock = `
+LEARNED READER PATTERNS (from ${writingPrefs.stories_analyzed} completed books):
+What this reader consistently responds well to:
+${customInstructions}
+
+What this reader consistently dislikes in practice (not just stated preferences — observed from feedback):
+${avoidPatterns}
+
+Pacing tendency: ${writingPrefs.preferred_pacing?.summary || 'No data yet'}
+Dialogue preference: ${writingPrefs.preferred_dialogue_style?.summary || 'No data yet'}
+
+Use these patterns to inform premise selection — premises should lean toward what they've PROVEN to enjoy, not just what they say they like.
+`;
+  }
+
+  // Fetch cross-book feedback summary (patterns across ALL previous stories)
+  let crossBookFeedbackBlock = '';
+  const { data: allFeedback } = await supabaseAdmin
+    .from('story_feedback')
+    .select('checkpoint, pacing_feedback, tone_feedback, character_feedback, checkpoint_corrections')
+    .eq('user_id', userId)
+    .not('response', 'eq', 'skipped')
+    .order('created_at', { ascending: true });
+
+  if (allFeedback && allFeedback.length >= 3) {
+    // Summarize patterns across all feedback
+    const pacingCounts = {};
+    const toneCounts = {};
+    const characterCounts = {};
+    const voiceNotes = [];
+
+    allFeedback.forEach(fb => {
+      if (fb.pacing_feedback) pacingCounts[fb.pacing_feedback] = (pacingCounts[fb.pacing_feedback] || 0) + 1;
+      if (fb.tone_feedback) toneCounts[fb.tone_feedback] = (toneCounts[fb.tone_feedback] || 0) + 1;
+      if (fb.character_feedback) characterCounts[fb.character_feedback] = (characterCounts[fb.character_feedback] || 0) + 1;
+      if (fb.checkpoint_corrections) {
+        if (fb.checkpoint_corrections.pacing_note) voiceNotes.push(`Pacing: ${fb.checkpoint_corrections.pacing_note}`);
+        if (fb.checkpoint_corrections.tone_note) voiceNotes.push(`Tone: ${fb.checkpoint_corrections.tone_note}`);
+        if (fb.checkpoint_corrections.style_note) voiceNotes.push(`Style: ${fb.checkpoint_corrections.style_note}`);
+      }
+    });
+
+    const formatCounts = (counts) => Object.entries(counts).map(([k, v]) => `${k} (${v}x)`).join(', ');
+    const hasDimensionData = Object.keys(pacingCounts).length > 0 || Object.keys(toneCounts).length > 0;
+    const hasVoiceData = voiceNotes.length > 0;
+
+    if (hasDimensionData || hasVoiceData) {
+      console.log(`📊 Including cross-book feedback in premises (${allFeedback.length} feedback points)`);
+      crossBookFeedbackBlock = `
+CROSS-BOOK FEEDBACK PATTERNS (${allFeedback.length} checkpoints across all stories):
+${Object.keys(pacingCounts).length > 0 ? `Pacing feedback: ${formatCounts(pacingCounts)}` : ''}
+${Object.keys(toneCounts).length > 0 ? `Tone feedback: ${formatCounts(toneCounts)}` : ''}
+${Object.keys(characterCounts).length > 0 ? `Character feedback: ${formatCounts(characterCounts)}` : ''}
+${hasVoiceData ? `\nVoice interview notes (most recent):\n${voiceNotes.slice(-6).map(n => `  - ${n}`).join('\n')}` : ''}
+
+Weight premises toward what this reader's ACTUAL feedback reveals, not just their stated preferences. If they consistently say pacing is "slow", lean toward action-driven premises. If they consistently say tone is "serious", lean toward premises with more levity built in.
+`;
+    }
+  }
+
   // Fetch reading history to avoid repetition
   const { data: readHistory } = await supabaseAdmin
     .from('stories')
@@ -545,21 +616,23 @@ async function generatePremises(userId, preferences, excludePremises = []) {
   console.log(`   Emotional Drivers: ${emotionalDrivers.join(', ') || 'Not yet identified'}`);
   console.log(`   Previous Stories: ${previousTitles.length} titles`);
 
-  // Check if this is a returning user with direction preferences
+  // Check if this is a returning user with direction preferences OR has a specific story request
   const isReturningUser = preferences.isReturningUser === true;
   const storyDirection = preferences.storyDirection || 'comfort';
   const moodShift = preferences.moodShift;
   const explicitRequest = preferences.explicitRequest;
   const newInterests = preferences.newInterests || [];
   const previousStoryTitles = preferences.previousStoryTitles || previousTitles;
+  const hasDirectedRequest = isReturningUser || (explicitRequest && storyDirection === 'specific');
 
-  if (isReturningUser) {
-    console.log('🔄 RETURNING USER MODE:');
+  if (hasDirectedRequest) {
+    console.log('🔄 DIRECTED REQUEST MODE:');
     console.log(`   Direction: ${storyDirection}`);
     console.log(`   Mood Shift: ${moodShift || 'none specified'}`);
     console.log(`   Explicit Request: ${explicitRequest || 'none'}`);
     console.log(`   New Interests: ${newInterests.join(', ') || 'none'}`);
     console.log(`   Previous Story Titles: ${previousStoryTitles.join(', ')}`);
+    console.log(`   Source: ${isReturningUser ? 'returning_user' : 'premise_rejection/onboarding'}`);
   }
 
   // Build the three-tier premise prompt
@@ -578,9 +651,11 @@ async function generatePremises(userId, preferences, excludePremises = []) {
     ? 'MEDIUM tolerance — the wildcard should stay in a related genre family but take an unexpected thematic or setting angle they would not have predicted.'
     : 'LOW tolerance — the wildcard should stay within their preferred genres but approach from a surprising angle or subgenre they haven\'t explored. Gentle surprise, not shock.';
 
-  const returningUserContext = isReturningUser ? `
-RETURNING READER CONTEXT:
-This reader has already enjoyed stories with you! They've completed: ${previousStoryTitles.join(', ')}
+  const directedRequestContext = hasDirectedRequest ? `
+${isReturningUser ? `RETURNING READER CONTEXT:
+This reader has already enjoyed stories with you! They've completed: ${previousStoryTitles.join(', ')}` :
+`DIRECTED REQUEST CONTEXT:
+The reader rejected previous premises and came back with a clearer vision of what they want.`}
 
 THEIR REQUEST FOR THIS NEW STORY:
 - Direction: ${storyDirection === 'comfort' ? 'MORE OF WHAT I LOVE — give me another story like my favorites' :
@@ -596,7 +671,7 @@ IMPORTANT: Honor their direction preference when generating premises. ${
   storyDirection === 'comfort' ? 'All three premises should be variations on what they loved before.' :
   storyDirection === 'stretch' ? 'Push into adjacent territory — related but unexplored.' :
   storyDirection === 'wildcard' ? 'Be bold with surprises, but keep their reading level and avoid-list sacred.' :
-  storyDirection === 'specific' && explicitRequest ? `Their explicit request takes priority: "${explicitRequest}"` :
+  storyDirection === 'specific' && explicitRequest ? `Their explicit request takes priority: "${explicitRequest}". ALL THREE premises must be variations on this concept — different angles, tones, or twists on the same core idea. Do NOT generate unrelated premises.` :
   'Use their preferences as guidance.'
 }
 ` : '';
@@ -614,7 +689,7 @@ READER PROFILE:
 - Age Range: ${ageRange} (for context)
 - Emotional Drivers (WHY they read): ${driverList}
 - Stories/Shows/Games They Love: ${belovedList}
-${returningUserContext}
+${learnedPreferencesBlock}${crossBookFeedbackBlock}${directedRequestContext}
 READING HISTORY (do NOT repeat these):
 ${historyList}
 
@@ -730,6 +805,28 @@ Return ONLY a JSON object in this exact format:
 
   if (error) {
     throw new Error(`Failed to store premises: ${error.message}`);
+  }
+
+  // Clear one-shot fields (explicitRequest, storyDirection) after use
+  // so the next generation doesn't reuse a stale specific request
+  if (explicitRequest || (storyDirection && storyDirection !== 'comfort')) {
+    const cleanedPrefs = { ...preferences };
+    delete cleanedPrefs.explicitRequest;
+    delete cleanedPrefs.storyDirection;
+
+    const { error: clearError } = await supabaseAdmin
+      .from('user_preferences')
+      .update({
+        preferences: cleanedPrefs,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', userId);
+
+    if (clearError) {
+      console.log('⚠️ Failed to clear one-shot fields:', clearError);
+    } else {
+      console.log('🧹 Cleared explicitRequest/storyDirection after premise generation');
+    }
   }
 
   return {
@@ -1811,6 +1908,57 @@ Return ONLY a JSON object:
     throw new Error(`Failed to store preferences: ${upsertError.message}`);
   }
 
+  // Step 8b: Write learned_adjustments summary back to user_preferences
+  // This ensures base preferences evolve over time without overwriting onboarding data
+  try {
+    const { data: currentPrefs } = await supabaseAdmin
+      .from('user_preferences')
+      .select('preferences')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (currentPrefs?.preferences) {
+      const updatedPreferences = {
+        ...currentPrefs.preferences,
+        learned_adjustments: {
+          updated_at: new Date().toISOString(),
+          stories_analyzed: completedStories.length,
+          confidence: Math.round(parsed.confidence * 100) / 100,
+          pacing_tendency: parsed.preferred_pacing?.summary || null,
+          tone_tendency: parsed.preferred_dialogue_style?.summary || null,
+          complexity_tendency: parsed.preferred_complexity?.summary || null,
+          custom_notes: parsed.custom_instructions?.join('; ') || null,
+          avoid_notes: parsed.avoid_patterns?.join('; ') || null,
+          analysis_summary: parsed.analysis_summary
+        }
+      };
+
+      await supabaseAdmin
+        .from('user_preferences')
+        .update({
+          preferences: updatedPreferences,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', userId);
+
+      console.log(`📝 Learned adjustments written back to user_preferences (${completedStories.length} books analyzed)`);
+    }
+  } catch (learnedErr) {
+    // Non-blocking — don't fail the whole analysis if this write fails
+    console.warn(`⚠️ Failed to write learned_adjustments to user_preferences: ${learnedErr.message}`);
+  }
+
+  // Step 8c: Log preference event
+  await logPreferenceEvent(userId, 'analysis_update', 'system', {
+    stories_analyzed: completedStories.length,
+    confidence: parsed.confidence,
+    custom_instructions: parsed.custom_instructions,
+    avoid_patterns: parsed.avoid_patterns,
+    pacing_summary: parsed.preferred_pacing?.summary,
+    dialogue_summary: parsed.preferred_dialogue_style?.summary,
+    analysis_summary: parsed.analysis_summary
+  });
+
   // Step 9: Log API cost
   await logApiCost(userId, 'analyze_preferences', inputTokens, outputTokens, {
     stories_analyzed: completedStories.length,
@@ -1839,6 +1987,32 @@ async function getUserWritingPreferences(userId) {
     .single();
 
   return data; // null if no preferences yet
+}
+
+/**
+ * Log a preference event for audit trail.
+ * Non-blocking — failures are logged but don't break the caller.
+ *
+ * @param {string} userId
+ * @param {string} eventType - 'onboarding', 'returning_user', 'checkpoint_feedback', 'book_completion', 'analysis_update', 'explicit_request', 'skip_checkpoint'
+ * @param {string} source - 'voice', 'text', 'dimension_cards', 'system'
+ * @param {object} eventData - flexible payload (snapshot of what changed)
+ * @param {string} [storyId] - optional story context
+ */
+async function logPreferenceEvent(userId, eventType, source, eventData, storyId = null) {
+  try {
+    await supabaseAdmin
+      .from('preference_events')
+      .insert({
+        user_id: userId,
+        event_type: eventType,
+        source,
+        story_id: storyId,
+        event_data: eventData
+      });
+  } catch (err) {
+    console.warn(`⚠️ Failed to log preference event (${eventType}): ${err.message}`);
+  }
 }
 
 /**
@@ -4158,5 +4332,6 @@ module.exports = {
   parseAndValidateJSON,
   attemptJsonRepair,
   mapAgeRange,
-  logApiCost
+  logApiCost,
+  logPreferenceEvent
 };

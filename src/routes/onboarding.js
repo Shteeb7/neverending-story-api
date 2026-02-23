@@ -203,7 +203,11 @@ router.post('/process-transcript', authenticateUser, requireVoiceConsentMiddlewa
     readingMotivation: extractedData.readingMotivation || '',
     discoveryTolerance: normalizeDiscoveryTolerance(extractedData.discoveryTolerance),
     pacePreference: extractedData.pacePreference || 'varied',
-    readingLevel: extractedData.readingLevel // Prospero's assessment from the conversation
+    readingLevel: extractedData.readingLevel, // Prospero's assessment from the conversation
+
+    // Specific story request (when reader has a concrete idea, not just general preferences)
+    explicitRequest: extractedData.explicitRequest || null,
+    storyDirection: extractedData.storyDirection || null
   };
 
   // Fetch user's DOB to compute reading level
@@ -254,6 +258,21 @@ router.post('/process-transcript', authenticateUser, requireVoiceConsentMiddlewa
     sessionId,
     transcriptLength: transcript.length,
     estimatedTokens
+  });
+
+  // Log preference event for audit trail
+  const { logPreferenceEvent } = require('../services/generation');
+  await logPreferenceEvent(userId, 'onboarding', 'voice', {
+    genres: normalizedPreferences.genres,
+    themes: normalizedPreferences.themes,
+    mood: normalizedPreferences.mood,
+    characterTypes: normalizedPreferences.characterTypes,
+    readingLevel,
+    discoveryTolerance: normalizedPreferences.discoveryTolerance,
+    belovedStories: normalizedPreferences.belovedStories,
+    emotionalDrivers: normalizedPreferences.emotionalDrivers,
+    hasExplicitRequest: !!normalizedPreferences.explicitRequest,
+    explicitRequest: normalizedPreferences.explicitRequest || null
   });
 
   res.json({

@@ -23,7 +23,9 @@ const CHAT_TOOLS = {
         readingLevel: { type: 'string', enum: ['early_reader', 'middle_grade', 'upper_middle_grade', 'young_adult', 'new_adult', 'adult'], description: 'Derived from their favorite books/media AND their age. Use the anchor books table to calibrate: Magic Tree House/Wimpy Kid = early_reader, Percy Jackson/Harry Potter = middle_grade, Hunger Games/Eragon = upper_middle_grade, Six of Crows/Throne of Glass = young_adult, ACOTAR/Fourth Wing = new_adult, Sanderson/adult fantasy = adult' },
         readingMotivation: { type: 'string', description: 'Natural language summary of what drives their reading' },
         discoveryTolerance: { type: 'string', description: '\'low\' (comfort-seeker), \'medium\' (balanced), or \'high\' (adventurer)' },
-        pacePreference: { type: 'string', description: '\'fast\' or \'slow\' or \'varied\'' }
+        pacePreference: { type: 'string', description: '\'fast\' or \'slow\' or \'varied\'' },
+        explicitRequest: { type: 'string', description: 'If the reader described a SPECIFIC story concept they want (not just general preferences), capture their full idea here verbatim. All three premises should be variations on this concept.' },
+        storyDirection: { type: 'string', enum: ['comfort', 'stretch', 'wildcard', 'specific'], description: 'Set to \'specific\' if the reader described a concrete story idea. Otherwise omit.' }
       },
       required: ['name', 'readingLevel']
     }

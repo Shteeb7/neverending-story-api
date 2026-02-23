@@ -318,6 +318,16 @@ router.post('/checkpoint', authenticateUser, asyncHandler(async (req, res) => {
     throw new Error(`Failed to store feedback: ${error.message}`);
   }
 
+  // Log preference event for audit trail
+  const { logPreferenceEvent } = require('../services/generation');
+  await logPreferenceEvent(userId, 'checkpoint_feedback', hasDimensions ? 'dimension_cards' : 'text', {
+    checkpoint: normalizedCheckpoint,
+    pacing: pacing || null,
+    tone: tone || null,
+    character: character || null,
+    response: response || null
+  }, storyId);
+
   // Use shared generation trigger function
   const { shouldGenerate, startChapter, endChapter } = await triggerCheckpointGeneration(storyId, userId, normalizedCheckpoint);
 
@@ -410,12 +420,84 @@ router.post('/voice-checkpoint', authenticateUser, asyncHandler(async (req, res)
 
   console.log(`✅ Voice checkpoint feedback stored for ${normalizedCheckpoint}`);
 
+  // Log preference event for audit trail
+  const { logPreferenceEvent } = require('../services/generation');
+  await logPreferenceEvent(userId, 'checkpoint_feedback', 'voice', {
+    checkpoint: normalizedCheckpoint,
+    engagement: preferences?.overall_engagement || null,
+    pacing_note: preferences?.pacing_note || null,
+    tone_note: preferences?.tone_note || null,
+    character_notes: preferences?.character_notes || null,
+    style_note: preferences?.style_note || null
+  }, storyId);
+
   // Trigger next batch generation (same logic as text checkpoint path)
   const { shouldGenerate, startChapter, endChapter } = await triggerCheckpointGeneration(storyId, userId, normalizedCheckpoint);
 
   res.json({
     success: true,
     feedback: data,
+    generatingChapters: shouldGenerate ? Array.from({ length: endChapter - startChapter + 1 }, (_, i) => startChapter + i) : [],
+    alreadyGenerated: !shouldGenerate && startChapter && endChapter
+  });
+}));
+
+/**
+ * POST /feedback/skip-checkpoint
+ * Reader chose to skip the check-in with Prospero.
+ * Records a minimal feedback row (so we know they skipped) and triggers next chapter batch generation.
+ */
+router.post('/skip-checkpoint', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { storyId, checkpoint } = req.body;
+
+  if (!storyId || !checkpoint) {
+    return res.status(400).json({
+      success: false,
+      error: 'storyId and checkpoint are required'
+    });
+  }
+
+  // Normalize checkpoint name (backward compatibility)
+  const checkpointMap = {
+    'chapter_3': 'chapter_2',
+    'chapter_6': 'chapter_5',
+    'chapter_9': 'chapter_8'
+  };
+  const normalizedCheckpoint = checkpointMap[checkpoint] || checkpoint;
+
+  console.log(`⏭️ Checkpoint skipped: story=${storyId}, checkpoint=${normalizedCheckpoint}`);
+
+  // Store a minimal feedback row so we know they skipped (and don't re-prompt)
+  const { error } = await supabaseAdmin
+    .from('story_feedback')
+    .upsert({
+      user_id: userId,
+      story_id: storyId,
+      checkpoint: normalizedCheckpoint,
+      response: 'skipped',
+      checkpoint_corrections: null,
+      voice_transcript: null
+    }, {
+      onConflict: 'user_id,story_id,checkpoint'
+    });
+
+  if (error) {
+    throw new Error(`Failed to store skip-checkpoint record: ${error.message}`);
+  }
+
+  // Log preference event for audit trail
+  const { logPreferenceEvent } = require('../services/generation');
+  await logPreferenceEvent(userId, 'skip_checkpoint', 'system', {
+    checkpoint: normalizedCheckpoint
+  }, storyId);
+
+  // Trigger next batch generation with no course corrections
+  const { shouldGenerate, startChapter, endChapter } = await triggerCheckpointGeneration(storyId, userId, normalizedCheckpoint);
+
+  res.json({
+    success: true,
+    skipped: true,
     generatingChapters: shouldGenerate ? Array.from({ length: endChapter - startChapter + 1 }, (_, i) => startChapter + i) : [],
     alreadyGenerated: !shouldGenerate && startChapter && endChapter
   });
@@ -493,8 +575,17 @@ router.post('/completion-interview', authenticateUser, asyncHandler(async (req, 
     throw new Error(`Failed to store interview: ${error.message}`);
   }
 
+  // Log preference event for audit trail
+  const { logPreferenceEvent, analyzeUserPreferences, updateDiscoveryTolerance } = require('../services/generation');
+  await logPreferenceEvent(userId, 'book_completion', 'voice', {
+    satisfactionSignal: enrichedPreferences?.satisfactionSignal || null,
+    highlights: enrichedPreferences?.highlights || [],
+    lowlights: enrichedPreferences?.lowlights || [],
+    sequelDesires: enrichedPreferences?.sequelDesires || null,
+    preferenceUpdates: enrichedPreferences?.preferenceUpdates || null
+  }, storyId);
+
   // Non-blocking: trigger preference analysis and discovery tolerance update in background
-  const { analyzeUserPreferences, updateDiscoveryTolerance } = require('../services/generation');
   (async () => {
     try {
       const result = await analyzeUserPreferences(userId);
