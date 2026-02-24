@@ -12,7 +12,7 @@ const router = express.Router();
 router.get('/library', authenticateUser, asyncHandler(async (req, res) => {
   const { userId } = req;
 
-  // Fetch whispernet_library records with story details and sender info
+  // Fetch whispernet_library records with story details
   const { data: whispernetBooks, error } = await supabaseAdmin
     .from('whispernet_library')
     .select(`
@@ -47,12 +47,6 @@ router.get('/library', authenticateUser, asyncHandler(async (req, res) => {
         archived_at,
         whispernet_published,
         maturity_rating
-      ),
-      sender:shared_by (
-        id,
-        user_preferences!inner (
-          whispernet_display_name
-        )
       )
     `)
     .eq('user_id', userId)
@@ -63,10 +57,39 @@ router.get('/library', authenticateUser, asyncHandler(async (req, res) => {
     throw new Error(`Failed to fetch WhisperNet library: ${error.message}`);
   }
 
+  // Collect unique sender IDs (shared_by values that are not null)
+  const senderIds = [...new Set(
+    whispernetBooks
+      .map(entry => entry.shared_by)
+      .filter(id => id !== null)
+  )];
+
+  // Fetch sender display names in a separate query
+  let senderDisplayNames = {};
+  if (senderIds.length > 0) {
+    const { data: senderPrefs, error: senderError } = await supabaseAdmin
+      .from('user_preferences')
+      .select('user_id, whispernet_display_name')
+      .in('user_id', senderIds);
+
+    if (senderError) {
+      console.error('Failed to fetch sender preferences:', senderError);
+      // Continue with empty map - will use fallback names
+    } else if (senderPrefs) {
+      // Build lookup map
+      senderDisplayNames = senderPrefs.reduce((acc, pref) => {
+        acc[pref.user_id] = pref.whispernet_display_name;
+        return acc;
+      }, {});
+    }
+  }
+
   // Transform the data to match the expected format
   const stories = whispernetBooks.map(entry => {
     const story = entry.stories;
-    const senderDisplayName = entry.sender?.user_preferences?.whispernet_display_name;
+    const senderDisplayName = entry.shared_by
+      ? (senderDisplayNames[entry.shared_by] || 'A Fellow Reader')
+      : 'A Fellow Reader';
 
     return {
       ...story,
@@ -75,7 +98,7 @@ router.get('/library', authenticateUser, asyncHandler(async (req, res) => {
         library_id: entry.id,
         source: entry.source,
         shared_by: entry.shared_by,
-        sender_display_name: senderDisplayName || 'A Fellow Reader',
+        sender_display_name: senderDisplayName,
         added_at: entry.added_at,
         seen: entry.seen
       }
