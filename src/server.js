@@ -19,6 +19,7 @@ const chatRoutes = require('./routes/chat');
 const settingsRoutes = require('./routes/settings');
 const bugReportRoutes = require('./routes/bug-reports');
 const codebaseContextRoutes = require('./routes/codebase-context');
+const shareLinksRoutes = require('./routes/share-links');
 
 // Initialize Express app
 const app = express();
@@ -111,6 +112,7 @@ app.use('/test', testRoutes);
 app.use('/chat', chatRoutes);
 app.use('/settings', settingsRoutes);
 app.use('/bug-reports', bugReportRoutes);
+app.use('/share-links', shareLinksRoutes);
 app.use('/', codebaseContextRoutes);
 
 // Railway deploy webhook (no auth — Railway sends these directly)
