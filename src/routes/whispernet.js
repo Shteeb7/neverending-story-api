@@ -84,6 +84,24 @@ router.get('/library', authenticateUser, asyncHandler(async (req, res) => {
     }
   }
 
+  // Fetch publication maturity ratings in a separate query (safe — no nested joins)
+  const storyIds = whispernetBooks.map(entry => entry.story_id).filter(Boolean);
+  let publicationRatings = {};
+  if (storyIds.length > 0) {
+    const { data: publications, error: pubError } = await supabaseAdmin
+      .from('whispernet_publications')
+      .select('story_id, maturity_rating')
+      .in('story_id', storyIds)
+      .eq('is_active', true);
+
+    if (!pubError && publications) {
+      publicationRatings = publications.reduce((acc, pub) => {
+        acc[pub.story_id] = pub.maturity_rating;
+        return acc;
+      }, {});
+    }
+  }
+
   // Transform the data to match the expected format
   const stories = whispernetBooks.map(entry => {
     const story = entry.stories;
@@ -91,8 +109,12 @@ router.get('/library', authenticateUser, asyncHandler(async (req, res) => {
       ? (senderDisplayNames[entry.shared_by] || 'A Fellow Reader')
       : 'A Fellow Reader';
 
+    // Prefer publication maturity_rating over story's own (publication is the source of truth)
+    const effectiveMaturityRating = publicationRatings[entry.story_id] || story.maturity_rating || null;
+
     return {
       ...story,
+      maturity_rating: effectiveMaturityRating,
       // Add WhisperNet-specific metadata
       whispernet_metadata: {
         library_id: entry.id,

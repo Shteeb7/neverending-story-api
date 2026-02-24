@@ -647,6 +647,7 @@ Weight premises toward what this reader's ACTUAL feedback reveals, not just thei
   const moodShift = preferences.moodShift;
   const explicitRequest = preferences.explicitRequest;
   const newInterests = preferences.newInterests || [];
+  const rejectionInsight = preferences.rejectionInsight;
   const previousStoryTitles = preferences.previousStoryTitles || previousTitles;
   const hasDirectedRequest = isReturningUser || (explicitRequest && storyDirection === 'specific');
 
@@ -677,10 +678,13 @@ Weight premises toward what this reader's ACTUAL feedback reveals, not just thei
     : 'LOW tolerance — the wildcard should stay within their preferred genres but approach from a surprising angle or subgenre they haven\'t explored. Gentle surprise, not shock.';
 
   const directedRequestContext = hasDirectedRequest ? `
+⚡ THIS IS A DIRECTED REQUEST — the interview output below is your PRIMARY signal, NOT the reader profile genres.
+
 ${isReturningUser ? `RETURNING READER CONTEXT:
 This reader has already enjoyed stories with you! They've completed: ${previousStoryTitles.join(', ')}` :
 `DIRECTED REQUEST CONTEXT:
 The reader rejected previous premises and came back with a clearer vision of what they want.`}
+${rejectionInsight ? `What went wrong last time: "${rejectionInsight}"` : ''}
 
 THEIR REQUEST FOR THIS NEW STORY:
 - Direction: ${storyDirection === 'comfort' ? 'MORE OF WHAT I LOVE — give me another story like my favorites' :
@@ -689,21 +693,34 @@ THEIR REQUEST FOR THIS NEW STORY:
               storyDirection === 'specific' ? 'SPECIFIC IDEA — they have something particular in mind' :
               storyDirection}
 ${moodShift ? `- Current Mood: ${moodShift}` : ''}
-${explicitRequest ? `- Specific Request: "${explicitRequest}"` : ''}
+${explicitRequest ? `- ⭐ SPECIFIC REQUEST: "${explicitRequest}"` : ''}
 ${newInterests.length > 0 ? `- New Interests to Incorporate: ${newInterests.join(', ')}` : ''}
 
-IMPORTANT: Honor their direction preference when generating premises. ${
-  storyDirection === 'comfort' ? 'All three premises should be variations on what they loved before.' :
-  storyDirection === 'stretch' ? 'Push into adjacent territory — related but unexplored.' :
-  storyDirection === 'wildcard' ? 'Be bold with surprises, but keep their reading level and avoid-list sacred.' :
-  storyDirection === 'specific' && explicitRequest ? `Their explicit request takes priority: "${explicitRequest}". ALL THREE premises must be variations on this concept — different angles, tones, or twists on the same core idea. Do NOT generate unrelated premises.` :
-  'Use their preferences as guidance.'
+CRITICAL: ${
+  storyDirection === 'specific' && explicitRequest
+    ? `Their explicit request OVERRIDES their stored genre preferences entirely. "${explicitRequest}" — ALL THREE premises must be variations on THIS concept. Different angles, tones, or twists on the same core idea. Do NOT generate premises from their stored genres unless they happen to align. The reader came back because the stored genres produced the wrong results.`
+  : storyDirection === 'comfort' ? 'All three premises should be variations on what they loved before — but informed by their full reading history, not just stored genres.'
+  : storyDirection === 'stretch' ? 'Push into adjacent territory — related but unexplored. Their stored genres are a starting point to depart FROM, not a constraint.'
+  : storyDirection === 'wildcard' ? 'Be bold with surprises, but keep their reading level and avoid-list sacred.'
+  : 'Use the interview output as your primary guide, with stored preferences as background context.'
 }
 ` : '';
 
-  const premisePrompt = `You are Prospero, the master storyteller of Mythweaver. You know this reader deeply and are crafting three story premises — each with a DIFFERENT purpose.
-
-READER PROFILE:
+  // When there's a directed request, put it FIRST and demote genres to historical context.
+  // This prevents stored genres from dominating when the reader explicitly asked for something different.
+  const readerProfileSection = hasDirectedRequest
+    ? `READER PROFILE:
+- Name: ${name}
+- Originally drawn to (from onboarding — treat as CONTEXT, not constraint): ${genreList}
+- Themes they've enjoyed: ${themeList}
+- Typical Mood/Tone preference: ${mood}
+- Character Preferences: ${characterTypes}
+- Elements to AVOID (still sacred): ${avoidList}
+- Reading Level: ${readingLevel}
+- Age Range: ${ageRange} (for context)
+- Emotional Drivers (WHY they read): ${driverList}
+- Stories/Shows/Games They Love: ${belovedList}`
+    : `READER PROFILE:
 - Name: ${name}
 - Preferred Genres: ${genreList}
 - Preferred Themes: ${themeList}
@@ -713,8 +730,12 @@ READER PROFILE:
 - Reading Level: ${readingLevel}
 - Age Range: ${ageRange} (for context)
 - Emotional Drivers (WHY they read): ${driverList}
-- Stories/Shows/Games They Love: ${belovedList}
-${learnedPreferencesBlock}${crossBookFeedbackBlock}${directedRequestContext}
+- Stories/Shows/Games They Love: ${belovedList}`;
+
+  const premisePrompt = `You are Prospero, the master storyteller of Mythweaver. You know this reader deeply and are crafting three story premises — each with a DIFFERENT purpose.
+${hasDirectedRequest ? directedRequestContext : ''}
+${readerProfileSection}
+${learnedPreferencesBlock}${crossBookFeedbackBlock}${hasDirectedRequest ? '' : directedRequestContext}
 READING HISTORY (do NOT repeat these):
 ${historyList}
 ${previouslyOfferedTitles.length > 0 ? `
@@ -731,16 +752,30 @@ Generate 3 COMPLETELY DIFFERENT premises. Not variations of the above — genuin
 ` : ''}
 ---
 
-GENERATE EXACTLY 3 PREMISES with these specific roles:
+${hasDirectedRequest && storyDirection === 'specific' && explicitRequest ? `GENERATE EXACTLY 3 PREMISES — all variations on the reader's SPECIFIC REQUEST:
+
+The reader told you exactly what they want: "${explicitRequest}"
+All three premises must be DIFFERENT ANGLES on this same core concept. NOT generic premises — variations on THEIR idea.
+
+**PREMISE 1 — FAITHFUL** (tier: "comfort")
+The most faithful interpretation of their request. If they said "a litRPG about a plant", this is the best version of exactly that. Nail their concept.
+
+**PREMISE 2 — ELEVATED** (tier: "stretch")
+Take their core concept and add an unexpected twist, setting shift, or thematic layer that makes it MORE compelling than what they imagined. They should think "oh, that's even better than what I described."
+
+**PREMISE 3 — REFRAMED** (tier: "wildcard")
+Same emotional core and key elements from their request, but transplanted into a surprising genre, time period, or narrative structure. The reader should recognize their idea inside a container they never would have thought of.` :
+
+`GENERATE EXACTLY 3 PREMISES with these specific roles:
 
 **PREMISE 1 — COMFORT** (tier: "comfort")
-This is the "I know exactly what you want" option. It should land squarely within their stated genre and theme preferences. Make it excellent, compelling, and deeply aligned with what they've told you they love. This is the safe bet — and it should be VERY tempting.
+${hasDirectedRequest ? 'This should be deeply aligned with what they asked for in this interview session — their current request, not just their stored genre preferences.' : 'This is the "I know exactly what you want" option. It should land squarely within their stated genre and theme preferences.'} Make it excellent, compelling, and deeply aligned with what they've told you they love. This is the safe bet — and it should be VERY tempting.
 
 **PREMISE 2 — STRETCH** (tier: "stretch")
 This combines two or more things from their profile in a way they would NOT have predicted. Maybe it collides two of their favorite genres. Maybe it takes a beloved theme into an unexpected setting. The key: every ingredient comes from their profile, but the combination is fresh. They should look at this and think "I never would have asked for this, but... I'm intrigued."
 
 **PREMISE 3 — WILDCARD** (tier: "wildcard")
-This is your curated surprise, Prospero. Look beneath their stated preferences to their EMOTIONAL DRIVERS — the reasons they read. Then find a completely different genre or setting that delivers that same emotional payload through an unexpected vehicle.
+This is your curated surprise, Prospero. Look beneath their stated preferences to their EMOTIONAL DRIVERS — the reasons they read. Then find a completely different genre or setting that delivers that same emotional payload through an unexpected vehicle.`}
 
 Wildcard calibration: ${wildcardCalibration}
 
@@ -4262,7 +4297,7 @@ async function resumeStalledGenerations() {
             // Without this check, the health check can fire during the brief window between
             // "chapter 3 generated" and "pipeline sets awaiting_chapter_2_feedback", causing
             // runaway generation of chapters 4-6 without the reader ever giving feedback.
-            const { data: feedbackExists } = await supabase
+            const { data: feedbackExists } = await supabaseAdmin
               .from('story_feedback')
               .select('id')
               .eq('story_id', story.id)
@@ -4283,7 +4318,7 @@ async function resumeStalledGenerations() {
               // Instead, just set the correct awaiting state.
               const awaitingStep = `awaiting_${batch.cp}_feedback`;
               console.log(`   ⚠️ No feedback for checkpoint "${batch.cp}" — race condition detected. Setting ${awaitingStep} instead of triggering batch.`);
-              await supabase
+              await supabaseAdmin
                 .from('stories')
                 .update({
                   generation_progress: {

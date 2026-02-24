@@ -60,6 +60,21 @@ const CHAT_TOOLS = {
       required: ['satisfactionSignal']
     }
   }],
+  premise_rejection: [{
+    name: 'submit_refined_request',
+    description: 'Submit the refined story request after understanding what went wrong with the rejected premises. Call when you have a clearer picture of what the reader wants.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        direction: { type: 'string', enum: ['comfort', 'stretch', 'wildcard', 'specific'], description: "'comfort' (more of what they love), 'stretch' (something adjacent), 'wildcard' (surprise me), or 'specific' (they have a specific idea in mind)" },
+        moodShift: { type: 'string', description: "What they're in the mood for now — captures their current emotional state or reading context" },
+        explicitRequest: { type: 'string', description: "If they described a SPECIFIC story concept, capture their FULL idea here verbatim — the richer the better. Include genre, setting, tone, character types, anything they specified. This field drives the next set of premises. Also use this for situational context like 'reading with my daughter' or 'beach vacation read'." },
+        newInterests: { type: 'array', items: { type: 'string' }, description: 'Any new genres, themes, books, shows, or games they mentioned that signal a shift from their original preferences' },
+        rejectionInsight: { type: 'string', description: "What specifically was wrong with the rejected premises — captures the diagnostic signal (e.g., 'too dark', 'wanted more humor', 'premises felt generic')" }
+      },
+      required: ['direction']
+    }
+  }],
   checkpoint: [{
     name: 'submit_checkpoint_feedback',
     description: 'Submit checkpoint feedback gathered from the reader. Call when the conversation is complete.',
@@ -153,7 +168,7 @@ async function createChatSession(userId, interviewType, context = {}) {
       tools = CHAT_TOOLS.returning_user;
       break;
     case 'premise_rejection':
-      tools = CHAT_TOOLS.onboarding; // Same tool — refines preferences
+      tools = CHAT_TOOLS.premise_rejection;
       break;
     case 'book_completion':
       tools = CHAT_TOOLS.book_completion;
@@ -408,44 +423,98 @@ async function sendMessage(sessionId, userMessage) {
 
   console.log(`✅ Session updated. Complete: ${sessionComplete}`);
 
-  // SERVER-SIDE PREMISE GENERATION for onboarding text chat sessions.
-  // The iOS client's text chat path was missing the generatePremises() call that the
-  // voice path has. Rather than relying solely on the client fix, handle it server-side
-  // so completed onboarding interviews always trigger premise generation.
-  if (sessionComplete && session.interview_type === 'onboarding' && toolCall?.arguments) {
+  // SERVER-SIDE PREMISE GENERATION for onboarding and premise_rejection text chat sessions.
+  // Handle both first-time onboarding and returning users who rejected premises.
+  if (sessionComplete && (session.interview_type === 'onboarding' || session.interview_type === 'premise_rejection') && toolCall?.arguments) {
     const userId = session.user_id;
-    console.log(`📝 Onboarding text chat complete — saving preferences and generating premises for user ${userId}`);
+    const isPremiseRejection = session.interview_type === 'premise_rejection';
+    console.log(`📝 ${isPremiseRejection ? 'Premise rejection' : 'Onboarding'} text chat complete — ${isPremiseRejection ? 'generating refined premises' : 'saving preferences and generating premises'} for user ${userId}`);
 
     try {
-      // 1. Save extracted preferences to user_preferences (upsert)
-      const extractedPrefs = toolCall.arguments;
-      const { error: prefsError } = await supabaseAdmin
-        .from('user_preferences')
-        .upsert({
-          user_id: userId,
-          preferences: extractedPrefs,
-          reading_level: extractedPrefs.readingLevel || 'adult',
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'user_id' });
+      if (isPremiseRejection) {
+        // For premise rejection: fetch existing prefs, merge with interview output,
+        // then generate new premises through the new-story-request flow
+        const { data: userPrefs } = await supabaseAdmin
+          .from('user_preferences')
+          .select('preferences, reading_level')
+          .eq('user_id', userId)
+          .maybeSingle();
 
-      if (prefsError) {
-        console.error('❌ Failed to save text chat preferences:', prefsError);
+        if (userPrefs) {
+          const refinedRequest = toolCall.arguments;
+
+          // Discard old premises
+          await supabaseAdmin
+            .from('story_premises')
+            .update({ status: 'discarded' })
+            .eq('user_id', userId)
+            .neq('status', 'discarded');
+
+          // Fetch previous titles for context
+          const { data: existingStories } = await supabaseAdmin
+            .from('stories')
+            .select('title')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(5);
+          const previousTitles = existingStories?.map(s => s.title).filter(Boolean) || [];
+
+          // Build enriched preferences — merge existing prefs with interview output
+          const enrichedPreferences = {
+            ...userPrefs.preferences,
+            storyDirection: refinedRequest.direction || 'comfort',
+            moodShift: refinedRequest.moodShift || null,
+            explicitRequest: refinedRequest.explicitRequest || null,
+            newInterests: refinedRequest.newInterests || [],
+            rejectionInsight: refinedRequest.rejectionInsight || null,
+            previousStoryTitles: previousTitles,
+            isReturningUser: true
+          };
+
+          console.log('🔄 Generating refined premises after rejection:', {
+            direction: enrichedPreferences.storyDirection,
+            explicitRequest: enrichedPreferences.explicitRequest?.substring(0, 80),
+            rejectionInsight: enrichedPreferences.rejectionInsight?.substring(0, 80)
+          });
+
+          const { generatePremises } = require('./generation');
+          generatePremises(userId, enrichedPreferences)
+            .then(result => {
+              console.log(`✅ Refined premises generated after rejection: ${result.premises?.length || 0} premises`);
+            })
+            .catch(err => {
+              console.error('❌ Premise generation after rejection failed:', err.message);
+            });
+        }
       } else {
-        console.log('✅ Text chat preferences saved to user_preferences');
-      }
+        // Original onboarding flow — save preferences and generate
+        const extractedPrefs = toolCall.arguments;
+        const { error: prefsError } = await supabaseAdmin
+          .from('user_preferences')
+          .upsert({
+            user_id: userId,
+            preferences: extractedPrefs,
+            reading_level: extractedPrefs.readingLevel || 'adult',
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'user_id' });
 
-      // 2. Trigger premise generation (fire-and-forget — client will poll)
-      const { generatePremises } = require('./generation');
-      generatePremises(userId, extractedPrefs)
-        .then(result => {
-          console.log(`✅ Premises generated after text chat: ${result.premises?.length || 0} premises`);
-        })
-        .catch(err => {
-          console.error('❌ Premise generation after text chat failed:', err.message);
-        });
+        if (prefsError) {
+          console.error('❌ Failed to save text chat preferences:', prefsError);
+        } else {
+          console.log('✅ Text chat preferences saved to user_preferences');
+        }
+
+        const { generatePremises } = require('./generation');
+        generatePremises(userId, extractedPrefs)
+          .then(result => {
+            console.log(`✅ Premises generated after text chat: ${result.premises?.length || 0} premises`);
+          })
+          .catch(err => {
+            console.error('❌ Premise generation after text chat failed:', err.message);
+          });
+      }
     } catch (err) {
-      console.error('❌ Post-onboarding text chat processing failed:', err.message);
-      // Non-fatal — session is already saved, client can still trigger manually
+      console.error(`❌ Post-${isPremiseRejection ? 'rejection' : 'onboarding'} text chat processing failed:`, err.message);
     }
   }
 

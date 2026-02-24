@@ -296,8 +296,18 @@ router.post('/new-story-request', authenticateUser, requireAIConsentMiddleware, 
     return res.status(400).json({ success: false, error: 'Transcript is required' });
   }
 
+  // Normalize field names — premise_rejection's onboarding tool outputs storyDirection/favoriteGenres,
+  // but returning_user tool outputs direction. Accept both conventions.
+  const normalizedDirection = storyRequest?.direction || storyRequest?.storyDirection || 'comfort';
+  const normalizedExplicitRequest = storyRequest?.explicitRequest || null;
+  const normalizedMoodShift = storyRequest?.moodShift || null;
+  const normalizedNewInterests = storyRequest?.newInterests || storyRequest?.favoriteGenres || [];
+  const rejectionInsight = storyRequest?.rejectionInsight || null;
+
   console.log(`📖 New story request from returning user ${userId}`);
-  console.log(`   Direction: ${storyRequest?.direction || 'not specified'}`);
+  console.log(`   Direction: ${normalizedDirection}`);
+  console.log(`   Explicit Request: ${normalizedExplicitRequest || 'none'}`);
+  console.log(`   Rejection Insight: ${rejectionInsight || 'none'}`);
 
   // 1. Fetch EXISTING preferences (do NOT overwrite them)
   const { data: userPrefs, error: prefsError } = await supabaseAdmin
@@ -355,14 +365,17 @@ router.post('/new-story-request', authenticateUser, requireAIConsentMiddleware, 
   // 5. Generate new premises with BOTH existing preferences AND new direction
   const { generatePremises } = require('../services/generation');
 
-  // Merge existing preferences with the new story request direction
+  // Merge existing preferences with the new story request direction.
+  // KEY DESIGN: Onboarding genres become CONTEXT (not constraint) after book one.
+  // The interview output (direction, explicitRequest, newInterests) is the PRIMARY signal.
   const enrichedPreferences = {
     ...userPrefs.preferences,
     // Add returning user context
-    storyDirection: storyRequest?.direction || 'comfort',
-    moodShift: storyRequest?.moodShift || null,
-    explicitRequest: storyRequest?.explicitRequest || null,
-    newInterests: storyRequest?.newInterests || [],
+    storyDirection: normalizedDirection,
+    moodShift: normalizedMoodShift,
+    explicitRequest: normalizedExplicitRequest,
+    newInterests: normalizedNewInterests,
+    rejectionInsight: rejectionInsight,
     previousStoryTitles: previousTitles,
     isReturningUser: true
   };
@@ -370,6 +383,9 @@ router.post('/new-story-request', authenticateUser, requireAIConsentMiddleware, 
   console.log('🤖 Generating premises with enriched preferences:', {
     direction: enrichedPreferences.storyDirection,
     moodShift: enrichedPreferences.moodShift,
+    explicitRequest: enrichedPreferences.explicitRequest?.substring(0, 80),
+    newInterests: enrichedPreferences.newInterests,
+    rejectionInsight: enrichedPreferences.rejectionInsight?.substring(0, 80),
     previousTitles: previousTitles,
     readingLevel: userPrefs.reading_level
   });
