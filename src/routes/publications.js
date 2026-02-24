@@ -88,6 +88,7 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
     .from('whispernet_publications')
     .insert({
       story_id,
+      publisher_id: userId,
       genre,
       mood_tags,
       maturity_rating,
