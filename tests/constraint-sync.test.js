@@ -278,4 +278,35 @@ describe('Database Constraint Sync', () => {
       expect(missing).toEqual([]);
     });
   });
+
+  // ============================================================
+  // whispernet_publications.maturity_rating
+  // ============================================================
+  describe('whispernet_publications.maturity_rating', () => {
+    const CONSTRAINT_VALUES = ['all_ages', 'teen_13', 'mature_17'];
+
+    // From publications endpoints (Prompt 14)
+    const CODE_WRITES = ['all_ages', 'teen_13', 'mature_17'];
+
+    test('all maturity_rating values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
+
+  // ============================================================
+  // stories.maturity_rating
+  // ============================================================
+  describe('stories.maturity_rating', () => {
+    const CONSTRAINT_VALUES = ['all_ages', 'teen_13', 'mature_17'];
+
+    // From publications endpoints and story creation (Prompt 14)
+    // Note: NULL is also allowed by the constraint
+    const CODE_WRITES = ['all_ages', 'teen_13', 'mature_17'];
+
+    test('all maturity_rating values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
 });
