@@ -34,6 +34,14 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
     });
   }
 
+  // Map display values to database values
+  const maturityMap = {
+    'All Ages': 'all_ages',
+    'Teen 13+': 'teen_13',
+    'Mature 17+': 'mature_17'
+  };
+  const dbMaturityRating = maturityMap[maturity_rating];
+
   // Verify story ownership
   const { data: story, error: storyError } = await supabaseAdmin
     .from('stories')
@@ -91,7 +99,7 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
       publisher_id: userId,
       genre,
       mood_tags,
-      maturity_rating,
+      maturity_rating: dbMaturityRating,
       is_active: true
     })
     .select()
@@ -107,7 +115,7 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
     .from('stories')
     .update({
       whispernet_published: true,
-      maturity_rating
+      maturity_rating: dbMaturityRating
     })
     .eq('id', story_id);
 
