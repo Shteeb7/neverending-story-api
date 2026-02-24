@@ -1,0 +1,392 @@
+/**
+ * WHISPERNET DISCOVERY ROUTES
+ *
+ * Handles the "Whispers for You" discovery portal:
+ * - Personalized recommendations based on user preferences
+ * - Ambient activity feed
+ * - Browse filters (trending, new, by mood, by genre, by length)
+ */
+
+const express = require('express');
+const router = express.Router();
+const { supabase } = require('../config/supabase');
+
+/**
+ * GET /api/discovery/recommendations?user_id=X
+ *
+ * Returns 3-5 personalized story recommendations based on user_preferences.
+ * Algorithm: match user's top genres against whispernet_publications,
+ * exclude books already on their shelf, sort by recent + popular.
+ */
+router.get('/recommendations', async (req, res) => {
+  try {
+    const { user_id } = req.query;
+
+    if (!user_id) {
+      return res.status(400).json({ success: false, error: 'user_id required' });
+    }
+
+    // Get authenticated user
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+
+    if (authError || !user || user.id !== user_id) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    // Get user preferences (genre weights from onboarding)
+    const { data: prefs, error: prefsError } = await supabase
+      .from('user_preferences')
+      .select('preferred_genres, preferences')
+      .eq('user_id', user_id)
+      .maybeSingle();
+
+    if (prefsError) {
+      console.error('Error fetching user preferences:', prefsError);
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    // Extract preferred genres (from preferred_genres array or preferences JSONB)
+    let userGenres = [];
+    if (prefs?.preferred_genres && prefs.preferred_genres.length > 0) {
+      userGenres = prefs.preferred_genres;
+    } else if (prefs?.preferences?.favoriteGenres) {
+      userGenres = prefs.preferences.favoriteGenres;
+    }
+
+    // Get books already on user's WhisperNet shelf
+    const { data: userLibrary, error: libraryError } = await supabase
+      .from('whispernet_library')
+      .select('story_id')
+      .eq('user_id', user_id);
+
+    if (libraryError) {
+      console.error('Error fetching user library:', libraryError);
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    const excludedStoryIds = userLibrary.map(entry => entry.story_id);
+
+    // Fetch recommendations from whispernet_publications
+    // Match user genres, exclude books they already have, sort by recent
+    let query = supabase
+      .from('whispernet_publications')
+      .select(`
+        id,
+        story_id,
+        genre,
+        published_at,
+        stories:story_id (
+          id,
+          title,
+          cover_image_url,
+          genre,
+          user_id
+        )
+      `)
+      .eq('is_active', true)
+      .order('published_at', { ascending: false })
+      .limit(10);
+
+    // Exclude books already on user's shelf
+    if (excludedStoryIds.length > 0) {
+      query = query.not('story_id', 'in', `(${excludedStoryIds.join(',')})`);
+    }
+
+    const { data: publications, error: pubError } = await query;
+
+    if (pubError) {
+      console.error('Error fetching publications:', pubError);
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    if (!publications || publications.length === 0) {
+      return res.json({
+        success: true,
+        recommendations: [],
+        message: 'No recommendations available yet'
+      });
+    }
+
+    // Score publications by genre match
+    const scored = publications.map(pub => {
+      let score = 0;
+
+      // Base score: more recent = higher score
+      const daysSincePublished = Math.floor((Date.now() - new Date(pub.published_at).getTime()) / (1000 * 60 * 60 * 24));
+      score += Math.max(0, 100 - daysSincePublished); // Up to +100 for very recent
+
+      // Genre match bonus
+      if (userGenres.includes(pub.genre)) {
+        score += 50;
+      }
+
+      return { ...pub, score };
+    });
+
+    // Sort by score and take top 3-5
+    scored.sort((a, b) => b.score - a.score);
+    const topRecommendations = scored.slice(0, 5);
+
+    // Format response
+    const recommendations = topRecommendations.map(pub => ({
+      publication_id: pub.id,
+      story_id: pub.story_id,
+      title: pub.stories.title,
+      genre: pub.genre,
+      cover_image_url: pub.stories.cover_image_url,
+      resonance_words: [] // Placeholder for now (Resonance is WhisperNet team scope)
+    }));
+
+    res.json({
+      success: true,
+      recommendations
+    });
+
+  } catch (error) {
+    console.error('Recommendations endpoint error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/discovery/feed
+ *
+ * Returns recent activity events for the ambient "Live from the WhisperNet" feed.
+ * Synthesizes from reading_sessions and story_feedback to show emotionally compelling moments.
+ * Respects whispernet_show_city privacy setting.
+ */
+router.get('/feed', async (req, res) => {
+  try {
+    // Get authenticated user (feed is only for logged-in users)
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+
+    if (authError || !user) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    // Synthesize feed from recent completed reading sessions
+    // Get sessions where user finished a chapter (completed = true) in last 24 hours
+    const { data: sessions, error: sessionsError } = await supabase
+      .from('reading_sessions')
+      .select(`
+        user_id,
+        story_id,
+        chapter_number,
+        session_end,
+        completed,
+        stories:story_id (
+          id,
+          title,
+          whispernet_published
+        )
+      `)
+      .eq('completed', true)
+      .gte('session_end', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order('session_end', { ascending: false })
+      .limit(20);
+
+    if (sessionsError) {
+      console.error('Error fetching sessions:', sessionsError);
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    if (!sessions || sessions.length === 0) {
+      return res.json({
+        success: true,
+        feed: []
+      });
+    }
+
+    // Filter for WhisperNet books only
+    const whispernetSessions = sessions.filter(s => s.stories?.whispernet_published);
+
+    // Get user preferences for each reader (to check whispernet_show_city)
+    const userIds = [...new Set(whispernetSessions.map(s => s.user_id))];
+
+    const { data: userPrefs, error: prefsError } = await supabase
+      .from('user_preferences')
+      .select('user_id, whispernet_display_name, whispernet_show_city')
+      .in('user_id', userIds);
+
+    if (prefsError) {
+      console.error('Error fetching user prefs for feed:', prefsError);
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    const prefsMap = {};
+    userPrefs.forEach(p => {
+      prefsMap[p.user_id] = p;
+    });
+
+    // Generate feed items (only show book completions for emotionally compelling moments)
+    const feedItems = whispernetSessions
+      .filter(s => s.chapter_number === 12) // Only show book completions (chapter 12)
+      .slice(0, 10) // Limit to 10 items
+      .map(session => {
+        const prefs = prefsMap[session.user_id];
+        const readerName = prefs?.whispernet_display_name || 'A reader';
+        const showCity = prefs?.whispernet_show_city !== false;
+
+        // For now, use generic location (in real system, would have actual city data)
+        const location = showCity ? ' in Tokyo' : '';
+
+        return {
+          id: `${session.user_id}_${session.story_id}_${session.session_end}`,
+          type: 'book_completion',
+          message: `${readerName}${location} just finished ${session.stories.title}`,
+          story_id: session.story_id,
+          story_title: session.stories.title,
+          timestamp: session.session_end
+        };
+      });
+
+    res.json({
+      success: true,
+      feed: feedItems
+    });
+
+  } catch (error) {
+    console.error('Feed endpoint error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/discovery/browse?filter=trending&genre=fantasy
+ *
+ * Returns filtered browse results from whispernet_publications.
+ * Supports filters: for_you, trending, new_releases, by_mood, genre, length
+ */
+router.get('/browse', async (req, res) => {
+  try {
+    const { filter = 'for_you', genre, mood, length, user_id } = req.query;
+
+    // Get authenticated user
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+
+    if (authError || !user) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    // Get books already on user's shelf (to exclude them)
+    const actualUserId = user_id || user.id;
+    const { data: userLibrary, error: libraryError } = await supabase
+      .from('whispernet_library')
+      .select('story_id')
+      .eq('user_id', actualUserId);
+
+    if (libraryError) {
+      console.error('Error fetching user library:', libraryError);
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    const excludedStoryIds = userLibrary.map(entry => entry.story_id);
+
+    // Base query
+    let query = supabase
+      .from('whispernet_publications')
+      .select(`
+        id,
+        story_id,
+        genre,
+        mood_tags,
+        published_at,
+        stories:story_id (
+          id,
+          title,
+          cover_image_url,
+          genre
+        )
+      `)
+      .eq('is_active', true)
+      .limit(20);
+
+    // Exclude books already on user's shelf
+    if (excludedStoryIds.length > 0) {
+      query = query.not('story_id', 'in', `(${excludedStoryIds.join(',')})`);
+    }
+
+    // Apply filter
+    switch (filter) {
+      case 'new_releases':
+        query = query.order('published_at', { ascending: false });
+        break;
+
+      case 'trending':
+        // For now, just sort by recent (TODO: add view/share counts later)
+        query = query.order('published_at', { ascending: false });
+        break;
+
+      case 'for_you':
+      default:
+        // Personalized (same as recommendations logic)
+        query = query.order('published_at', { ascending: false });
+        break;
+    }
+
+    // Apply genre filter
+    if (genre) {
+      query = query.eq('genre', genre);
+    }
+
+    // Apply mood filter (mood_tags is an array)
+    if (mood) {
+      query = query.contains('mood_tags', [mood]);
+    }
+
+    const { data: publications, error: pubError } = await query;
+
+    if (pubError) {
+      console.error('Error fetching browse results:', pubError);
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    // Apply length filter in post-processing (no direct DB column for length)
+    let results = publications || [];
+    if (length) {
+      // TODO: Calculate book length from chapter count or word count
+      // For now, return all results
+    }
+
+    // Format response
+    const books = results.map(pub => ({
+      publication_id: pub.id,
+      story_id: pub.story_id,
+      title: pub.stories.title,
+      genre: pub.genre,
+      cover_image_url: pub.stories.cover_image_url,
+      mood_tags: pub.mood_tags || [],
+      resonance_words: [] // Placeholder
+    }));
+
+    res.json({
+      success: true,
+      filter,
+      results: books
+    });
+
+  } catch (error) {
+    console.error('Browse endpoint error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+module.exports = router;

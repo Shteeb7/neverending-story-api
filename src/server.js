@@ -22,6 +22,7 @@ const codebaseContextRoutes = require('./routes/codebase-context');
 const shareLinksRoutes = require('./routes/share-links');
 const whispernetRoutes = require('./routes/whispernet');
 const publicationsRoutes = require('./routes/publications');
+const discoveryRoutes = require('./routes/discovery');
 
 // Initialize Express app
 const app = express();
@@ -117,6 +118,7 @@ app.use('/bug-reports', bugReportRoutes);
 app.use('/share-links', shareLinksRoutes);
 app.use('/whispernet', whispernetRoutes);
 app.use('/api/publications', publicationsRoutes);
+app.use('/api/discovery', discoveryRoutes);
 app.use('/', codebaseContextRoutes);
 
 // Railway deploy webhook (no auth — Railway sends these directly)
