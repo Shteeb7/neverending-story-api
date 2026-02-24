@@ -341,15 +341,15 @@ router.post('/new-story-request', authenticateUser, requireAIConsentMiddleware, 
   // 4. Clear any existing unused premise sets for this user
   //    (so the new premises replace old ones)
   const { error: clearError } = await supabaseAdmin
-    .from('premises')
-    .delete()
+    .from('story_premises')
+    .update({ status: 'discarded' })
     .eq('user_id', userId)
-    .is('story_id', null);
+    .neq('status', 'discarded');
 
   if (clearError) {
-    console.log('⚠️ Failed to clear old premises:', clearError);
+    console.log('⚠️ Failed to discard old premises:', clearError);
   } else {
-    console.log('🗑️ Cleared old unused premises');
+    console.log('🗑️ Discarded old premise sets for returning user');
   }
 
   // 5. Generate new premises with BOTH existing preferences AND new direction

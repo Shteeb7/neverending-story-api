@@ -605,6 +605,31 @@ Weight premises toward what this reader's ACTUAL feedback reveals, not just thei
   const previousTitles = (readHistory || []).map(s => s.title).filter(Boolean);
   const previousGenres = (readHistory || []).map(s => s.genre).filter(Boolean);
 
+  // Fetch ALL previously offered premise titles (selected or not) to prevent
+  // Claude from regenerating identical titles across sessions
+  const { data: allPremiseSets } = await supabaseAdmin
+    .from('story_premises')
+    .select('premises')
+    .eq('user_id', userId)
+    .order('generated_at', { ascending: false })
+    .limit(10);
+
+  const previouslyOfferedTitles = [];
+  if (allPremiseSets) {
+    for (const set of allPremiseSets) {
+      if (Array.isArray(set.premises)) {
+        for (const p of set.premises) {
+          if (p.title && !previousTitles.includes(p.title)) {
+            previouslyOfferedTitles.push(p.title);
+          }
+        }
+      }
+    }
+  }
+  if (previouslyOfferedTitles.length > 0) {
+    console.log(`🔄 Found ${previouslyOfferedTitles.length} previously offered (unselected) premise titles to exclude`);
+  }
+
   console.log('📊 Generating premises with three-tier framework:');
   console.log(`   Genres: ${genres.join(', ') || 'None specified'}`);
   console.log(`   Themes: ${themes.join(', ') || 'None specified'}`);
@@ -692,7 +717,10 @@ READER PROFILE:
 ${learnedPreferencesBlock}${crossBookFeedbackBlock}${directedRequestContext}
 READING HISTORY (do NOT repeat these):
 ${historyList}
-
+${previouslyOfferedTitles.length > 0 ? `
+PREVIOUSLY OFFERED TITLES (reader saw these but did NOT choose them — do NOT reuse these titles or close variations):
+${previouslyOfferedTitles.join(', ')}
+` : ''}
 DISCOVERY TOLERANCE: ${discoveryTolerance.toFixed(2)} (scale 0.0 = comfort-seeker, 1.0 = explorer)
 
 ${excludePremises.length > 0 ? `
