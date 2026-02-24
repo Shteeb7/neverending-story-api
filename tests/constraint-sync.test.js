@@ -248,4 +248,34 @@ describe('Database Constraint Sync', () => {
       expect(missing).toEqual([]);
     });
   });
+
+  // ============================================================
+  // whispernet_library.source
+  // ============================================================
+  describe('whispernet_library.source', () => {
+    const CONSTRAINT_VALUES = ['shared', 'browsed'];
+
+    // From WhisperNet endpoints (Prompt 8-10)
+    const CODE_WRITES = ['shared', 'browsed'];
+
+    test('all source values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
+
+  // ============================================================
+  // user_preferences.whisper_notification_pref
+  // ============================================================
+  describe('user_preferences.whisper_notification_pref', () => {
+    const CONSTRAINT_VALUES = ['off', 'daily', 'realtime'];
+
+    // From settings endpoints and onboarding (Prompt 9)
+    const CODE_WRITES = ['off', 'daily', 'realtime'];
+
+    test('all whisper_notification_pref values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
 });
