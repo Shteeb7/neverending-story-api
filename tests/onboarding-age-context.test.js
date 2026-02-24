@@ -73,7 +73,7 @@ describe('Onboarding Age Context', () => {
     // Verify the age context is present in the prompt
     expect(prompt).toContain(`Age: ${age} years old`);
     expect(prompt).toContain('Minor: YES — all content must be age-appropriate');
-    expect(prompt).toContain('CALIBRATE YOUR DELIVERY TO THIS READER\'S AGE:');
+    expect(prompt).toContain('Calibrate your delivery:');
     expect(prompt).toContain('Ages 13-15: Slightly more sophisticated but still warm');
   });
 
@@ -87,7 +87,7 @@ describe('Onboarding Age Context', () => {
     // Should still work, but show "unknown" age
     expect(prompt).toContain('Age: unknown years old');
     expect(prompt).toContain('Minor: No');
-    expect(prompt).toContain('If age is unknown: Default to inferring from book titles');
+    expect(prompt).toContain('If age is unknown: Infer from the book titles they mention');
   });
 
   test('Age calculation accounts for birth month', async () => {
