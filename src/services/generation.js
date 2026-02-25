@@ -1639,6 +1639,18 @@ async function generateArcOutline(storyId, userId) {
 
   const storyGenre = story.genre || bible.genre || 'general fiction';
 
+  // Fetch world codex if available (generated before arc in pipeline)
+  const { data: worldCodex } = await supabaseAdmin
+    .from('world_codex')
+    .select('codex_data')
+    .eq('story_id', storyId)
+    .maybeSingle();
+
+  // Build world rules block for arc — codex (structured) preferred, bible fallback
+  const worldRulesForArc = worldCodex
+    ? JSON.stringify(worldCodex.codex_data, null, 2)
+    : JSON.stringify(bible.world_rules || {}, null, 2);
+
   const prompt = `You are an expert story structure designer creating a detailed roadmap for compelling fiction.
 
 Using this story bible, create a detailed 12-chapter outline following a classic 3-act structure:
@@ -1669,6 +1681,12 @@ Using this story bible, create a detailed 12-chapter outline following a classic
 
   <target_age>${ageRange}</target_age>
 </story_bible_summary>
+
+<world_rules>
+${worldRulesForArc}
+</world_rules>
+
+Your arc MUST respect these world rules. If a chapter involves the world's systems (magic, technology, politics, etc.), the outline should reflect their costs and constraints. If a chapter involves travel, it should respect established geography. Do NOT plan plot beats that violate established world rules — readers will notice.
 
 GENRE-SPECIFIC STORYTELLING — this is a ${storyGenre} story. Your arc must use the conventions readers of this genre EXPECT:
 
@@ -3106,6 +3124,178 @@ Return ONLY a JSON object:
 }
 
 /**
+ * Generate a structured World Codex from the story bible's world_rules.
+ * Converts narrative prose into explicit, discrete rules that can be tracked
+ * and enforced chapter-to-chapter. Genre-adaptive categories.
+ *
+ * Generated once per story, stored in world_codex table.
+ * Used by: arc generation (world-aware planning), chapter generation (targeted context),
+ * entity validation (richer ground truth), quality review (world consistency criterion).
+ */
+async function generateWorldCodex(storyId, userId, bible, genre) {
+  const storyTitle = bible?.title || 'Untitled';
+  const worldRules = bible?.world_rules || bible?.content?.world_rules || {};
+
+  if (!worldRules || Object.keys(worldRules).length === 0) {
+    console.log(`🌍 [${storyTitle}] World codex: no world_rules in bible, generating minimal codex`);
+  }
+
+  const startTime = Date.now();
+
+  // Genre-adaptive extraction template
+  const genreLower = (genre || 'fiction').toLowerCase();
+  let genreCategories = '';
+
+  if (genreLower.includes('fantasy') || genreLower.includes('epic') || genreLower.includes('litrpg') || genreLower.includes('gamelit')) {
+    genreCategories = `This is a ${genre} story. Extract with special depth:
+- MAGIC/POWER SYSTEMS: Every rule, cost, limitation, exception. If healing requires contact, say so. If power has a price, quantify it. If there are ranks/levels, list them.
+- CREATURES/BEINGS: Types, behaviors, threat levels, weaknesses.
+- POLITICAL FACTIONS: Goals, methods, alliances, rivalries, power structures.
+- GEOGRAPHY: Regions, distances, travel constraints, environmental hazards.`;
+  } else if (genreLower.includes('mystery') || genreLower.includes('thriller') || genreLower.includes('detective') || genreLower.includes('legal')) {
+    genreCategories = `This is a ${genre} story. Extract with special depth:
+- EVIDENCE/CLUE RULES: How information is discovered, what constitutes proof, chain of custody.
+- INFORMATION ASYMMETRY: Who knows what. What the reader knows vs. characters.
+- TIMELINE CONSTRAINTS: Deadlines, alibis, sequence of events that matter.
+- PROCEDURAL RULES: Court procedures, investigation protocols, jurisdictional limits.`;
+  } else if (genreLower.includes('romance') || genreLower.includes('love')) {
+    genreCategories = `This is a ${genre} story. Extract with special depth:
+- SOCIAL DYNAMICS: Class/status differences, workplace rules, family expectations, community norms.
+- RELATIONSHIP HISTORY: Past relationships, emotional baggage, trust issues, attachment styles.
+- SETTING RULES: Workplace policies, small-town dynamics, cultural expectations that constrain behavior.
+- EMOTIONAL STAKES: What each character risks by loving, what they protect by not.`;
+  } else if (genreLower.includes('sci-fi') || genreLower.includes('science fiction') || genreLower.includes('space')) {
+    genreCategories = `This is a ${genre} story. Extract with special depth:
+- TECHNOLOGY RULES: What tech can/can't do, costs, limitations, side effects.
+- SCIENTIFIC CONSTRAINTS: Physics rules (even if modified), biological rules, environmental constraints.
+- POLITICAL/SOCIAL SYSTEMS: Governance, class structure, faction dynamics, resource distribution.
+- GEOGRAPHY/SPACE: Distances, travel times, environmental hazards, habitable zones.`;
+  } else if (genreLower.includes('horror') || genreLower.includes('dark')) {
+    genreCategories = `This is a ${genre} story. Extract with special depth:
+- THREAT RULES: What the threat can/can't do, its constraints, its patterns.
+- SURVIVAL RULES: What protects characters, what makes them vulnerable, what triggers danger.
+- SETTING RULES: Cursed locations, time-based effects, environmental hazards.
+- INFORMATION RULES: What characters can/can't perceive, unreliable narrator constraints.`;
+  } else {
+    genreCategories = `This is a ${genre} story. Extract all world constraints that a reader would notice if violated — social norms, physical setting rules, character capabilities, timeline constraints, established facts about the world.`;
+  }
+
+  const prompt = `You are a world-building architect. Your job: convert narrative world descriptions into a STRUCTURED RULEBOOK with explicit, discrete entries.
+
+A story bible describes a world in flowing prose. That's great for inspiration, but terrible for consistency. When Chapter 8 needs to know whether healing magic requires physical contact, a paragraph of flavor text doesn't help. An explicit rule does.
+
+<world_rules_narrative>
+${JSON.stringify(worldRules, null, 2)}
+</world_rules_narrative>
+
+<bible_characters>
+${JSON.stringify(bible?.characters || {}, null, 2)}
+</bible_characters>
+
+<bible_themes>
+${JSON.stringify(bible?.themes || [], null, 2)}
+</bible_themes>
+
+<key_locations>
+${JSON.stringify(bible?.key_locations || [], null, 2)}
+</key_locations>
+
+${genreCategories}
+
+FOR EVERY GENRE, also extract:
+- ESTABLISHED FACTS: Concrete truths about this world that MUST remain consistent (character capabilities, historical events, physical laws, social rules).
+- TIMELINE ANCHORS: Key events and their temporal relationships.
+- GEOGRAPHY: Locations mentioned, spatial relationships, travel constraints.
+
+RULES FOR YOUR OUTPUT:
+1. Each rule must be EXPLICIT and TESTABLE. "Magic is mysterious" is useless. "Saltblood magic requires physical contact to heal; cost is proportional fatigue" is useful.
+2. Note the SCOPE of each rule (who/what it applies to).
+3. Note COSTS and CONSEQUENCES where applicable.
+4. Note EXCEPTIONS if any are established.
+5. Mark facts as "immutable" (true/false) — can this change during the story, or is it bedrock?
+6. If the narrative is vague about a rule, state what IS established and flag what's ambiguous.
+
+Return ONLY valid JSON:
+{
+  "systems": [
+    {
+      "name": "System name (e.g., 'Tidal Magic', 'Court Procedures', 'Pack Social Hierarchy')",
+      "rules": [
+        { "rule": "Explicit statement", "cost": "What it costs or null", "scope": "Who/what this applies to", "exceptions": "Known exceptions or null", "immutable": true }
+      ]
+    }
+  ],
+  "factions": [
+    { "name": "Faction name", "goals": "What they want", "methods": "How they pursue it", "relationships": { "OtherFaction": "adversarial|allied|neutral|complex" } }
+  ],
+  "geography": [
+    { "name": "Location name", "facts": ["fact1", "fact2"], "connections": ["connected to X", "3 days travel from Y"] }
+  ],
+  "established_facts": [
+    { "fact": "Concrete fact", "category": "character_capability|history|physics|social|biological", "immutable": true }
+  ],
+  "timeline_anchors": [
+    { "event": "Event description", "when": "Temporal reference", "significance": "Why it matters" }
+  ]
+}`;
+
+  try {
+    const response = await callClaudeWithRetry(
+      prompt,
+      `World codex generation for "${storyTitle}"`,
+      storyId,
+      storyTitle,
+      {
+        model: 'claude-haiku-4-5-20251001',
+        maxTokens: 4000,
+        systemPrompt: 'You are a world-building architect that converts narrative prose into structured, explicit rule sets. Return only valid JSON.'
+      }
+    );
+
+    const parsed = parseAndValidateJSON(response, ['systems', 'established_facts']);
+    if (!parsed) {
+      console.warn(`🌍 [${storyTitle}] World codex: failed to parse response, skipping`);
+      return null;
+    }
+
+    // Estimate token count
+    const codexStr = JSON.stringify(parsed);
+    const tokenEstimate = Math.ceil(codexStr.length / 4);
+
+    // Store in world_codex table
+    const { error: insertError } = await supabaseAdmin
+      .from('world_codex')
+      .upsert({
+        story_id: storyId,
+        genre: genre || 'fiction',
+        codex_data: parsed,
+        token_count: tokenEstimate
+      }, { onConflict: 'story_id' });
+
+    if (insertError) {
+      console.error(`🌍 [${storyTitle}] World codex: DB insert error: ${insertError.message}`);
+      return null;
+    }
+
+    const elapsed = Date.now() - startTime;
+    storyLog(storyId, storyTitle, `🌍 [${storyTitle}] World codex: generated ✅ (${parsed.systems?.length || 0} systems, ${parsed.established_facts?.length || 0} facts, ${tokenEstimate} tokens, ${elapsed}ms)`);
+
+    // Log cost
+    await logApiCost(userId, storyId, 'anthropic', 'claude-haiku-4-5-20251001', 'world_codex_generation', 0, 0, 0, {
+      systems_count: parsed.systems?.length || 0,
+      facts_count: parsed.established_facts?.length || 0,
+      token_estimate: tokenEstimate,
+      duration_ms: elapsed
+    });
+
+    return parsed;
+  } catch (err) {
+    console.error(`🌍 [${storyTitle}] World codex generation failed: ${err.message}`);
+    return null;
+  }
+}
+
+/**
  * Generate a single chapter with quality review
  * @param {string} storyId - The story ID
  * @param {number} chapterNumber - The chapter number to generate
@@ -3262,6 +3452,16 @@ async function generateChapter(storyId, chapterNumber, userId, editorBrief = nul
     console.log(`⚙️ [${storyTitle}] Character ledger DISABLED by generation_config`);
   }
 
+  // Build world continuity context block (replaces old JSON.stringify world_rules dump)
+  const { buildWorldContextBlock } = require('./world-continuity');
+  const worldContextBlock = config.world_ledger !== false
+    ? await buildWorldContextBlock(storyId, chapterNumber, effectiveOutline)
+    : '';
+
+  if (config.world_ledger === false) {
+    console.log(`⚙️ [${storyTitle}] World ledger DISABLED by generation_config`);
+  }
+
   // --- PROSE DIRECTIVE: story-specific voice or fallback to static rules ---
   const proseDirective = config.prose_directive || null;
 
@@ -3332,9 +3532,9 @@ Write Chapter ${chapterNumber} of "${bible.title}" following this outline and cr
     ${bible.characters.supporting?.map(sc => `<character name="${sc.name}" role="${sc.role}" relationship="${sc.relationship_dynamic || 'N/A'}">${sc.personality}</character>`).join('\n    ') || 'None'}
   </supporting_characters>
 
-  <world_rules>
+  ${worldContextBlock ? worldContextBlock : `<world_rules>
     ${JSON.stringify(bible.world_rules)}
-  </world_rules>
+  </world_rules>`}
 
   <central_conflict>${bible.central_conflict.description}</central_conflict>
 
@@ -3505,7 +3705,7 @@ ${reviewStandards}
 
 Score each criterion (1-10), provide evidence quotes, and suggest fixes if score < 7.
 
-1. VOICE CONSISTENCY (Weight: 25%)
+1. VOICE CONSISTENCY (Weight: 20%)
    - Does the prose sound like it belongs to THIS story?
    - Is the voice distinctive and sustained throughout?
    - Would a reader recognize this as the same narrator from other chapters?
@@ -3517,7 +3717,7 @@ Score each criterion (1-10), provide evidence quotes, and suggest fixes if score
    - Does dialogue advance plot and reveal character?
    - Quote any generic or flat dialogue
 
-3. PACING & ENGAGEMENT (Weight: 20%)
+3. PACING & ENGAGEMENT (Weight: 15%)
    - Does the chapter pull the reader forward?
    - Strong opening? Compelling ending hook?
    - Varied sentence rhythm appropriate to this story's voice?
@@ -3528,12 +3728,20 @@ Score each criterion (1-10), provide evidence quotes, and suggest fixes if score
    - Natural voice without talking down?
    - Themes handled appropriately?
 
-5. CHARACTER CONSISTENCY (Weight: 5%)
+5. WORLD CONSISTENCY (Weight: 10%)
+   - Do world systems (magic, technology, politics, social rules) operate consistently with established rules?
+   - Are facts established in earlier chapters honored, not contradicted?
+   - Does geography and spatial logic hold?
+   - Does the timeline progress logically?
+   - Are any world rules violated or bent without narrative justification?
+   - Quote any contradictions or inconsistencies
+
+6. CHARACTER CONSISTENCY (Weight: 10%)
    - Do character decisions flow from established traits, fears, goals?
    - Any out-of-character moments?
    - Does this chapter develop the character arc?
 
-6. AI TELL DETECTION (Weight: 15%)
+7. AI TELL DETECTION (Weight: 10%)
    - Count: "something in [body part]" constructions
    - Count: "the kind of X that Y" constructions
    - Count: "not X, but Y" constructions
@@ -3555,7 +3763,7 @@ Return ONLY a JSON object in this exact format:
     "criteria_scores": {
       "voice_consistency": {
         "score": number (1-10),
-        "weight": 0.25,
+        "weight": 0.20,
         "quotes": ["quote1 showing issue or strength", "quote2"],
         "fix": "actionable fix if score < 7, else empty string"
       },
@@ -3567,7 +3775,7 @@ Return ONLY a JSON object in this exact format:
       },
       "pacing_engagement": {
         "score": number (1-10),
-        "weight": 0.20,
+        "weight": 0.15,
         "quotes": ["quote1", "quote2"],
         "fix": "actionable fix or empty"
       },
@@ -3577,15 +3785,21 @@ Return ONLY a JSON object in this exact format:
         "quotes": ["quote1", "quote2"],
         "fix": "actionable fix or empty"
       },
+      "world_consistency": {
+        "score": number (1-10),
+        "weight": 0.10,
+        "quotes": ["quote1 — any world rule violations or contradictions", "quote2"],
+        "fix": "actionable fix or empty"
+      },
       "character_consistency": {
         "score": number (1-10),
-        "weight": 0.05,
+        "weight": 0.10,
         "quotes": ["quote1", "quote2"],
         "fix": "actionable fix or empty"
       },
       "ai_tell_detection": {
         "score": number (1-10),
-        "weight": 0.15,
+        "weight": 0.10,
         "quotes": ["quote1", "quote2"],
         "fix": "actionable fix or empty"
       }
@@ -3671,6 +3885,19 @@ Return ONLY a JSON object in this exact format:
     }
   } else {
     console.log(`⚙️ [${storyTitle}] Skipping ledger extraction (character_ledger disabled)`);
+  }
+
+  // Extract world state ledger (parallel to character ledger — tracks world facts per chapter)
+  const { extractWorldStateLedger } = require('./world-continuity');
+  if (config.world_ledger !== false) {
+    try {
+      await extractWorldStateLedger(storyId, chapterNumber, chapter.content, userId);
+      storyLog(storyId, storyTitle, `🌍 [${storyTitle}] World ledger extracted for chapter ${chapterNumber}`);
+    } catch (err) {
+      storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] World ledger extraction failed for chapter ${chapterNumber}: ${err.message}`);
+    }
+  } else {
+    console.log(`⚙️ [${storyTitle}] Skipping world ledger extraction (world_ledger disabled)`);
   }
 
   // Entity validation (check consistency against story bible + prior chapters)
@@ -3822,6 +4049,28 @@ async function orchestratePreGeneration(storyId, userId) {
       }
     } else {
       storyLog(storyId, storyTitle, `✏️ [${storyTitle}] Prose directive: already exists, skipping`);
+    }
+
+    // Step 1.7: Generate world codex (blocking — arc needs world context for planning)
+    // Fast Haiku call (~1-2s), converts bible world_rules into structured rulebook
+    const { data: existingCodex } = await supabaseAdmin
+      .from('world_codex')
+      .select('id')
+      .eq('story_id', storyId)
+      .maybeSingle();
+
+    if (!existingCodex) {
+      storyLog(storyId, storyTitle, `🌍 [${storyTitle}] World codex: generating...`);
+      try {
+        const codex = await generateWorldCodex(storyId, userId, bible, story.genre || 'fiction');
+        if (codex) {
+          storyLog(storyId, storyTitle, `🌍 [${storyTitle}] World codex: stored ✅`);
+        }
+      } catch (err) {
+        storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] World codex failed (non-fatal, chapters will use fallback): ${err.message}`);
+      }
+    } else {
+      storyLog(storyId, storyTitle, `🌍 [${storyTitle}] World codex: already exists, skipping`);
     }
 
     // Step 2: Generate Arc (skip if already complete)

@@ -42,8 +42,15 @@ async function validateChapter(storyId, chapterId, chapterNumber, chapterContent
       .lt('chapter_number', chapterNumber)
       .order('chapter_number', { ascending: true });
 
-    // Build canonical entity reference from bible
-    const canonicalRef = buildCanonicalReference(bible);
+    // Fetch world codex for richer world rule validation (if available)
+    const { data: worldCodex } = await supabaseAdmin
+      .from('world_codex')
+      .select('codex_data')
+      .eq('story_id', storyId)
+      .maybeSingle();
+
+    // Build canonical entity reference from bible + codex
+    const canonicalRef = buildCanonicalReference(bible, worldCodex?.codex_data);
 
     // Build prior entity context (what's been established in earlier chapters)
     const priorEntityContext = buildPriorEntityContext(priorEntities || []);
@@ -154,7 +161,7 @@ async function validateChapter(storyId, chapterId, chapterNumber, chapterContent
  * Build a canonical reference string from the story bible
  * for the validation prompt to check against.
  */
-function buildCanonicalReference(bible) {
+function buildCanonicalReference(bible, codexData = null) {
   if (!bible) return 'No story bible available.';
 
   const parts = [];
@@ -178,8 +185,34 @@ function buildCanonicalReference(bible) {
     parts.push('CHARACTERS:\n' + chars.join('\n'));
   }
 
-  // World rules
-  if (bible.world_rules) {
+  // World rules — prefer structured codex over raw bible world_rules
+  if (codexData) {
+    const codexParts = [];
+    // Systems with explicit rules
+    if (codexData.systems && codexData.systems.length > 0) {
+      for (const system of codexData.systems) {
+        codexParts.push(`SYSTEM: ${system.name}`);
+        for (const rule of (system.rules || [])) {
+          codexParts.push(`  RULE: ${rule.rule} | Scope: ${rule.scope || 'general'} | Cost: ${rule.cost || 'none'} | Exceptions: ${rule.exceptions || 'none'}`);
+        }
+      }
+    }
+    // Established facts
+    if (codexData.established_facts && codexData.established_facts.length > 0) {
+      codexParts.push('ESTABLISHED FACTS:');
+      for (const fact of codexData.established_facts) {
+        codexParts.push(`  - ${fact.fact} [${fact.category || 'general'}] ${fact.immutable ? '(IMMUTABLE)' : '(mutable)'}`);
+      }
+    }
+    // Geography
+    if (codexData.geography && codexData.geography.length > 0) {
+      codexParts.push('GEOGRAPHY:');
+      for (const loc of codexData.geography) {
+        codexParts.push(`  - ${loc.name}: ${(loc.facts || []).join('; ')}`);
+      }
+    }
+    parts.push('WORLD CODEX (structured rules):\n' + codexParts.join('\n'));
+  } else if (bible.world_rules) {
     const rules = typeof bible.world_rules === 'string'
       ? bible.world_rules
       : JSON.stringify(bible.world_rules);
