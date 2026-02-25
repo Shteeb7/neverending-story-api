@@ -295,4 +295,312 @@ router.post('/:id/classify', authenticateUser, asyncHandler(async (req, res) => 
   });
 }));
 
+/**
+ * POST /api/publications/classify
+ * Run AI content classification on a story
+ */
+router.post('/classify', authenticateUser, asyncHandler(async (req, res) => {
+  const { story_id } = req.body;
+  const { userId } = req;
+
+  if (!story_id) {
+    return res.status(400).json({
+      success: false,
+      error: 'story_id required'
+    });
+  }
+
+  // Verify story ownership
+  const { data: story, error: storyError } = await supabaseAdmin
+    .from('stories')
+    .select('id, user_id')
+    .eq('id', story_id)
+    .single();
+
+  if (storyError || !story) {
+    return res.status(404).json({
+      success: false,
+      error: 'Story not found'
+    });
+  }
+
+  if (story.user_id !== userId) {
+    return res.status(403).json({
+      success: false,
+      error: 'You can only classify your own stories'
+    });
+  }
+
+  // Run AI classification
+  const { classifyStoryContent } = require('../services/content-classification');
+  const { rating, reason } = await classifyStoryContent(story_id);
+
+  // Store in content_reviews table
+  const { data: contentReview, error: reviewError } = await supabaseAdmin
+    .from('content_reviews')
+    .insert({
+      story_id,
+      publisher_id: userId,
+      ai_rating: rating,
+      status: 'pending',
+      prospero_conversation: {
+        messages: []
+      }
+    })
+    .select()
+    .single();
+
+  if (reviewError) {
+    console.error('Error creating content_review:', reviewError);
+    throw new Error('Failed to create content review record');
+  }
+
+  // Update story classification status
+  await supabaseAdmin
+    .from('stories')
+    .update({ content_classification_status: 'ai_classified' })
+    .eq('id', story_id);
+
+  res.json({
+    success: true,
+    content_review_id: contentReview.id,
+    rating,
+    reason
+  });
+}));
+
+/**
+ * POST /api/publications/classify/respond
+ * Handle publisher response to AI classification (agree or dispute)
+ */
+router.post('/classify/respond', authenticateUser, asyncHandler(async (req, res) => {
+  const { content_review_id, action, publisher_rating, argument } = req.body;
+  const { userId } = req;
+
+  if (!content_review_id || !action) {
+    return res.status(400).json({
+      success: false,
+      error: 'content_review_id and action required'
+    });
+  }
+
+  if (!['agree', 'dispute'].includes(action)) {
+    return res.status(400).json({
+      success: false,
+      error: 'action must be "agree" or "dispute"'
+    });
+  }
+
+  // Fetch content review
+  const { data: review, error: reviewError } = await supabaseAdmin
+    .from('content_reviews')
+    .select('*')
+    .eq('id', content_review_id)
+    .single();
+
+  if (reviewError || !review) {
+    return res.status(404).json({
+      success: false,
+      error: 'Content review not found'
+    });
+  }
+
+  if (review.publisher_id !== userId) {
+    return res.status(403).json({
+      success: false,
+      error: 'Not authorized'
+    });
+  }
+
+  if (action === 'agree') {
+    // Publisher agrees with AI rating
+    await supabaseAdmin
+      .from('content_reviews')
+      .update({
+        status: 'resolved',
+        final_rating: review.ai_rating
+      })
+      .eq('id', content_review_id);
+
+    await supabaseAdmin
+      .from('stories')
+      .update({
+        content_classification_status: 'publisher_confirmed',
+        maturity_rating: review.ai_rating
+      })
+      .eq('id', review.story_id);
+
+    return res.json({
+      success: true,
+      status: 'resolved',
+      final_rating: review.ai_rating
+    });
+  }
+
+  // action === 'dispute'
+  if (!publisher_rating || !argument) {
+    return res.status(400).json({
+      success: false,
+      error: 'publisher_rating and argument required for dispute'
+    });
+  }
+
+  // Validate publisher_rating
+  if (!['all_ages', 'teen_13', 'mature_17'].includes(publisher_rating)) {
+    return res.status(400).json({
+      success: false,
+      error: 'publisher_rating must be all_ages, teen_13, or mature_17'
+    });
+  }
+
+  // Get conversation history
+  const conversation = review.prospero_conversation || { messages: [] };
+  const exchangeCount = Math.floor(conversation.messages.length / 2); // publisher/prospero pairs
+
+  if (exchangeCount >= 3) {
+    // Max exchanges reached, escalate
+    return res.status(400).json({
+      success: false,
+      error: 'Maximum exchanges reached. Please escalate.',
+      should_escalate: true
+    });
+  }
+
+  // Add publisher's message to conversation
+  conversation.messages.push({
+    role: 'publisher',
+    content: argument,
+    timestamp: new Date().toISOString()
+  });
+
+  // Call Claude to get Prospero's response
+  const Anthropic = require('@anthropic-ai/sdk');
+  const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY
+  });
+
+  const prosperoPrompt = `You are Prospero, the AI storyteller for Mythweaver. You classified a story as "${review.ai_rating}" (all_ages/teen_13/mature_17).
+
+The publisher wants it classified as "${publisher_rating}" instead.
+
+Their argument: "${argument}"
+
+Consider their perspective carefully. You can:
+1. Change your rating if they make a valid point: "You make a fair point. I'll update it to [new_rating]."
+2. Stand firm if you believe your rating is correct: "I understand your perspective, but I believe [rating] is appropriate because [explanation]. If you'd still like to contest this, I can flag it for our team to review."
+
+Be thoughtful, respectful, and clear in your reasoning. Respond in 2-3 sentences.`;
+
+  const messages = [{ role: 'user', content: prosperoPrompt }];
+
+  const response = await anthropic.messages.create({
+    model: 'claude-opus-4-20250514',
+    max_tokens: 512,
+    messages
+  });
+
+  const prosperoResponse = response.content[0].text;
+
+  // Check if Prospero changed the rating
+  const ratingChangeMatch = prosperoResponse.match(/update it to (all_ages|teen_13|mature_17)/i);
+  const newRating = ratingChangeMatch ? ratingChangeMatch[1].toLowerCase() : null;
+
+  // Add Prospero's response to conversation
+  conversation.messages.push({
+    role: 'prospero',
+    content: prosperoResponse,
+    timestamp: new Date().toISOString(),
+    rating_changed: !!newRating,
+    new_rating: newRating
+  });
+
+  // Update content review
+  await supabaseAdmin
+    .from('content_reviews')
+    .update({
+      publisher_rating,
+      prospero_conversation: conversation,
+      status: newRating ? 'resolved' : 'disputed',
+      final_rating: newRating || undefined
+    })
+    .eq('id', content_review_id);
+
+  // Update story status
+  await supabaseAdmin
+    .from('stories')
+    .update({
+      content_classification_status: newRating ? 'publisher_confirmed' : 'disputed',
+      maturity_rating: newRating || undefined
+    })
+    .eq('id', review.story_id);
+
+  res.json({
+    success: true,
+    prospero_response: prosperoResponse,
+    status: newRating ? 'resolved' : 'disputed',
+    final_rating: newRating,
+    exchange_count: exchangeCount + 1,
+    max_exchanges_reached: exchangeCount + 1 >= 3
+  });
+}));
+
+/**
+ * POST /api/publications/classify/escalate
+ * Escalate disputed classification to internal review
+ */
+router.post('/classify/escalate', authenticateUser, asyncHandler(async (req, res) => {
+  const { content_review_id } = req.body;
+  const { userId } = req;
+
+  if (!content_review_id) {
+    return res.status(400).json({
+      success: false,
+      error: 'content_review_id required'
+    });
+  }
+
+  // Fetch content review
+  const { data: review, error: reviewError } = await supabaseAdmin
+    .from('content_reviews')
+    .select('*')
+    .eq('id', content_review_id)
+    .single();
+
+  if (reviewError || !review) {
+    return res.status(404).json({
+      success: false,
+      error: 'Content review not found'
+    });
+  }
+
+  if (review.publisher_id !== userId) {
+    return res.status(403).json({
+      success: false,
+      error: 'Not authorized'
+    });
+  }
+
+  // Update content review status to escalated
+  await supabaseAdmin
+    .from('content_reviews')
+    .update({
+      status: 'escalated'
+    })
+    .eq('id', content_review_id);
+
+  // Update story status
+  await supabaseAdmin
+    .from('stories')
+    .update({
+      content_classification_status: 'escalated',
+      maturity_rating: review.ai_rating // Publish with AI rating pending review
+    })
+    .eq('id', review.story_id);
+
+  res.json({
+    success: true,
+    message: 'Flagged for review. The team will resolve this within 48 hours.'
+  });
+}));
+
 module.exports = router;
