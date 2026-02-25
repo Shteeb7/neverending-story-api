@@ -8,7 +8,7 @@
 const express = require('express');
 const router = express.Router();
 const { generateFantasyName, selectFantasyName } = require('../services/fantasy-names');
-const authMiddleware = require('../middleware/auth');
+const { authenticateUser } = require('../middleware/auth');
 
 /**
  * POST /api/fantasy-names/generate
@@ -27,7 +27,7 @@ const authMiddleware = require('../middleware/auth');
  *   retry_after: 518400 // seconds remaining
  * }
  */
-router.post('/generate', authMiddleware, async (req, res) => {
+router.post('/generate', authenticateUser, async (req, res) => {
   try {
     const userId = req.user.id;
 
@@ -77,7 +77,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
  *   error: "This name is already taken"
  * }
  */
-router.post('/select', authMiddleware, async (req, res) => {
+router.post('/select', authenticateUser, async (req, res) => {
   try {
     const userId = req.user.id;
     const { name } = req.body;
