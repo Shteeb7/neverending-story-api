@@ -309,4 +309,131 @@ describe('Database Constraint Sync', () => {
       expect(missing).toEqual([]);
     });
   });
+
+  // ============================================================
+  // whisper_events.event_type (WhisperNet Prompt 1)
+  // ============================================================
+  describe('whisper_events.event_type', () => {
+    const CONSTRAINT_VALUES = [
+      'book_finished', 'resonance_left', 'badge_earned',
+      'book_published', 'book_gifted', 'book_claimed'
+    ];
+
+    // From WhisperNet service endpoints (Prompts 4-9)
+    const CODE_WRITES = [
+      'book_finished', 'resonance_left', 'badge_earned',
+      'book_published', 'book_gifted', 'book_claimed'
+    ];
+
+    test('all event_type values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
+
+  // ============================================================
+  // earned_badges.badge_type (WhisperNet Prompt 1)
+  // ============================================================
+  describe('earned_badges.badge_type', () => {
+    const CONSTRAINT_VALUES = [
+      'ember', 'current', 'worldwalker', 'resonant',
+      'wanderer', 'lamplighter', 'chainmaker'
+    ];
+
+    // From badge service (Prompt 7)
+    const CODE_WRITES = [
+      'ember', 'current', 'worldwalker', 'resonant',
+      'wanderer', 'lamplighter', 'chainmaker'
+    ];
+
+    test('all badge_type values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
+
+  // ============================================================
+  // content_reviews.status (WhisperNet Prompt 1)
+  // ============================================================
+  describe('content_reviews.status', () => {
+    const CONSTRAINT_VALUES = ['pending', 'resolved', 'escalated'];
+
+    // From content classification endpoints (Prompt 6)
+    const CODE_WRITES = ['pending', 'resolved', 'escalated'];
+
+    test('all content_reviews status values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
+
+  // ============================================================
+  // content_reports.reason (WhisperNet Prompt 1)
+  // ============================================================
+  describe('content_reports.reason', () => {
+    const CONSTRAINT_VALUES = [
+      'inappropriate_content', 'wrong_maturity_rating', 'spam', 'other'
+    ];
+
+    // From content reporting endpoints (Prompt 8)
+    const CODE_WRITES = [
+      'inappropriate_content', 'wrong_maturity_rating', 'spam', 'other'
+    ];
+
+    test('all content_reports reason values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
+
+  // ============================================================
+  // content_reports.status (WhisperNet Prompt 1)
+  // ============================================================
+  describe('content_reports.status', () => {
+    const CONSTRAINT_VALUES = ['pending', 'reviewed', 'action_taken', 'dismissed'];
+
+    // From content reporting endpoints (Prompt 8)
+    const CODE_WRITES = ['pending', 'reviewed', 'action_taken', 'dismissed'];
+
+    test('all content_reports status values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
+
+  // ============================================================
+  // recommendation_impressions.action (WhisperNet Prompt 1)
+  // ============================================================
+  describe('recommendation_impressions.action', () => {
+    const CONSTRAINT_VALUES = ['added', 'dismissed', 'ignored'];
+
+    // From discovery/recommendation endpoints (Prompt 8)
+    const CODE_WRITES = ['added', 'dismissed', 'ignored'];
+
+    test('all recommendation action values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
+
+  // ============================================================
+  // stories.content_classification_status (WhisperNet Prompt 1)
+  // ============================================================
+  describe('stories.content_classification_status', () => {
+    const CONSTRAINT_VALUES = [
+      'pending', 'ai_classified', 'publisher_confirmed',
+      'disputed', 'escalated', 'resolved'
+    ];
+
+    // From content classification endpoints (Prompt 6)
+    const CODE_WRITES = [
+      'pending', 'ai_classified', 'publisher_confirmed',
+      'disputed', 'escalated', 'resolved'
+    ];
+
+    test('all content_classification_status values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
 });
