@@ -27,6 +27,7 @@ const discoveryRoutes = require('./routes/discovery');
 const fantasyNamesRoutes = require('./routes/fantasy-names');
 const badgesRoutes = require('./routes/badges');
 const contentReportsRoutes = require('./routes/content-reports');
+const notificationsRoutes = require('./routes/notifications');
 
 // Initialize Express app
 const app = express();
@@ -127,6 +128,7 @@ app.use('/api/discovery', discoveryRoutes);
 app.use('/api/fantasy-names', fantasyNamesRoutes);
 app.use('/api/badges', badgesRoutes);
 app.use('/api/content-reports', contentReportsRoutes);
+app.use('/api/notifications', notificationsRoutes);
 app.use('/', codebaseContextRoutes);
 
 // Railway deploy webhook (no auth — Railway sends these directly)
@@ -215,6 +217,24 @@ setInterval(() => {
 }, FIVE_MINUTES);
 
 console.log('🔄 Self-healing enabled: checks every 5 minutes for stalled generations');
+console.log('=================================\n');
+
+// Daily digest scheduler: runs every hour, sends digests to users at 9am local time
+const ONE_HOUR = 60 * 60 * 1000;
+setInterval(() => {
+  console.log('\n📬 Running hourly daily digest check...');
+  // Call the internal endpoint via HTTP
+  const axios = require('axios');
+  axios.post(`http://localhost:${PORT}/api/notifications/send-daily-digests`)
+    .then(response => {
+      console.log(`📬 Daily digest check complete: ${response.data.message}`);
+    })
+    .catch(error => {
+      console.error('❌ Daily digest check failed:', error.message);
+    });
+}, ONE_HOUR);
+
+console.log('📬 Daily digest scheduler enabled: checks every hour for 9am local time');
 console.log('=================================\n');
 
 // Graceful shutdown

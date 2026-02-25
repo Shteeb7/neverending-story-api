@@ -3,6 +3,7 @@ const { supabaseAdmin } = require('../config/supabase');
 const { asyncHandler } = require('../middleware/error-handler');
 const { authenticateUser } = require('../middleware/auth');
 const { sentimentForWord } = require('../utils/sentiment');
+const { processWhisperEvent } = require('../services/notifications');
 
 const router = express.Router();
 
@@ -124,6 +125,20 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
   if (eventError) {
     console.error('Error creating whisper_event:', eventError);
     // Don't fail the request if event creation fails (resonance was still created)
+  } else {
+    // Process notification routing (fire-and-forget)
+    processWhisperEvent({
+      event_type: 'resonance_left',
+      actor_id: userId,
+      story_id,
+      metadata: {
+        display_name: displayName,
+        word: word.trim(),
+        story_title: story.title
+      }
+    }).catch(err => {
+      console.error('Notification processing failed:', err.message);
+    });
   }
 
   // Check for badge eligibility (fire-and-forget)
@@ -165,7 +180,7 @@ router.post('/whisper-backs', authenticateUser, asyncHandler(async (req, res) =>
   // Verify the resonance exists and belongs to the user
   const { data: resonance, error: resonanceError } = await supabaseAdmin
     .from('resonances')
-    .select('id, user_id')
+    .select('id, user_id, story_id, stories:story_id(title)')
     .eq('id', resonance_id)
     .eq('user_id', userId)
     .single();
@@ -226,6 +241,39 @@ router.post('/whisper-backs', authenticateUser, asyncHandler(async (req, res) =>
   if (insertError) {
     console.error('Error creating whisper back:', insertError);
     throw new Error(`Failed to create whisper back: ${insertError.message}`);
+  }
+
+  // Create whisper_event for whisper_back_received
+  const storyTitle = resonance.stories?.title || 'a story';
+  const { error: eventError } = await supabaseAdmin
+    .from('whisper_events')
+    .insert({
+      event_type: 'whisper_back_received',
+      actor_id: userId,
+      story_id: resonance.story_id,
+      metadata: {
+        display_name: displayName,
+        story_title: storyTitle
+      },
+      is_public: true
+    });
+
+  if (eventError) {
+    console.error('Error creating whisper_event:', eventError);
+    // Non-fatal
+  } else {
+    // Process notification routing (fire-and-forget)
+    processWhisperEvent({
+      event_type: 'whisper_back_received',
+      actor_id: userId,
+      story_id: resonance.story_id,
+      metadata: {
+        display_name: displayName,
+        story_title: storyTitle
+      }
+    }).catch(err => {
+      console.error('Notification processing failed:', err.message);
+    });
   }
 
   res.json({

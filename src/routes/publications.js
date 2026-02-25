@@ -9,6 +9,7 @@ const router = express.Router();
 const { supabaseAdmin } = require('../config/supabase');
 const { asyncHandler } = require('../middleware/error-handler');
 const { authenticateUser } = require('../middleware/auth');
+const { processWhisperEvent } = require('../services/notifications');
 
 /**
  * POST /api/publications
@@ -207,6 +208,21 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
   if (eventError) {
     console.error('Error creating whisper_event:', eventError);
     // Non-fatal - publication was still created
+  } else {
+    // Process notification routing (fire-and-forget)
+    processWhisperEvent({
+      event_type: 'book_published',
+      actor_id: userId,
+      story_id: story_id,
+      metadata: {
+        display_name: displayName,
+        story_title: story.title,
+        genre,
+        maturity_rating: dbMaturityRating
+      }
+    }).catch(err => {
+      console.error('Notification processing failed:', err.message);
+    });
   }
 
   res.json({

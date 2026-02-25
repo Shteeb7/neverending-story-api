@@ -2,6 +2,7 @@ const express = require('express');
 const { supabaseAdmin } = require('../config/supabase');
 const { asyncHandler } = require('../middleware/error-handler');
 const { authenticateUser } = require('../middleware/auth');
+const { processWhisperEvent } = require('../services/notifications');
 
 const router = express.Router();
 
@@ -114,6 +115,20 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
   if (eventError) {
     console.error('Error creating whisper_event:', eventError);
     // Non-fatal - share link was still created
+  } else {
+    // Process notification routing (fire-and-forget)
+    processWhisperEvent({
+      event_type: 'book_gifted',
+      actor_id: userId,
+      story_id: story_id,
+      metadata: {
+        display_name: displayName,
+        story_title: story.title,
+        share_chain_depth: shareChainDepth
+      }
+    }).catch(err => {
+      console.error('Notification processing failed:', err.message);
+    });
   }
 
   // Check for badge eligibility (fire-and-forget)
@@ -331,6 +346,20 @@ router.post('/:token/claim', authenticateUser, asyncHandler(async (req, res) => 
   if (eventError) {
     console.error('Error creating whisper_event:', eventError);
     // Non-fatal - book was still added to library
+  } else {
+    // Process notification routing (fire-and-forget)
+    processWhisperEvent({
+      event_type: 'book_claimed',
+      actor_id: userId,
+      story_id: shareLink.story_id,
+      metadata: {
+        display_name: displayName,
+        story_title: shareLink.stories.title,
+        sender_id: shareLink.sender_id
+      }
+    }).catch(err => {
+      console.error('Notification processing failed:', err.message);
+    });
   }
 
   // Check for badge eligibility (fire-and-forget)

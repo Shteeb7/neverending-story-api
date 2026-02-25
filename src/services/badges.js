@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require('../config/supabase');
+const { processWhisperEvent } = require('./notifications');
 
 /**
  * Badge System
@@ -410,6 +411,23 @@ async function awardBadge(badgeType, userId, storyId, storyTitle) {
       },
       is_public: true
     });
+
+  // Process notification routing (fire-and-forget)
+  processWhisperEvent({
+    event_type: 'badge_earned',
+    actor_id: userId,
+    story_id: storyId,
+    metadata: {
+      badge_type: badgeType,
+      badge_name: badgeInfo.name,
+      badge_tagline: badgeInfo.tagline,
+      story_title: storyTitle,
+      display_name: displayName,
+      user_id: userId // Include for badge special handling
+    }
+  }).catch(err => {
+    console.error('Notification processing failed:', err.message);
+  });
 
   return {
     badge_type: badgeType,
