@@ -17,14 +17,17 @@ const throttleMap = new Map();
 const THROTTLE_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
 // Cleanup throttle map every hour to prevent memory leak
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, timestamp] of throttleMap.entries()) {
-    if (now - timestamp > THROTTLE_WINDOW_MS * 2) {
-      throttleMap.delete(key);
+// Skip in test environment to allow Jest to exit cleanly
+if (process.env.NODE_ENV !== 'test') {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, timestamp] of throttleMap.entries()) {
+      if (now - timestamp > THROTTLE_WINDOW_MS * 2) {
+        throttleMap.delete(key);
+      }
     }
-  }
-}, 60 * 60 * 1000); // 1 hour
+  }, 60 * 60 * 1000); // 1 hour
+}
 
 /**
  * EVENT PRIORITY (for throttle window conflicts)
