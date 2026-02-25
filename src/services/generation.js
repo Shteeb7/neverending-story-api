@@ -37,30 +37,35 @@ function mapAgeRange(ageCategory) {
  * @param {string} chapterContent - The generated chapter text
  * @returns {object} { passed: boolean, violations: string[] }
  */
-function scanForProseViolations(chapterContent) {
+function scanForProseViolations(chapterContent, proseDirective = null) {
   const violations = [];
+  const guardrails = proseDirective?.prose_guardrails || {};
 
-  // 1. Count em dashes (—)
+  // 1. Count em dashes (—) — limit depends on story voice
   const emDashCount = (chapterContent.match(/—/g) || []).length;
-  if (emDashCount > 15) {
-    violations.push(`Em dashes: ${emDashCount} (limit: 15)`);
+  const emDashTolerance = guardrails.em_dash_tolerance || 'avoid';
+  const emDashLimit = emDashTolerance === 'embrace' ? 999
+    : emDashTolerance === 'moderate' ? 20
+    : 15; // 'avoid' — still generous for the scanner, prompt handles the tighter guidance
+  if (emDashCount > emDashLimit) {
+    violations.push(`Em dashes: ${emDashCount} (limit: ${emDashLimit})`);
   }
 
-  // 2. Count "Not X, but Y" and "Not X — Y" patterns
+  // 2. Count "Not X, but Y" and "Not X — Y" patterns (universal AI tell)
   const notButPattern = /Not [a-zA-Z]+(?:,| —) (?:but|just) /gi;
   const notButMatches = (chapterContent.match(notButPattern) || []).length;
-  if (notButMatches > 2) {
-    violations.push(`"Not X, but Y" constructions: ${notButMatches} (limit: 2)`);
+  if (notButMatches > 3) {
+    violations.push(`"Not X, but Y" constructions: ${notButMatches} (limit: 3)`);
   }
 
-  // 3. Count "something in" (case insensitive)
+  // 3. Count "something in" (universal AI tell)
   const somethingInPattern = /something in (?:his|her|their|my|your) /gi;
   const somethingInMatches = (chapterContent.match(somethingInPattern) || []).length;
   if (somethingInMatches > 2) {
     violations.push(`"Something in [X]" constructions: ${somethingInMatches} (limit: 2)`);
   }
 
-  // 4. Count "the kind of" (case insensitive)
+  // 4. Count "the kind of" (universal AI tell)
   const kindOfPattern = /the kind of/gi;
   const kindOfMatches = (chapterContent.match(kindOfPattern) || []).length;
   if (kindOfMatches > 2) {
@@ -2717,6 +2722,390 @@ async function generateBatch(storyId, startChapter, endChapter, userId, editorBr
 }
 
 /**
+ * Build dynamic craft rules from a prose directive (story-specific voice).
+ */
+function buildDynamicCraftRules(proseDirective) {
+  const craft = proseDirective.craft_rules || {};
+  const leanInto = (craft.lean_into || []).map(t => `• ${t}`).join('\n  ');
+  const avoid = (craft.avoid || []).map(t => `• ${t}`).join('\n  ');
+
+  return `<writing_craft_rules>
+  <voice_directives>
+  LEAN INTO — these techniques define this story's voice:
+  ${leanInto || '• Show through action and sensation rather than narration'}
+
+  AVOID — these would break this story's voice:
+  ${avoid || '• Generic, voiceless prose that could belong to any book'}
+  </voice_directives>
+
+  <dialogue_style>
+  ${craft.dialogue_style || 'Each character should sound distinct through vocabulary, rhythm, and concerns. No adverb dialogue tags.'}
+  </dialogue_style>
+
+  <pacing>
+  ${craft.pacing_style || 'Vary sentence length. Open with a hook. End with a hook. Keep transitions crisp.'}
+  </pacing>
+
+  <emotional_register>
+  ${craft.emotional_register || 'Show emotions through physical sensation, action, and dialogue — not by naming them.'}
+  </emotional_register>
+
+  <universal_standards>
+  These apply to ALL stories regardless of voice:
+  • Show emotions through action/sensation/dialogue — never name them directly ("felt angry", "was scared")
+  • Each character must sound distinct in dialogue
+  • No adverb dialogue tags ("said angrily") — use action beats
+  • Open and close every chapter with hooks
+  • Never use: "letting out a breath they didn't know they were holding", "a mixture of X and Y", "little did they know"
+  </universal_standards>
+</writing_craft_rules>`;
+}
+
+/**
+ * Build static craft rules for legacy stories without a prose directive.
+ */
+function buildStaticCraftRules() {
+  return `<writing_craft_rules>
+  <show_dont_tell>
+    NEVER name an emotion directly. Show it through physical sensation, action, dialogue, or metaphor.
+
+    If you write a sentence containing "felt", "was", or "seemed" followed by an emotion word, DELETE IT and rewrite.
+
+    EXAMPLES:
+    ❌ "She felt angry"
+    ✅ "Her hands curled into fists, jaw clenched so tight her teeth ached"
+
+    ❌ "The forest was scary"
+    ✅ "Branches clawed at the sky like skeletal fingers, and something rustled in the undergrowth"
+
+    ❌ "He was brave"
+    ✅ "His knees wobbled, but he stepped forward anyway"
+
+    ❌ "They were best friends"
+    ✅ "She shoved him with her shoulder and he shoved back, both grinning"
+  </show_dont_tell>
+
+  <dialogue_quality>
+    • Each character MUST sound distinct through vocabulary, sentence length, speech patterns, and concerns
+    • NO adverb dialogue tags ("said angrily", "whispered softly")—use action beats instead
+    • Dialogue must do double duty: reveal character AND advance plot simultaneously
+    • Include subtext—characters don't always say what they mean, especially in conflict
+    • No more than 3 consecutive lines of dialogue without a beat or action
+  </dialogue_quality>
+
+  <pacing_and_structure>
+    • Vary sentence length: short punchy sentences for tension, longer flowing ones for atmosphere
+    • Open every chapter with action, dialogue, or intrigue—NEVER pure description
+    • End every chapter with a hook that compels the reader forward
+    • Scene transitions should be crisp, not padded with unnecessary "meanwhile" or "later that day"
+  </pacing_and_structure>
+
+  <things_to_avoid>
+    FORBIDDEN CONSTRUCTIONS (AI tells):
+    • Purple prose and flowery over-description
+    • Explaining emotions instead of showing them
+    • "Not X, but Y" sentence structure (e.g., "It wasn't fear, but excitement")
+    • Rhetorical questions as filler
+    • Em dash overuse (max 2 per chapter)
+    • Repeating the same sentence structure more than twice in a row
+    • Starting consecutive paragraphs the same way
+    • Adverbs modifying "said"
+    • "Letting out a breath they didn't know they were holding"
+    • "A mixture of X and Y" emotion descriptions
+    • Any form of "little did they know"
+  </things_to_avoid>
+</writing_craft_rules>`;
+}
+
+/**
+ * Build dynamic prose guardrails from a prose directive (replaces CRITICAL_PROSE_RULES).
+ */
+function buildDynamicProseGuardrails(proseDirective) {
+  const guardrails = proseDirective.prose_guardrails || {};
+
+  // Map tolerance levels to actual limits
+  const emDashLimit = guardrails.em_dash_tolerance === 'embrace' ? 'No hard limit — use em dashes as your voice requires'
+    : guardrails.em_dash_tolerance === 'moderate' ? 'Maximum 6 em dashes per chapter'
+    : 'Maximum 2 em dashes per chapter — use periods, commas, or semicolons instead';
+
+  const sentenceNote = guardrails.sentence_length_preference === 'short_punchy'
+    ? 'Favor short, punchy sentences (avg 8-12 words). Longer sentences are the exception, not the rule.'
+    : guardrails.sentence_length_preference === 'flowing_literary'
+    ? 'Favor flowing, musical sentences (avg 15-25 words) with occasional short punches for impact.'
+    : 'Mix sentence lengths dynamically — short for tension, long for atmosphere. No default length.';
+
+  const metaphorNote = guardrails.metaphor_density === 'sparse'
+    ? 'Use metaphors sparingly (1-2 per scene). This voice is direct — let concrete details do the work.'
+    : guardrails.metaphor_density === 'rich'
+    ? 'This voice is lyrical and image-rich. Weave metaphors naturally throughout, but each must earn its place.'
+    : 'Use metaphors where they feel natural, not forced. Quality over quantity.';
+
+  const interiorityNote = guardrails.interiority_level === 'minimal'
+    ? 'Minimal internal monologue. Show character through ACTION and DIALOGUE. The reader infers thought from behavior.'
+    : guardrails.interiority_level === 'deep'
+    ? 'Rich internal world. Stream of consciousness moments are welcome. The reader lives inside the protagonist\'s head.'
+    : 'Balance internal thought with external action. Some introspection, but don\'t let it slow the pace.';
+
+  const humorNote = guardrails.humor_level === 'none'
+    ? 'Serious tone throughout. Humor would undermine this story\'s register.'
+    : guardrails.humor_level === 'dry_wit'
+    ? 'Occasional wry observations from the narrator or characters. Humor is a seasoning, not the main course.'
+    : guardrails.humor_level === 'comedic'
+    ? 'Humor is a core part of this story\'s voice. The narrative should make readers smile, laugh, or groan regularly.'
+    : 'Humor is part of the voice. Use it where it feels natural to the characters and situation.';
+
+  return `<PROSE_GUARDRAILS>
+These are calibrated for THIS story's voice — not generic rules:
+
+EM DASHES: ${emDashLimit}
+SENTENCES: ${sentenceNote}
+METAPHORS: ${metaphorNote}
+INTERIORITY: ${interiorityNote}
+HUMOR: ${humorNote}
+
+UNIVERSAL BANNED CONSTRUCTIONS (these are AI tells regardless of voice):
+• "Something in her chest" / "something in his voice" — name it or show it
+• "The kind of X that Y" — describe it directly
+• "Not X, but Y" / "Not X — Y" as a repeated pattern (1 per chapter max)
+• Micro-expression mind-reading (interpreting every facial twitch)
+• Body-part emotion palette on repeat (throat-tightens, jaw-clenches, hands-shake for every emotion)
+• "Letting out a breath they didn't know they were holding"
+• Any form of "little did they know"
+</PROSE_GUARDRAILS>`;
+}
+
+/**
+ * Build static prose guardrails for legacy stories without a prose directive.
+ */
+function buildStaticProseGuardrails() {
+  return `<CRITICAL_PROSE_RULES>
+These rules are NON-NEGOTIABLE. Any chapter that violates them will be rejected and regenerated.
+
+BANNED CONSTRUCTIONS — zero tolerance:
+
+1. EM DASHES: Maximum 3 per chapter. Use periods, commas, or semicolons instead.
+2. "NOT X, BUT Y" / "NOT X — Y": Do NOT define anything by what it isn't. Maximum 1 per chapter.
+3. "SOMETHING IN [X]": Never write "something in her chest," "something in his voice." Name it or show it.
+4. "THE KIND OF X THAT Y": Never write "the kind of silence that meant calculation." Just describe it directly.
+5. MICRO-EXPRESSION MIND-READING: When a face does something, do NOT explain what it means. Let readers interpret.
+6. BODY-PART EMOTION PALETTE: Do NOT default to throat-tightens, hands-shake, chest-seizes, jaw-tightens for every emotion.
+7. ONE-WORD DRAMATIC SENTENCES: Maximum 2 per chapter.
+8. SIMULTANEOUS DIALOGUE + ACTION: Not every line of dialogue needs physical business. Let some dialogue stand alone.
+
+INSTEAD: Write with restraint. Let readers interpret. Vary sentence structure aggressively.
+</CRITICAL_PROSE_RULES>`;
+}
+
+/**
+ * Build dynamic review standards from a prose directive.
+ */
+function buildDynamicReviewStandards(proseDirective) {
+  const craft = proseDirective.craft_rules || {};
+  const leanInto = (craft.lean_into || []).map(t => `• ${t}`).join('\n');
+  const avoid = (craft.avoid || []).map(t => `• ${t}`).join('\n');
+
+  return `<writing_craft_standards>
+
+THIS STORY'S VOICE TARGETS:
+${leanInto || '• Clean, engaging prose'}
+
+THIS STORY SHOULD AVOID:
+${avoid || '• Generic, voiceless prose'}
+
+DIALOGUE STYLE: ${craft.dialogue_style || 'Characters should sound distinct.'}
+EMOTIONAL REGISTER: ${craft.emotional_register || 'Show emotions through action and sensation.'}
+
+UNIVERSAL STANDARDS (all stories):
+• Show emotions through action/sensation/dialogue, not by naming them
+• No adverb dialogue tags
+• Strong opening and closing hooks
+• No AI clichés: "letting out a breath they didn't know they were holding", "little did they know", "a mixture of X and Y"
+
+</writing_craft_standards>`;
+}
+
+/**
+ * Build static review standards for legacy stories.
+ */
+function buildStaticReviewStandards() {
+  return `<writing_craft_standards>
+
+SHOW DON'T TELL:
+• NEVER name emotions directly ("felt angry", "was scared", "seemed happy")
+• Show through physical sensation, action, dialogue, metaphor
+
+DIALOGUE QUALITY:
+• Each character sounds distinct through vocabulary, rhythm, concerns
+• NO adverb dialogue tags — use action beats instead
+• Dialogue advances plot AND reveals character simultaneously
+
+PACING & STRUCTURE:
+• Vary sentence length (short = tension, longer = atmosphere)
+• Strong opening hook, compelling ending hook
+• Crisp scene transitions
+
+THINGS TO AVOID (AI tells):
+• "Not X, but Y" constructions
+• Em dash overuse
+• Repeating sentence structures 3+ times in a row
+• "Letting out a breath they didn't know they were holding"
+• "A mixture of X and Y" emotion descriptions
+• "Little did they know"
+
+</writing_craft_standards>`;
+}
+
+/**
+ * Generate a story-specific prose directive — Claude acts as "prose director."
+ * Reads the bible, genre, beloved stories, and narrative_voice, then produces:
+ *   - A custom author identity
+ *   - A style example passage written IN the voice this story needs
+ *   - Story-specific craft rules (what to lean into, what to avoid)
+ *   - Calibrated prose guardrails (em dash tolerance, sentence structure preferences, etc.)
+ *
+ * Generated once per story, stored in generation_config.prose_directive,
+ * and injected into every chapter prompt for that book.
+ */
+async function generateProseDirective(storyId, userId) {
+  // Fetch bible
+  const { data: bible } = await supabaseAdmin
+    .from('story_bibles')
+    .select('*')
+    .eq('story_id', storyId)
+    .single();
+
+  if (!bible) {
+    console.warn(`✏️ Prose directive: no bible found for ${storyId}, skipping`);
+    return null;
+  }
+
+  // Fetch story genre
+  const { data: story } = await supabaseAdmin
+    .from('stories')
+    .select('title, genre, premise_id')
+    .eq('id', storyId)
+    .single();
+
+  const storyTitle = story?.title || 'Untitled';
+  const genre = story?.genre || 'fiction';
+
+  // Fetch reading level and beloved stories
+  const { data: userPrefs } = await supabaseAdmin
+    .from('user_preferences')
+    .select('reading_level, preferences')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  const readingLevel = userPrefs?.reading_level || userPrefs?.preferences?.readingLevel || 'adult';
+
+  let belovedStories = [];
+  if (story?.premise_id) {
+    const { data: premiseRecord } = await supabaseAdmin
+      .from('story_premises')
+      .select('preferences_used')
+      .eq('id', story.premise_id)
+      .single();
+    belovedStories = premiseRecord?.preferences_used?.belovedStories || [];
+  }
+
+  // Extract narrative voice from bible (new field from Tier 3)
+  const narrativeVoice = bible.narrative_voice || bible.content?.narrative_voice || {};
+  const protagonist = bible.characters?.protagonist || bible.content?.characters?.protagonist || {};
+  const themes = bible.themes || bible.content?.themes || [];
+  const themeStr = Array.isArray(themes) ? themes.join(', ') : themes;
+
+  console.log(`✏️ [${storyTitle}] Generating prose directive...`);
+  const startTime = Date.now();
+
+  const prompt = `You are the prose director for a novel. Your job: define exactly how this book should SOUND — its voice, rhythm, style, and personality. Every book deserves its own voice. A cozy mystery reads differently than an epic fantasy. A middle-grade adventure sounds nothing like a literary thriller.
+
+STORY DNA:
+Title: "${storyTitle}"
+Genre: ${genre}
+Reading Level: ${readingLevel}
+Protagonist: ${protagonist.name || 'Unknown'} — ${protagonist.personality || ''}
+Themes: ${themeStr}
+${belovedStories.length > 0 ? `Reader's Beloved Stories: ${belovedStories.join(', ')}` : ''}
+
+${narrativeVoice.pov ? `NARRATIVE VOICE (from story bible):
+POV: ${narrativeVoice.pov}
+Tonal Register: ${narrativeVoice.tonal_register || 'Not specified'}
+Sentence Rhythm: ${narrativeVoice.sentence_rhythm || 'Not specified'}
+Narrator Personality: ${narrativeVoice.narrative_personality || 'Not specified'}
+Signature Techniques: ${(narrativeVoice.signature_techniques || []).join(', ') || 'Not specified'}
+Never Sounds Like: ${narrativeVoice.never_sounds_like || 'Not specified'}` : 'No narrative voice defined yet — create one from scratch based on genre and story DNA.'}
+
+YOUR TASK: Create a complete prose directive that will guide every chapter of this novel. Be SPECIFIC and OPINIONATED. Generic advice like "use vivid descriptions" is useless. We need directives so precise that two different AI models given this brief would produce prose that sounds recognizably similar.
+
+${belovedStories.length > 0 ? `CRITICAL: The reader loves ${belovedStories.join(', ')}. The prose should feel like it belongs on the same shelf as these books — not imitation, but a kindred voice that would appeal to the same reader. Study what makes those authors' prose distinctive and channel similar energy.` : ''}
+
+Return ONLY a JSON object:
+{
+  "author_identity": "A 1-2 sentence description of what kind of writer is narrating this book. NOT generic ('award-winning author') — specific. Example: 'A wry, warm storyteller who writes like your smartest friend telling you about something incredible that happened — conversational but precise, funny but never at the characters' expense.' Or: 'A poet who wandered into genre fiction — every sentence earns its place, silence is as important as speech, and the prose moves at the pace of candlelight.'",
+
+  "style_example": "Write a 150-200 word ORIGINAL prose passage that demonstrates EXACTLY how this book should sound. NOT a scene from the book — a standalone vignette that captures the voice, rhythm, sentence structure, and emotional register. This passage becomes the north star for every chapter. Make it vivid, specific, and unmistakably in THIS story's voice. If the book is funny, the example should make someone smile. If it's tense, the example should make someone hold their breath. If it's lyrical, the example should be beautiful.",
+
+  "craft_rules": {
+    "lean_into": ["3-5 specific techniques this story should USE HEAVILY — e.g., 'dry humor in narration between tense moments', 'sensory details grounded in taste and smell, not just sight', 'short declarative sentences that land like punches at chapter ends', 'internal monologue that argues with itself', 'long flowing sentences that build momentum like a wave'"],
+    "avoid": ["3-5 specific things this story should NEVER do — tailored to THIS genre and voice, not a generic banned list. e.g., 'never explain a joke — trust the reader to get it', 'avoid introspective pauses during action scenes — save reflection for quiet moments', 'no purple prose in dialogue tags — these characters speak plainly', 'never use more than one metaphor per paragraph — this voice is direct, not ornate'"],
+    "dialogue_style": "How should dialogue work in THIS specific book? Snappy and fast? Measured and subtext-heavy? Peppered with humor? Sparse and loaded? How do the specific characters in THIS story talk? 2-3 sentences.",
+    "pacing_style": "How should this book's pacing FEEL? Not a generic target — the specific rhythm for THIS story. Does it sprint? Breathe? Alternate between sprint and stillness? Where do quiet moments go? 2-3 sentences.",
+    "emotional_register": "How does this book handle emotion? With restraint and implication? With full-throated intensity? Through humor that deflects? Through physical sensation? 1-2 sentences."
+  },
+
+  "prose_guardrails": {
+    "em_dash_tolerance": "one of: 'avoid' (max 2/chapter), 'moderate' (max 6/chapter), 'embrace' (no limit — some literary voices use them freely)",
+    "sentence_length_preference": "one of: 'short_punchy' (avg 8-12 words), 'varied_dynamic' (mix of 5-25 words), 'flowing_literary' (avg 15-25 words with occasional short punches)",
+    "metaphor_density": "one of: 'sparse' (1-2 per scene — this voice is direct), 'moderate' (natural weaving), 'rich' (lyrical and image-heavy)",
+    "interiority_level": "one of: 'minimal' (action-driven, show through behavior), 'balanced' (some internal thought, mostly external), 'deep' (rich internal world, stream of consciousness moments OK)",
+    "humor_level": "one of: 'none' (serious throughout), 'dry_wit' (occasional wry observations), 'regular' (humor is a core part of the voice), 'comedic' (humor drives the narrative)"
+  }
+}`;
+
+  try {
+    const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
+      [{ role: 'user', content: prompt }],
+      4000,
+      { operation: 'generate_prose_directive', userId, storyId, storyTitle }
+    );
+
+    await logApiCost(userId, 'generate_prose_directive', inputTokens, outputTokens, { storyId });
+
+    const parsed = parseAndValidateJSON(response, [
+      'author_identity', 'style_example', 'craft_rules', 'prose_guardrails'
+    ]);
+
+    const elapsed = Date.now() - startTime;
+    console.log(`✏️ [${storyTitle}] Prose directive generated in ${elapsed}ms`);
+
+    // Store in generation_config on the story record
+    const { data: currentStory } = await supabaseAdmin
+      .from('stories')
+      .select('generation_config')
+      .eq('id', storyId)
+      .single();
+
+    const currentConfig = currentStory?.generation_config || {};
+
+    await supabaseAdmin
+      .from('stories')
+      .update({
+        generation_config: {
+          ...currentConfig,
+          prose_directive: parsed
+        }
+      })
+      .eq('id', storyId);
+
+    console.log(`✏️ [${storyTitle}] Prose directive stored in generation_config`);
+    return parsed;
+  } catch (error) {
+    console.warn(`✏️ [${storyTitle}] Prose directive generation failed (non-fatal): ${error.message}`);
+    return null; // Chapters will use fallback static rules
+  }
+}
+
+/**
  * Generate a single chapter with quality review
  * @param {string} storyId - The story ID
  * @param {number} chapterNumber - The chapter number to generate
@@ -2873,39 +3262,46 @@ async function generateChapter(storyId, chapterNumber, userId, editorBrief = nul
     console.log(`⚙️ [${storyTitle}] Character ledger DISABLED by generation_config`);
   }
 
-  // Prepare style example - use editor brief's example if available, otherwise use generic
-  const styleExampleContent = editorBrief?.styleExample
-    ? `Prose standard to aim for — this example captures the specific tone and voice this story should have going forward:
+  // --- PROSE DIRECTIVE: story-specific voice or fallback to static rules ---
+  const proseDirective = config.prose_directive || null;
+
+  // Style example: editor brief > prose directive > static fallback
+  let styleExampleContent;
+  if (editorBrief?.styleExample) {
+    styleExampleContent = `Prose standard to aim for — this example captures the specific tone and voice this story should have going forward:
 
 ${editorBrief.styleExample}
 
-Match this tone, rhythm, and emotional register in your chapter.`
-    : `Prose standard to aim for:
+Match this tone, rhythm, and emotional register in your chapter.`;
+  } else if (proseDirective?.style_example) {
+    styleExampleContent = `This is the voice of THIS book. Every chapter should sound like it was written by the same narrator:
+
+${proseDirective.style_example}
+
+This is your north star. Match this tone, rhythm, sentence structure, and emotional register.`;
+  } else {
+    styleExampleContent = `Prose standard to aim for:
 
 The door stood open. She didn't remember leaving it that way. Mira pressed her back against the hallway wall and counted to three. The brick bit through her jacket. No sound from inside.
 
 She slipped through. The apartment looked rearranged. Someone had been careful. Couch cushions perfectly straight. Mail on the counter lined up like soldiers. Her breathing went shallow. Whoever did this wanted her to know.
 
 Notice: no em dashes. Short sentences for tension. Physical sensation instead of named emotions. No "not X but Y." Just clean prose that trusts the reader.`;
+  }
 
-  const generatePrompt = `You are an award-winning fiction author known for prose that shows instead of tells, vivid character work, and compulsive page-turning narratives.
+  // Author identity: prose directive or generic
+  const authorIdentity = proseDirective?.author_identity
+    || 'an award-winning fiction author known for prose that shows instead of tells, vivid character work, and compulsive page-turning narratives';
 
-<CRITICAL_PROSE_RULES>
-These rules are NON-NEGOTIABLE. Any chapter that violates them will be rejected and regenerated.
+  // Craft rules: prose directive or static
+  const craftRulesBlock = proseDirective ? buildDynamicCraftRules(proseDirective) : buildStaticCraftRules();
 
-BANNED CONSTRUCTIONS — zero tolerance:
+  // Prose guardrails: prose directive or static
+  const proseGuardrailsBlock = proseDirective ? buildDynamicProseGuardrails(proseDirective) : buildStaticProseGuardrails();
 
-1. EM DASHES: Maximum 3 per chapter. Use periods, commas, or semicolons instead.
-2. "NOT X, BUT Y" / "NOT X — Y": Do NOT define anything by what it isn't. Maximum 1 per chapter.
-3. "SOMETHING IN [X]": Never write "something in her chest," "something in his voice." Name it or show it.
-4. "THE KIND OF X THAT Y": Never write "the kind of silence that meant calculation." Just describe it directly.
-5. MICRO-EXPRESSION MIND-READING: When a face does something, do NOT explain what it means. Let readers interpret.
-6. BODY-PART EMOTION PALETTE: Do NOT default to throat-tightens, hands-shake, chest-seizes, jaw-tightens for every emotion. Use varied, surprising physical manifestations.
-7. ONE-WORD DRAMATIC SENTENCES: Maximum 2 per chapter. ("Silence." "Just that." "Alive.")
-8. SIMULTANEOUS DIALOGUE + ACTION: Not every line of dialogue needs physical business. Let some dialogue stand alone.
+  const generatePrompt = `You are ${authorIdentity}.
 
-INSTEAD: Write with restraint. Let readers interpret. Vary sentence structure aggressively. Use specific physical details, not generic body-part emotions. Silence and ambiguity are features.
-</CRITICAL_PROSE_RULES>
+${proseGuardrailsBlock}
 
 Write Chapter ${chapterNumber} of "${bible.title}" following this outline and craft rules.
 
@@ -2984,82 +3380,7 @@ ${editorNotes ? `  <editor_notes>
 ${previousContext}
 </previous_chapters>
 
-<writing_craft_rules>
-
-  <show_dont_tell>
-    NEVER name an emotion directly. Show it through physical sensation, action, dialogue, or metaphor.
-
-    If you write a sentence containing "felt", "was", or "seemed" followed by an emotion word, DELETE IT and rewrite.
-
-    EXAMPLES:
-    ❌ "She felt angry"
-    ✅ "Her hands curled into fists, jaw clenched so tight her teeth ached"
-
-    ❌ "The forest was scary"
-    ✅ "Branches clawed at the sky like skeletal fingers, and something rustled in the undergrowth"
-
-    ❌ "He was brave"
-    ✅ "His knees wobbled, but he stepped forward anyway"
-
-    ❌ "They were best friends"
-    ✅ "She shoved him with her shoulder and he shoved back, both grinning"
-
-    ❌ "The magic was powerful"
-    ✅ "The spell hit like a thunderclap—the ground split, and blue light poured from the cracks"
-
-    ❌ "She was nervous about the test"
-    ✅ "Her pencil tapped against the desk. Tap-tap-tap. She couldn't make it stop."
-
-    ❌ "The room felt cold and unwelcoming"
-    ✅ "Frost crept up the windows in jagged patterns. Each breath hung in the air like a ghost."
-  </show_dont_tell>
-
-  <dialogue_quality>
-    • Each character MUST sound distinct through vocabulary, sentence length, speech patterns, and concerns
-    • NO adverb dialogue tags ("said angrily", "whispered softly")—use action beats instead
-    • Dialogue must do double duty: reveal character AND advance plot simultaneously
-    • Include subtext—characters don't always say what they mean, especially in conflict
-    • Beats between dialogue lines (physical actions, observations, internal reactions)
-    • No more than 3 consecutive lines of dialogue without a beat or action
-
-    EXAMPLE of good dialogue with beats:
-    "I didn't take your stupid necklace." Maya crossed her arms, but her eyes flicked to the drawer.
-    "Then why won't you look at me?"
-    She kicked at the rug. "Because you always blame me for everything."
-
-    NOT this:
-    "I didn't take your necklace," Maya said defensively.
-    "Then why won't you look at me?" her sister asked suspiciously.
-    "Because you always blame me," Maya replied angrily.
-  </dialogue_quality>
-
-  <pacing_and_structure>
-    • Vary sentence length: short punchy sentences for tension, longer flowing ones for atmosphere
-    • Open every chapter with action, dialogue, or intrigue—NEVER pure description
-    • End every chapter with a hook that compels the reader forward
-    • Target balance: ~40% action/dialogue, ~30% character moments, ~30% world/atmosphere
-    • Scene transitions should be crisp, not padded with unnecessary "meanwhile" or "later that day"
-    • Use white space—paragraph breaks create rhythm and breathing room
-  </pacing_and_structure>
-
-  <things_to_avoid>
-    FORBIDDEN CONSTRUCTIONS (AI tells):
-    • Purple prose and flowery over-description
-    • Explaining emotions instead of showing them
-    • "Not X, but Y" sentence structure (e.g., "It wasn't fear, but excitement")
-    • Rhetorical questions as filler ("What could go wrong?", "How hard could it be?")
-    • Em dash overuse (max 2 per chapter)
-    • Repeating the same sentence structure more than twice in a row
-    • Starting consecutive paragraphs the same way
-    • Adverbs modifying "said" (said quickly, said nervously, said hopefully)
-    • "Letting out a breath they didn't know they were holding"
-    • "A mixture of X and Y" emotion descriptions
-    • Any form of "little did they know"
-    • "Their heart pounded in their chest" (where else would it pound?)
-    • Over-reliance on character names—use pronouns naturally
-  </things_to_avoid>
-
-</writing_craft_rules>
+${craftRulesBlock}
 
 <style_example>
 ${styleExampleContent}
@@ -3137,7 +3458,7 @@ Return ONLY a JSON object in this exact format:
     chapter = parsed.chapter;
 
     // Prose violations scan (before quality review)
-    const proseScan = scanForProseViolations(chapter.content);
+    const proseScan = scanForProseViolations(chapter.content, proseDirective);
     if (!proseScan.passed) {
       storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] Chapter ${chapterNumber} failed prose scan (attempt ${regenerationCount + 1}/3)`);
       storyLog(storyId, storyTitle, `   Violations: ${proseScan.violations.join(', ')}`);
@@ -3163,10 +3484,10 @@ Return ONLY a JSON object in this exact format:
       }
     }
 
-    // Quality review pass
-    const reviewPrompt = `You are an expert editor for fiction with deep knowledge of show-don't-tell craft, dialogue quality, and prose technique.
+    // Quality review pass — uses story-specific voice standards when available
+    const reviewStandards = proseDirective ? buildDynamicReviewStandards(proseDirective) : buildStaticReviewStandards();
 
-Review this chapter against the same writing craft standards it was supposed to follow.
+    const reviewPrompt = `You are an expert editor reviewing a chapter for quality. Your job is to evaluate whether this chapter succeeds ON ITS OWN TERMS — does it deliver on the voice and craft standards this specific story is aiming for?
 
 <chapter_to_review>
 ${JSON.stringify(chapter, null, 2)}
@@ -3178,54 +3499,20 @@ Genre: ${bible.themes.join(', ')}
 Protagonist: ${bible.characters.protagonist.name}
 </story_context>
 
-<writing_craft_standards>
-
-SHOW DON'T TELL:
-• NEVER name emotions directly ("felt angry", "was scared", "seemed happy")
-• Show through physical sensation, action, dialogue, metaphor
-• Examples:
-  ❌ "She felt angry" → ✅ "Her hands curled into fists, jaw clenched so tight her teeth ached"
-  ❌ "The forest was scary" → ✅ "Branches clawed at the sky like skeletal fingers"
-  ❌ "He was brave" → ✅ "His knees wobbled, but he stepped forward anyway"
-
-DIALOGUE QUALITY:
-• Each character sounds distinct through vocabulary, rhythm, concerns
-• NO adverb dialogue tags ("said angrily")—use action beats instead
-• Dialogue advances plot AND reveals character simultaneously
-• Include subtext—characters don't always say what they mean
-• No more than 3 lines of dialogue without a beat or action
-
-PACING & STRUCTURE:
-• Vary sentence length (short = tension, longer = atmosphere)
-• Strong opening hook (action/dialogue/intrigue, NOT description)
-• Compelling chapter-ending hook
-• Balance: ~40% action/dialogue, ~30% character, ~30% world/atmosphere
-• Crisp scene transitions
-
-THINGS TO AVOID (AI tells):
-• Purple prose and flowery over-description
-• "Not X, but Y" constructions
-• Rhetorical questions as filler
-• Em dash overuse (max 2 per chapter)
-• Repeating sentence structures 3+ times in a row
-• Starting consecutive paragraphs identically
-• "Letting out a breath they didn't know they were holding"
-• "A mixture of X and Y" emotion descriptions
-• "Little did they know"
-
-</writing_craft_standards>
+${reviewStandards}
 
 <weighted_rubric>
 
 Score each criterion (1-10), provide evidence quotes, and suggest fixes if score < 7.
 
-1. SHOW DON'T TELL (Weight: 15%)
-   - Does the chapter show emotions through action/sensation/dialogue rather than naming them?
-   - Quote any instances of emotion-telling
-   - Are abstract states made concrete?
+1. VOICE CONSISTENCY (Weight: 25%)
+   - Does the prose sound like it belongs to THIS story?
+   - Is the voice distinctive and sustained throughout?
+   - Would a reader recognize this as the same narrator from other chapters?
+   ${proseDirective ? `- Compare against this story's voice: "${proseDirective.author_identity}"` : '- Is the prose clean and professional?'}
 
 2. DIALOGUE QUALITY (Weight: 20%)
-   - Do characters sound distinct?
+   - Do characters sound distinct from each other AND from the narrator?
    - Are there action beats instead of adverb tags?
    - Does dialogue advance plot and reveal character?
    - Quote any generic or flat dialogue
@@ -3233,8 +3520,8 @@ Score each criterion (1-10), provide evidence quotes, and suggest fixes if score
 3. PACING & ENGAGEMENT (Weight: 20%)
    - Does the chapter pull the reader forward?
    - Strong opening? Compelling ending hook?
-   - Varied sentence rhythm?
-   - Good balance of action/character/world?
+   - Varied sentence rhythm appropriate to this story's voice?
+   ${proseDirective?.craft_rules?.pacing_style ? `- This story's pacing target: "${proseDirective.craft_rules.pacing_style}"` : ''}
 
 4. AGE APPROPRIATENESS (Weight: 15%)
    - Is vocabulary and complexity right for ${ageRange}?
@@ -3246,16 +3533,14 @@ Score each criterion (1-10), provide evidence quotes, and suggest fixes if score
    - Any out-of-character moments?
    - Does this chapter develop the character arc?
 
-6. PROSE QUALITY (Weight: 25%)
-   - Clean writing free of AI tells ("not X but Y", rhetorical questions, etc.)?
-   - Count em dashes (>3 = score ≤5)
-   - Count "Not X but Y" constructions (>1 = score ≤6)
-   - Count "something in" constructions (>1 = score ≤5)
-   - Count "the kind of" constructions (>1 = score ≤6)
-   - Check for repeated body-part emotions (jaw-tightens, hands-shake, throat-tightens)
-   - Check if micro-expressions are interpreted rather than left ambiguous
-   - No purple prose or clichés?
-   - Varied sentence structure?
+6. AI TELL DETECTION (Weight: 15%)
+   - Count: "something in [body part]" constructions
+   - Count: "the kind of X that Y" constructions
+   - Count: "not X, but Y" constructions
+   - Check for repeated body-part emotions on loop
+   - Check for micro-expression mind-reading
+   - "Letting out a breath they didn't know they were holding" or similar
+   - Does the prose feel machine-generated or human-crafted?
 
 </weighted_rubric>
 
@@ -3268,9 +3553,9 @@ Return ONLY a JSON object in this exact format:
   "quality_review": {
     "weighted_score": number (calculated sum of score × weight),
     "criteria_scores": {
-      "show_dont_tell": {
+      "voice_consistency": {
         "score": number (1-10),
-        "weight": 0.15,
+        "weight": 0.25,
         "quotes": ["quote1 showing issue or strength", "quote2"],
         "fix": "actionable fix if score < 7, else empty string"
       },
@@ -3298,9 +3583,9 @@ Return ONLY a JSON object in this exact format:
         "quotes": ["quote1", "quote2"],
         "fix": "actionable fix or empty"
       },
-      "prose_quality": {
+      "ai_tell_detection": {
         "score": number (1-10),
-        "weight": 0.25,
+        "weight": 0.15,
         "quotes": ["quote1", "quote2"],
         "fix": "actionable fix or empty"
       }
@@ -3520,6 +3805,23 @@ async function orchestratePreGeneration(storyId, userId) {
       }
     } else {
       console.log(`🎨 [${storyTitle}] Cover: already exists, skipping`);
+    }
+
+    // Step 1.6: Generate prose directive (blocking — chapters need it before they start)
+    // Fast call (~2-3s via Sonnet), but critical for voice consistency across all chapters
+    const currentConfig = story.generation_config || {};
+    if (!currentConfig.prose_directive) {
+      storyLog(storyId, storyTitle, `✏️ [${storyTitle}] Prose directive: generating...`);
+      try {
+        const directive = await generateProseDirective(storyId, userId);
+        if (directive) {
+          storyLog(storyId, storyTitle, `✏️ [${storyTitle}] Prose directive: stored ✅`);
+        }
+      } catch (err) {
+        storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] Prose directive failed (non-fatal, chapters will use fallback): ${err.message}`);
+      }
+    } else {
+      storyLog(storyId, storyTitle, `✏️ [${storyTitle}] Prose directive: already exists, skipping`);
     }
 
     // Step 2: Generate Arc (skip if already complete)

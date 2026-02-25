@@ -315,14 +315,16 @@ describe('Database Constraint Sync', () => {
   // ============================================================
   describe('whisper_events.event_type', () => {
     const CONSTRAINT_VALUES = [
-      'book_finished', 'resonance_left', 'badge_earned',
-      'book_published', 'book_gifted', 'book_claimed'
+      'book_published', 'book_gifted', 'book_claimed',
+      'resonance_left', 'whisper_back_received', 'badge_earned',
+      'reading_started'
     ];
 
     // From WhisperNet service endpoints (Prompts 4-9)
     const CODE_WRITES = [
-      'book_finished', 'resonance_left', 'badge_earned',
-      'book_published', 'book_gifted', 'book_claimed'
+      'book_published', 'book_gifted', 'book_claimed',
+      'resonance_left', 'whisper_back_received', 'badge_earned',
+      'reading_started'
     ];
 
     test('all event_type values are in the constraint', () => {
