@@ -32,17 +32,32 @@ router.get('/:userId', authenticateUser, asyncHandler(async (req, res) => {
     throw new Error(`Failed to fetch library: ${error.message}`);
   }
 
-  // Fetch chapter counts for each story and flatten series data
+  // Fetch chapter counts and reading progress for each story
   const storiesWithCounts = await Promise.all(
     (stories || []).map(async (story) => {
+      // Get total chapter count
       const { count } = await supabaseAdmin
         .from('chapters')
         .select('*', { count: 'exact', head: true })
         .eq('story_id', story.id);
 
+      // Get completed chapter count from reading_sessions
+      const { data: completedSessions } = await supabaseAdmin
+        .from('reading_sessions')
+        .select('chapter_number')
+        .eq('story_id', story.id)
+        .eq('user_id', userId)
+        .eq('completed', true);
+
+      // Count distinct completed chapters
+      const completedChapters = completedSessions
+        ? new Set(completedSessions.map(s => s.chapter_number)).size
+        : 0;
+
       return {
         ...story,
         chapterCount: count || 0,
+        chaptersCompleted: completedChapters,
         series_name: story.series?.name || null
       };
     })
