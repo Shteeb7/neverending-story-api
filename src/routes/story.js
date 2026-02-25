@@ -765,4 +765,111 @@ router.post('/:storyId/archive', authenticateUser, asyncHandler(async (req, res)
   res.json({ success: true, message: 'Story released' });
 }));
 
+/**
+ * GET /stories/:storyId/ledger
+ * The Ledger — per-story record showing readers, resonances, and badges
+ */
+router.get('/:storyId/ledger', authenticateUser, asyncHandler(async (req, res) => {
+  const { storyId } = req.params;
+
+  // Verify story exists and is published to WhisperNet
+  const { data: story, error: storyError } = await supabaseAdmin
+    .from('stories')
+    .select('id, title, whispernet_published')
+    .eq('id', storyId)
+    .single();
+
+  if (storyError || !story) {
+    return res.status(404).json({
+      success: false,
+      error: 'Story not found'
+    });
+  }
+
+  if (!story.whispernet_published) {
+    return res.status(403).json({
+      success: false,
+      error: 'This story is not published to WhisperNet'
+    });
+  }
+
+  // Get total reader count from whisper_events
+  const { count: totalReaders } = await supabaseAdmin
+    .from('whisper_events')
+    .select('*', { count: 'exact', head: true })
+    .eq('story_id', storyId)
+    .eq('event_type', 'book_finished');
+
+  // Get last 10 readers with their resonance words
+  const { data: readerEvents } = await supabaseAdmin
+    .from('whisper_events')
+    .select('actor_id, metadata, created_at')
+    .eq('story_id', storyId)
+    .eq('event_type', 'book_finished')
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  // Get resonances for these readers
+  const recentReaders = [];
+  if (readerEvents && readerEvents.length > 0) {
+    for (const event of readerEvents) {
+      // Get resonance for this reader (if exists)
+      const { data: resonance } = await supabaseAdmin
+        .from('resonances')
+        .select('word')
+        .eq('story_id', storyId)
+        .eq('user_id', event.actor_id)
+        .maybeSingle();
+
+      recentReaders.push({
+        display_name: event.metadata?.display_name || 'A reader',
+        read_at: event.created_at,
+        resonance_word: resonance?.word || null
+      });
+    }
+  }
+
+  // Get resonance cloud (all unique words with counts)
+  const { data: resonances } = await supabaseAdmin
+    .from('resonances')
+    .select('word')
+    .eq('story_id', storyId);
+
+  const resonanceCloud = [];
+  if (resonances && resonances.length > 0) {
+    // Count occurrences of each word
+    const wordCounts = {};
+    resonances.forEach(r => {
+      const word = r.word.toLowerCase();
+      wordCounts[word] = (wordCounts[word] || 0) + 1;
+    });
+
+    // Convert to array and sort by count
+    Object.entries(wordCounts).forEach(([word, count]) => {
+      resonanceCloud.push({ word, count });
+    });
+    resonanceCloud.sort((a, b) => b.count - a.count);
+  }
+
+  // Get story-level badges
+  const { data: badges } = await supabaseAdmin
+    .from('earned_badges')
+    .select('badge_type, earned_at')
+    .eq('story_id', storyId)
+    .order('earned_at', { ascending: true });
+
+  const badgeList = badges ? badges.map(b => ({
+    type: b.badge_type,
+    earned_at: b.earned_at
+  })) : [];
+
+  res.json({
+    success: true,
+    total_readers: totalReaders || 0,
+    recent_readers: recentReaders,
+    resonance_cloud: resonanceCloud,
+    badges: badgeList
+  });
+}));
+
 module.exports = router;

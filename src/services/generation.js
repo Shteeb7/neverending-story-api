@@ -781,8 +781,29 @@ Wildcard calibration: ${wildcardCalibration}
 
 Use TRISOCIATION: combine the reader's core emotional driver + a theme from their profile + an unexpected genre/setting into something that feels both surprising and inevitable. The reader would never have asked for this story. But three chapters in, they'll be hooked.
 
+TITLE CRAFT — THIS IS NOT OPTIONAL:
+Your titles are the first thing a reader sees. They must be DISTINCTIVE, not generated-sounding.
+
+BANNED TITLE PATTERNS (you have overused these — stop):
+- "The [Role/Occupation] of [Poetic Place]" (e.g., "The Cartographer of Forgotten Doors" — you've done this 10+ times)
+- "The Last [Noun]" (overdone)
+- "The [Adjective] [Abstract Noun]" (e.g., "The Reluctant Ascendant")
+- "The [Noun]'s [Noun]" as your default (e.g., "The Innkeeper's Paradox")
+
+INSTEAD, vary your title STRUCTURES across all three premises. Draw from how REAL bestsellers title:
+- Single evocative word: "Circe", "Piranesi", "Recursion"
+- Character name as title: "Eleanor Oliphant Is Completely Fine", "Anxious People"
+- Provocative statement or question: "All the Light We Cannot See", "Where the Crawdads Sing"
+- Colloquial/punchy: "The Thursday Murder Club", "Project Hail Mary"
+- Contradictions or surprises: "The Hitchhiker's Guide to the Galaxy", "Good Omens"
+- Sentence fragments or dialogue: "Never Let Me Go", "Sometimes I Lie"
+- Genre-specific conventions: LitRPG uses game terminology, thrillers use short punchy titles, literary fiction uses lyrical phrases
+
+Each of your 3 titles should use a DIFFERENT structure. If one is "The [Noun] of [Place]", the others CANNOT be.
+
 CRITICAL RULES:
 - NEVER repeat a title, genre+setting combination, or core concept from their reading history
+- NEVER repeat a title STRUCTURE from the previously offered titles list — if they've seen "The [X] of [Y]" three times, that pattern is dead
 - All three premises must feel COMPLETELY distinct from each other
 - The wildcard must STILL respect their avoid-list and age range
 - Every premise must have a compelling hook — the first sentence should make them NEED to know what happens
@@ -1048,7 +1069,22 @@ The story bible should include:
 
 9. TIMELINE: Story timeframe and key events
 
-Create a rich, psychologically complex world that will support a 12-chapter story for ages ${ageRange}. Every character should feel like they have an interior life. The world should feel tangible and lived-in.
+10. NARRATIVE VOICE & PROSE STYLE:
+   This is the DNA of how the story SOUNDS. Not what happens—how it's told.
+
+   - POINT OF VIEW: Which POV best serves this story? (close third, first person, omniscient, etc.) WHY this choice?
+   - TONAL REGISTER: Where does the narrator sit on these spectrums?
+     * Formal ←→ Conversational
+     * Earnest ←→ Wry/Ironic
+     * Lush/Lyrical ←→ Spare/Direct
+     * Warm ←→ Cool/Detached
+   - SENTENCE RHYTHM: Short and punchy? Long and rolling? Musical with varied cadence? Match this to genre—thrillers crack with short sentences, literary fiction breathes with longer ones.
+   - NARRATIVE PERSONALITY: Does the narrator have attitude? Wisdom? Humor? Mystery? A great narrator isn't invisible—they have a VOICE. Think of the difference between the narrators of "A Series of Unfortunate Events" vs. "The Hunger Games" vs. "The Name of the Wind."
+   - SIGNATURE TECHNIQUES: What 2-3 prose techniques should define this story's style?
+     * Examples: vivid sensory anchors, dry wit in description, unreliable narrator hints, poetic chapter openings, cliffhanger endings, internal monologue that argues with itself, second-person asides to the reader
+   - WHAT THIS STORY SHOULD NEVER SOUND LIKE: Anti-patterns to avoid. (e.g., "Never clinical or detached—this story should feel like a campfire tale" or "Never melodramatic—tension comes from restraint, not exclamation marks")
+
+Create a rich, psychologically complex world that will support a 12-chapter story for ages ${ageRange}. Every character should feel like they have an interior life. The world should feel tangible and lived-in. The narrative voice should be distinctive enough that a reader could identify this story by its SOUND, not just its plot.
 
 Return ONLY a JSON object in this exact format:
 {
@@ -1118,6 +1154,14 @@ Return ONLY a JSON object in this exact format:
   "timeline": {
     "total_duration": "string",
     "key_milestones": ["milestone1", "milestone2"]
+  },
+  "narrative_voice": {
+    "pov": "point of view choice and why",
+    "tonal_register": "where the narrator sits on formal/casual, earnest/wry, lush/spare, warm/cool spectrums",
+    "sentence_rhythm": "the cadence and pacing of prose",
+    "narrative_personality": "the narrator's distinctive attitude or quality",
+    "signature_techniques": ["technique 1", "technique 2"],
+    "never_sounds_like": "anti-patterns to avoid in this story's voice"
   }
 }`;
 
@@ -1374,7 +1418,22 @@ The story bible should include:
 
 9. TIMELINE: Story timeframe and key events
 
-Create a rich, psychologically complex world that will support a 12-chapter story for ages ${ageRange}. Every character should feel like they have an interior life. The world should feel tangible and lived-in.
+10. NARRATIVE VOICE & PROSE STYLE:
+   This is the DNA of how the story SOUNDS. Not what happens—how it's told.
+
+   - POINT OF VIEW: Which POV best serves this story? (close third, first person, omniscient, etc.) WHY this choice?
+   - TONAL REGISTER: Where does the narrator sit on these spectrums?
+     * Formal ←→ Conversational
+     * Earnest ←→ Wry/Ironic
+     * Lush/Lyrical ←→ Spare/Direct
+     * Warm ←→ Cool/Detached
+   - SENTENCE RHYTHM: Short and punchy? Long and rolling? Musical with varied cadence? Match this to genre—thrillers crack with short sentences, literary fiction breathes with longer ones.
+   - NARRATIVE PERSONALITY: Does the narrator have attitude? Wisdom? Humor? Mystery? A great narrator isn't invisible—they have a VOICE. Think of the difference between the narrators of "A Series of Unfortunate Events" vs. "The Hunger Games" vs. "The Name of the Wind."
+   - SIGNATURE TECHNIQUES: What 2-3 prose techniques should define this story's style?
+     * Examples: vivid sensory anchors, dry wit in description, unreliable narrator hints, poetic chapter openings, cliffhanger endings, internal monologue that argues with itself, second-person asides to the reader
+   - WHAT THIS STORY SHOULD NEVER SOUND LIKE: Anti-patterns to avoid. (e.g., "Never clinical or detached—this story should feel like a campfire tale" or "Never melodramatic—tension comes from restraint, not exclamation marks")
+
+Create a rich, psychologically complex world that will support a 12-chapter story for ages ${ageRange}. Every character should feel like they have an interior life. The world should feel tangible and lived-in. The narrative voice should be distinctive enough that a reader could identify this story by its SOUND, not just its plot.
 
 Return ONLY a JSON object in this exact format:
 {
@@ -1444,6 +1503,14 @@ Return ONLY a JSON object in this exact format:
   "timeline": {
     "total_duration": "string",
     "key_milestones": ["milestone1", "milestone2"]
+  },
+  "narrative_voice": {
+    "pov": "point of view choice and why",
+    "tonal_register": "where the narrator sits on formal/casual, earnest/wry, lush/spare, warm/cool spectrums",
+    "sentence_rhythm": "the cadence and pacing of prose",
+    "narrative_personality": "the narrator's distinctive attitude or quality",
+    "signature_techniques": ["technique 1", "technique 2"],
+    "never_sounds_like": "anti-patterns to avoid in this story's voice"
   }
 }`;
 
@@ -1565,12 +1632,15 @@ async function generateArcOutline(storyId, userId) {
     }
   }
 
+  const storyGenre = story.genre || bible.genre || 'general fiction';
+
   const prompt = `You are an expert story structure designer creating a detailed roadmap for compelling fiction.
 
 Using this story bible, create a detailed 12-chapter outline following a classic 3-act structure:
 
 <story_bible_summary>
   <title>${bible.title}</title>
+  <genre>${storyGenre}</genre>
 
   <protagonist>
     <name>${bible.characters.protagonist.name}</name>
@@ -1595,9 +1665,31 @@ Using this story bible, create a detailed 12-chapter outline following a classic
   <target_age>${ageRange}</target_age>
 </story_bible_summary>
 
+GENRE-SPECIFIC STORYTELLING — this is a ${storyGenre} story. Your arc must use the conventions readers of this genre EXPECT:
+
+- MYSTERY/THRILLER/LEGAL: Plant clues and red herrings early. Use information asymmetry — the reader should sometimes know more than the protagonist, sometimes less. Reversals should recontextualize earlier scenes. Chapter endings should raise NEW questions, not just escalate danger. The midpoint twist (Ch 6-7) should flip the reader's assumption about who/what the real threat is.
+
+- FANTASY/EPIC: Worldbuilding reveals should be earned through plot, not exposition dumps. Magic systems need cost and consequence shown early. The "crossing the threshold" moment (leaving the familiar world) should happen by Ch 2-3. Political/factional complexity should layer in gradually. The protagonist's power growth should have setbacks, not a straight line up.
+
+- SCI-FI/SPACE OPERA: The central "what if" should be tested from multiple angles across the arc. Technology should create moral dilemmas, not just cool set pieces. Ensure the human story stays central even when the worldbuilding is vast. Hard choices > easy solutions.
+
+- LITRPG/GAMELIT: Progression milestones should map to plot milestones (level-up = story beat). System rules introduced in Act 1 should be cleverly exploited or broken in Act 3. Include at least one moment where game mechanics create an ethical dilemma. Party dynamics should evolve — the team at Ch 12 should function differently than at Ch 1.
+
+- ROMANCE: Emotional beats follow the genre arc: meet → attraction → first barrier → growing closer → dark moment/breakup → grand gesture → resolution. Ensure the love interest has their OWN arc independent of the protagonist. The "dark moment" (Ch 8-9) should stem from character flaws established early, not manufactured misunderstanding.
+
+- HORROR/DARK: Escalate dread, not just danger. The scariest chapter should NOT be the climax — the scariest moment should be the midpoint revelation that changes what the reader thought was happening. Use normalcy as contrast. Quiet chapters between intense ones make the intense ones hit harder.
+
+- LITERARY/CHARACTER-DRIVEN: Privilege internal transformation over external plot. Subtext should do more work than text. At least one chapter should be a "small moment, big meaning" — an ordinary scene that carries enormous emotional weight. The ending should be resonant, not necessarily resolved.
+
+- ADVENTURE/ACTION: Variety of set-piece types (chase, heist, puzzle, confrontation, escape). Each action sequence should force a character choice, not just test physical ability. Downtime chapters between action should deepen character bonds. The final confrontation should require everything they've learned.
+
+- HUMOR/COMEDY: Running jokes should evolve and pay off. Comedic escalation follows a rhythm — don't put two equally big laughs adjacent. The emotional core underneath the humor should surface at the midpoint and climax. Supporting characters should each have a distinct comedic function.
+
+Adapt the 3-act structure to serve THIS genre. A mystery's Act 1 looks nothing like a romance's Act 1 — structure the arc accordingly.
+
 Create a 12-chapter outline that:
-- Follows 3-act structure (Setup: Ch 1-4, Confrontation: Ch 5-9, Resolution: Ch 10-12)
-- Each chapter builds tension and advances the plot
+- Follows 3-act structure adapted for ${storyGenre} conventions (generally: Setup Ch 1-4, Confrontation Ch 5-9, Resolution Ch 10-12)
+- Each chapter builds tension and advances the plot using genre-appropriate techniques
 - Tracks character growth milestones across chapters
 - Develops subplots alongside main plot
 - Has appropriate pacing for ages ${ageRange}
@@ -1616,6 +1708,7 @@ FOR EACH CHAPTER, specify:
 ALSO specify:
 - SUBPLOT TRACKING: Identify 2-3 subplots and note which chapters advance each subplot
 - CHARACTER GROWTH MILESTONES: Map the protagonist's arc to specific chapters (e.g., Ch 3: First taste of confidence, Ch 7: Major failure/setback, Ch 11: Realization of truth)
+- GENRE TECHNIQUE MAP: For each chapter, note which genre-specific technique you're deploying (e.g., Ch 3: "red herring planted", Ch 7: "midpoint twist — suspect pool inverted")
 
 Return ONLY a JSON object in this exact format:
 {
@@ -2859,6 +2952,19 @@ Write Chapter ${chapterNumber} of "${bible.title}" following this outline and cr
   </key_locations>
 </story_context>
 
+${bible.narrative_voice ? `<narrative_voice>
+  This story's narrative DNA — follow these voice directives throughout:
+
+  POV: ${bible.narrative_voice.pov || 'Not specified'}
+  TONAL REGISTER: ${bible.narrative_voice.tonal_register || 'Not specified'}
+  SENTENCE RHYTHM: ${bible.narrative_voice.sentence_rhythm || 'Not specified'}
+  NARRATOR PERSONALITY: ${bible.narrative_voice.narrative_personality || 'Not specified'}
+  SIGNATURE TECHNIQUES: ${(bible.narrative_voice.signature_techniques || []).join(', ') || 'Not specified'}
+  NEVER SOUNDS LIKE: ${bible.narrative_voice.never_sounds_like || 'Not specified'}
+
+  These voice directives are AS IMPORTANT as plot — a chapter with correct events but wrong voice is a failed chapter.
+</narrative_voice>
+` : ''}
 <chapter_outline>
   <chapter_number>${chapterNumber}</chapter_number>
   <title>${effectiveOutline.title}</title>
@@ -3841,6 +3947,13 @@ Return Book 2 Bible in this EXACT format:
     "time_after_book1": "e.g. 3 months later",
     "duration": "e.g. spans 2 weeks",
     "season": "e.g. early winter"
+  },
+  "narrative_voice": {
+    "pov": "same POV as Book 1 unless there's a compelling reason to shift",
+    "tonal_register": "1 sentence — how has the tone evolved from Book 1?",
+    "sentence_rhythm": "1 sentence",
+    "signature_techniques": ["technique 1", "technique 2"],
+    "continuity_note": "what should feel the SAME as Book 1's voice, and what should evolve?"
   }
 }`;
 
