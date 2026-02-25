@@ -69,6 +69,18 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
     throw new Error(`Failed to create resonance: ${insertError.message}`);
   }
 
+  // Fetch the story to get the owner's user_id
+  const { data: story, error: storyError } = await supabaseAdmin
+    .from('stories')
+    .select('user_id')
+    .eq('id', story_id)
+    .single();
+
+  if (storyError) {
+    console.error('Error fetching story:', storyError);
+    throw new Error('Failed to fetch story');
+  }
+
   // Fetch user's display name for the whisper_event metadata
   const { data: userPrefs, error: prefsError } = await supabaseAdmin
     .from('user_preferences')
@@ -81,6 +93,19 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
   }
 
   const displayName = userPrefs?.whispernet_display_name || 'A Reader';
+
+  // Fetch story owner's display name for the Whisper Back prompt
+  const { data: authorPrefs, error: authorPrefsError } = await supabaseAdmin
+    .from('user_preferences')
+    .select('whispernet_display_name')
+    .eq('user_id', story.user_id)
+    .single();
+
+  if (authorPrefsError) {
+    console.error('Error fetching author preferences:', authorPrefsError);
+  }
+
+  const authorDisplayName = authorPrefs?.whispernet_display_name || "this story's author";
 
   // Create whisper_event (privacy baked in at write time)
   const { error: eventError } = await supabaseAdmin
@@ -103,7 +128,8 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
 
   res.json({
     success: true,
-    resonance_id: resonance.id
+    resonance_id: resonance.id,
+    author_display_name: authorDisplayName
   });
 }));
 
