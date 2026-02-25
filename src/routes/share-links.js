@@ -88,6 +88,40 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
 
   console.log(`📤 Share link created for story "${story.title}" by user ${userId} (chain depth: ${shareChainDepth})`);
 
+  // Create whisper_event for book_gifted
+  const { data: userPrefs } = await supabaseAdmin
+    .from('user_preferences')
+    .select('whispernet_display_name')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  const displayName = userPrefs?.whispernet_display_name || 'A Reader';
+
+  const { error: eventError } = await supabaseAdmin
+    .from('whisper_events')
+    .insert({
+      event_type: 'book_gifted',
+      actor_id: userId,
+      story_id: story_id,
+      metadata: {
+        display_name: displayName,
+        story_title: story.title,
+        share_chain_depth: shareChainDepth
+      },
+      is_public: true
+    });
+
+  if (eventError) {
+    console.error('Error creating whisper_event:', eventError);
+    // Non-fatal - share link was still created
+  }
+
+  // Check for badge eligibility (fire-and-forget)
+  const { checkBadgeEligibility } = require('../services/badges');
+  checkBadgeEligibility('book_gifted', userId, story_id).catch(err => {
+    console.error('Badge check failed (non-blocking):', err.message);
+  });
+
   res.json({
     success: true,
     token: shareLink.token,
@@ -270,6 +304,40 @@ router.post('/:token/claim', authenticateUser, asyncHandler(async (req, res) => 
   }
 
   console.log(`📥 Share link claimed: "${shareLink.stories.title}" sent to user ${userId}`);
+
+  // Create whisper_event for book_claimed
+  const { data: userPrefs } = await supabaseAdmin
+    .from('user_preferences')
+    .select('whispernet_display_name')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  const displayName = userPrefs?.whispernet_display_name || 'A Reader';
+
+  const { error: eventError } = await supabaseAdmin
+    .from('whisper_events')
+    .insert({
+      event_type: 'book_claimed',
+      actor_id: userId,
+      story_id: shareLink.story_id,
+      metadata: {
+        display_name: displayName,
+        story_title: shareLink.stories.title,
+        sender_id: shareLink.sender_id
+      },
+      is_public: true
+    });
+
+  if (eventError) {
+    console.error('Error creating whisper_event:', eventError);
+    // Non-fatal - book was still added to library
+  }
+
+  // Check for badge eligibility (fire-and-forget)
+  const { checkBadgeEligibility } = require('../services/badges');
+  checkBadgeEligibility('book_claimed', userId, shareLink.story_id).catch(err => {
+    console.error('Badge check failed (non-blocking):', err.message);
+  });
 
   res.json({
     success: true,

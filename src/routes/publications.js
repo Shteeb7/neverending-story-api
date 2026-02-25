@@ -125,6 +125,35 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
     // The publication record is the source of truth
   }
 
+  // Create whisper_event for book_published
+  const { data: userPrefs } = await supabaseAdmin
+    .from('user_preferences')
+    .select('whispernet_display_name')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  const displayName = userPrefs?.whispernet_display_name || 'A Reader';
+
+  const { error: eventError } = await supabaseAdmin
+    .from('whisper_events')
+    .insert({
+      event_type: 'book_published',
+      actor_id: userId,
+      story_id: story_id,
+      metadata: {
+        display_name: displayName,
+        story_title: story.title,
+        genre,
+        maturity_rating: dbMaturityRating
+      },
+      is_public: true
+    });
+
+  if (eventError) {
+    console.error('Error creating whisper_event:', eventError);
+    // Non-fatal - publication was still created
+  }
+
   res.json({
     success: true,
     publication_id: publication.id,

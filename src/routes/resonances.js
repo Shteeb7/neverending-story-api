@@ -126,6 +126,12 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
     // Don't fail the request if event creation fails (resonance was still created)
   }
 
+  // Check for badge eligibility (fire-and-forget)
+  const { checkBadgeEligibility } = require('../services/badges');
+  checkBadgeEligibility('resonance_left', userId, story_id).catch(err => {
+    console.error('Badge check failed (non-blocking):', err.message);
+  });
+
   res.json({
     success: true,
     resonance_id: resonance.id,

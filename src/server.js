@@ -25,6 +25,7 @@ const resonancesRoutes = require('./routes/resonances');
 const publicationsRoutes = require('./routes/publications');
 const discoveryRoutes = require('./routes/discovery');
 const fantasyNamesRoutes = require('./routes/fantasy-names');
+const badgesRoutes = require('./routes/badges');
 
 // Initialize Express app
 const app = express();
@@ -123,6 +124,7 @@ app.use('/api/resonances', resonancesRoutes);
 app.use('/api/publications', publicationsRoutes);
 app.use('/api/discovery', discoveryRoutes);
 app.use('/api/fantasy-names', fantasyNamesRoutes);
+app.use('/api/badges', badgesRoutes);
 app.use('/', codebaseContextRoutes);
 
 // Railway deploy webhook (no auth — Railway sends these directly)
