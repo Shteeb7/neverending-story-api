@@ -26,6 +26,7 @@ const publicationsRoutes = require('./routes/publications');
 const discoveryRoutes = require('./routes/discovery');
 const fantasyNamesRoutes = require('./routes/fantasy-names');
 const badgesRoutes = require('./routes/badges');
+const contentReportsRoutes = require('./routes/content-reports');
 
 // Initialize Express app
 const app = express();
@@ -125,6 +126,7 @@ app.use('/api/publications', publicationsRoutes);
 app.use('/api/discovery', discoveryRoutes);
 app.use('/api/fantasy-names', fantasyNamesRoutes);
 app.use('/api/badges', badgesRoutes);
+app.use('/api/content-reports', contentReportsRoutes);
 app.use('/', codebaseContextRoutes);
 
 // Railway deploy webhook (no auth — Railway sends these directly)

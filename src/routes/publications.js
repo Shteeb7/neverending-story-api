@@ -75,7 +75,7 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
   // Check if publication already exists
   const { data: existingPub, error: checkError } = await supabaseAdmin
     .from('whispernet_publications')
-    .select('id')
+    .select('id, is_active, updated_at')
     .eq('story_id', story_id)
     .maybeSingle();
 
@@ -85,9 +85,64 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
   }
 
   if (existingPub) {
-    return res.status(409).json({
-      success: false,
-      error: 'Publication already exists'
+    // If publication is active, it's already published
+    if (existingPub.is_active) {
+      return res.status(409).json({
+        success: false,
+        error: 'Publication already exists'
+      });
+    }
+
+    // Publication was recalled - check 24-hour cooldown
+    const recalledAt = new Date(existingPub.updated_at);
+    const now = new Date();
+    const hoursSinceRecall = (now - recalledAt) / (1000 * 60 * 60);
+    const cooldownHours = 24;
+
+    if (hoursSinceRecall < cooldownHours) {
+      const secondsRemaining = Math.ceil((cooldownHours - hoursSinceRecall) * 3600);
+      return res.status(429).json({
+        success: false,
+        error: 'Cannot re-publish yet. 24-hour cooldown after recall.',
+        retry_after: secondsRemaining
+      });
+    }
+
+    // Cooldown passed - allow re-publish by updating existing record
+    const { data: republishedPub, error: updateError } = await supabaseAdmin
+      .from('whispernet_publications')
+      .update({
+        is_active: true,
+        genre,
+        mood_tags,
+        maturity_rating: dbMaturityRating,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', existingPub.id)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error('Error re-publishing:', updateError);
+      throw new Error(`Failed to re-publish: ${updateError.message}`);
+    }
+
+    // Update story record
+    await supabaseAdmin
+      .from('stories')
+      .update({
+        whispernet_published: true,
+        maturity_rating: dbMaturityRating
+      })
+      .eq('id', story_id);
+
+    console.log(`📤 Story "${story.title}" re-published to WhisperNet after cooldown`);
+
+    return res.json({
+      success: true,
+      publication_id: republishedPub.id,
+      published_at: republishedPub.updated_at,
+      is_republish: true
     });
   }
 
@@ -629,6 +684,101 @@ router.post('/classify/escalate', authenticateUser, asyncHandler(async (req, res
   res.json({
     success: true,
     message: 'Flagged for review. The team will resolve this within 48 hours.'
+  });
+}));
+
+/**
+ * POST /api/publications/:storyId/recall
+ * Recall a story from WhisperNet (unpublish)
+ */
+router.post('/:storyId/recall', authenticateUser, asyncHandler(async (req, res) => {
+  const { storyId } = req.params;
+  const { userId } = req;
+
+  // Verify story ownership
+  const { data: story, error: storyError } = await supabaseAdmin
+    .from('stories')
+    .select('id, user_id, title, whispernet_published')
+    .eq('id', storyId)
+    .single();
+
+  if (storyError || !story) {
+    return res.status(404).json({
+      success: false,
+      error: 'Story not found'
+    });
+  }
+
+  if (story.user_id !== userId) {
+    return res.status(403).json({
+      success: false,
+      error: 'Forbidden: not story owner'
+    });
+  }
+
+  if (!story.whispernet_published) {
+    return res.status(400).json({
+      success: false,
+      error: 'Story is not published to WhisperNet'
+    });
+  }
+
+  // Get the publication record
+  const { data: publication, error: pubError } = await supabaseAdmin
+    .from('whispernet_publications')
+    .select('id, is_active')
+    .eq('story_id', storyId)
+    .single();
+
+  if (pubError || !publication) {
+    return res.status(404).json({
+      success: false,
+      error: 'Publication record not found'
+    });
+  }
+
+  if (!publication.is_active) {
+    return res.status(400).json({
+      success: false,
+      error: 'Story is already recalled'
+    });
+  }
+
+  // Recall the publication (set is_active = false, preserve all data)
+  const recalledAt = new Date().toISOString();
+
+  const { error: updateError } = await supabaseAdmin
+    .from('whispernet_publications')
+    .update({
+      is_active: false,
+      updated_at: recalledAt
+    })
+    .eq('id', publication.id);
+
+  if (updateError) {
+    console.error('Error recalling publication:', updateError);
+    throw new Error(`Failed to recall publication: ${updateError.message}`);
+  }
+
+  // Update story record
+  const { error: storyUpdateError } = await supabaseAdmin
+    .from('stories')
+    .update({
+      whispernet_published: false
+    })
+    .eq('id', storyId);
+
+  if (storyUpdateError) {
+    console.error('Error updating story:', storyUpdateError);
+    // Non-fatal - publication is already recalled
+  }
+
+  console.log(`📥 Story "${story.title}" recalled from WhisperNet by user ${userId}`);
+
+  res.json({
+    success: true,
+    recalled_at: recalledAt,
+    message: 'Your story has been recalled from the WhisperNet.'
   });
 }));
 

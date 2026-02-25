@@ -14,9 +14,12 @@ const { supabase } = require('../config/supabase');
 /**
  * GET /api/discovery/recommendations?user_id=X
  *
- * Returns 3-5 personalized story recommendations based on user_preferences.
- * Algorithm: match user's top genres against whispernet_publications,
- * exclude books already on their shelf, sort by recent + popular.
+ * Returns exactly 5 personalized story recommendations with 3-tier matching:
+ * - TIER 1 (50%): Resonance Match - books where other readers used similar words
+ * - TIER 2 (35%): Genre + Mood - match preferences and mood tags, weight recent
+ * - TIER 3 (15%): Diversity Slot - mandatory 1 of 5 from unread genre
+ * - Anti-Repeat: Never show same book within 30 days
+ * - Series Awareness: Max 1 book per series in batch
  */
 router.get('/recommendations', async (req, res) => {
   try {
@@ -39,30 +42,11 @@ router.get('/recommendations', async (req, res) => {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
-    // Get user preferences (genre weights from onboarding)
-    const { data: prefs, error: prefsError } = await supabase
-      .from('user_preferences')
-      .select('preferred_genres, preferences')
-      .eq('user_id', user_id)
-      .maybeSingle();
-
-    if (prefsError) {
-      console.error('Error fetching user preferences:', prefsError);
-      return res.status(500).json({ success: false, error: 'Database error' });
-    }
-
-    // Extract preferred genres (from preferred_genres array or preferences JSONB)
-    let userGenres = [];
-    if (prefs?.preferred_genres && prefs.preferred_genres.length > 0) {
-      userGenres = prefs.preferred_genres;
-    } else if (prefs?.preferences?.favoriteGenres) {
-      userGenres = prefs.preferences.favoriteGenres;
-    }
-
-    // Get books already on user's WhisperNet shelf
+    // === EXCLUSIONS ===
+    // 1. Books already on user's shelf
     const { data: userLibrary, error: libraryError } = await supabase
       .from('whispernet_library')
-      .select('story_id')
+      .select('story_id, stories:story_id(genre, series_id, book_number)')
       .eq('user_id', user_id);
 
     if (libraryError) {
@@ -71,31 +55,98 @@ router.get('/recommendations', async (req, res) => {
     }
 
     const excludedStoryIds = userLibrary.map(entry => entry.story_id);
+    const readGenres = new Set(userLibrary.map(entry => entry.stories?.genre).filter(Boolean));
 
-    // Fetch recommendations from whispernet_publications
-    // Match user genres, exclude books they already have, sort by recent
+    // Build series context: { series_id: { maxBookNumber, hasBook1, hasBook2, etc } }
+    const userSeriesContext = {};
+    userLibrary.forEach(entry => {
+      const seriesId = entry.stories?.series_id;
+      const bookNum = entry.stories?.book_number;
+      if (seriesId) {
+        if (!userSeriesContext[seriesId]) {
+          userSeriesContext[seriesId] = { maxBookNumber: 0, books: new Set() };
+        }
+        if (bookNum) {
+          userSeriesContext[seriesId].maxBookNumber = Math.max(
+            userSeriesContext[seriesId].maxBookNumber,
+            bookNum
+          );
+          userSeriesContext[seriesId].books.add(bookNum);
+        }
+      }
+    });
+
+    // 2. Books shown in last 30 days (anti-repeat)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: recentImpressions, error: impressionsError } = await supabase
+      .from('recommendation_impressions')
+      .select('story_id')
+      .eq('user_id', user_id)
+      .gte('shown_at', thirtyDaysAgo);
+
+    if (impressionsError) {
+      console.error('Error fetching impressions:', impressionsError);
+    }
+
+    const recentlyShownIds = recentImpressions?.map(imp => imp.story_id) || [];
+    const allExcludedIds = [...excludedStoryIds, ...recentlyShownIds];
+
+    // === GET USER PREFERENCES ===
+    const { data: prefs, error: prefsError } = await supabase
+      .from('user_preferences')
+      .select('preferred_genres, preferences')
+      .eq('user_id', user_id)
+      .maybeSingle();
+
+    if (prefsError) {
+      console.error('Error fetching user preferences:', prefsError);
+    }
+
+    let userGenres = [];
+    if (prefs?.preferred_genres && prefs.preferred_genres.length > 0) {
+      userGenres = prefs.preferred_genres;
+    } else if (prefs?.preferences?.favoriteGenres) {
+      userGenres = prefs.preferences.favoriteGenres;
+    }
+
+    // === TIER 1: GET USER'S RESONANCE WORDS ===
+    const { data: userResonances, error: resonancesError } = await supabase
+      .from('resonances')
+      .select('word')
+      .eq('user_id', user_id);
+
+    if (resonancesError) {
+      console.error('Error fetching user resonances:', resonancesError);
+    }
+
+    const userResonanceWords = new Set(
+      (userResonances || []).map(r => r.word.toLowerCase())
+    );
+
+    // === FETCH CANDIDATE PUBLICATIONS ===
     let query = supabase
       .from('whispernet_publications')
       .select(`
         id,
         story_id,
         genre,
+        mood_tags,
         published_at,
         stories:story_id (
           id,
           title,
           cover_image_url,
           genre,
-          user_id
+          series_id,
+          series_name,
+          book_number
         )
       `)
       .eq('is_active', true)
-      .order('published_at', { ascending: false })
-      .limit(10);
+      .limit(100); // Fetch more candidates for scoring
 
-    // Exclude books already on user's shelf
-    if (excludedStoryIds.length > 0) {
-      query = query.not('story_id', 'in', `(${excludedStoryIds.join(',')})`);
+    if (allExcludedIds.length > 0) {
+      query = query.not('story_id', 'in', `(${allExcludedIds.join(',')})`);
     }
 
     const { data: publications, error: pubError } = await query;
@@ -113,35 +164,195 @@ router.get('/recommendations', async (req, res) => {
       });
     }
 
-    // Score publications by genre match
-    const scored = publications.map(pub => {
-      let score = 0;
+    // === GET RESONANCE DATA FOR ALL CANDIDATE BOOKS ===
+    const candidateStoryIds = publications.map(p => p.story_id);
+    const { data: allResonances, error: allResonancesError } = await supabase
+      .from('resonances')
+      .select('story_id, word')
+      .in('story_id', candidateStoryIds);
 
-      // Base score: more recent = higher score
-      const daysSincePublished = Math.floor((Date.now() - new Date(pub.published_at).getTime()) / (1000 * 60 * 60 * 24));
-      score += Math.max(0, 100 - daysSincePublished); // Up to +100 for very recent
+    if (allResonancesError) {
+      console.error('Error fetching resonances for candidates:', allResonancesError);
+    }
 
-      // Genre match bonus
-      if (userGenres.includes(pub.genre)) {
-        score += 50;
+    // Build resonance map: { story_id: [word1, word2, ...] }
+    const resonanceMap = {};
+    (allResonances || []).forEach(r => {
+      if (!resonanceMap[r.story_id]) {
+        resonanceMap[r.story_id] = [];
       }
-
-      return { ...pub, score };
+      resonanceMap[r.story_id].push(r.word.toLowerCase());
     });
 
-    // Sort by score and take top 3-5
-    scored.sort((a, b) => b.score - a.score);
-    const topRecommendations = scored.slice(0, 5);
+    // === 3-TIER SCORING ===
+    const scored = publications.map(pub => {
+      let tier1Score = 0; // Resonance Match (0-50)
+      let tier2Score = 0; // Genre + Mood (0-35)
 
-    // Format response
-    const recommendations = topRecommendations.map(pub => ({
-      publication_id: pub.id,
+      // TIER 1: Resonance Match (50% weight)
+      if (userResonanceWords.size > 0 && resonanceMap[pub.story_id]) {
+        const bookResonances = resonanceMap[pub.story_id];
+        const overlapCount = bookResonances.filter(word =>
+          userResonanceWords.has(word)
+        ).length;
+        // Score: 10 points per overlapping word, cap at 50
+        tier1Score = Math.min(overlapCount * 10, 50);
+      }
+
+      // TIER 2: Genre + Mood (35% weight)
+      let genreScore = 0;
+      let moodScore = 0;
+      let recencyScore = 0;
+
+      // Genre match: 15 points
+      if (userGenres.includes(pub.genre)) {
+        genreScore = 15;
+      }
+
+      // Mood match: 10 points if any user preference moods match (simplified - could be enhanced)
+      if (pub.mood_tags && pub.mood_tags.length > 0) {
+        moodScore = 5; // Give some points for having mood tags
+      }
+
+      // Recency: up to 10 points (newer = better)
+      const daysSincePublished = Math.floor(
+        (Date.now() - new Date(pub.published_at).getTime()) / (1000 * 60 * 60 * 24)
+      );
+      recencyScore = Math.max(0, 10 - daysSincePublished / 10); // Decay over 100 days
+
+      tier2Score = genreScore + moodScore + recencyScore;
+
+      const totalScore = tier1Score + tier2Score;
+
+      return {
+        ...pub,
+        score: totalScore,
+        tier1Score,
+        tier2Score,
+        isUnreadGenre: !readGenres.has(pub.genre)
+      };
+    });
+
+    // Sort by score
+    scored.sort((a, b) => b.score - a.score);
+
+    // === SERIES AWARENESS: Deduplicate by series ===
+    const seenSeries = new Set();
+    const seriesDeduped = [];
+
+    for (const pub of scored) {
+      const seriesId = pub.stories?.series_id;
+
+      // Skip if we've already included a book from this series
+      if (seriesId && seenSeries.has(seriesId)) {
+        continue;
+      }
+
+      // Prefer Book N+1 if user has Book N
+      if (seriesId && userSeriesContext[seriesId]) {
+        const userMax = userSeriesContext[seriesId].maxBookNumber;
+        const thisBookNum = pub.stories?.book_number;
+
+        // If this is the next book in sequence, boost priority by adding it early
+        if (thisBookNum === userMax + 1) {
+          // This is ideal - keep it
+        } else if (thisBookNum <= userMax) {
+          // User already has this or a later book - skip
+          continue;
+        }
+      }
+
+      if (seriesId) {
+        seenSeries.add(seriesId);
+      }
+
+      seriesDeduped.push(pub);
+    }
+
+    // === TIER 3: DIVERSITY SLOT (15% weight) - MANDATORY ===
+    // Take top 4 from scored list, then force 1 diversity pick
+    const top4 = seriesDeduped.slice(0, 4);
+
+    // First attempt: Find best-scoring book from a genre user hasn't read at all
+    let diversityCandidate = seriesDeduped.find(pub => pub.isUnreadGenre);
+
+    // Second attempt: If no unread-genre books exist, broaden to ANY genre not in top 4
+    if (!diversityCandidate && top4.length > 0) {
+      const top4Genres = new Set(top4.map(p => p.genre));
+      diversityCandidate = seriesDeduped.find(pub => !top4Genres.has(pub.genre));
+    }
+
+    // Build final recommendations: top 3 + diversity pick + fill to 5
+    let finalRecommendations = [];
+    if (diversityCandidate && !top4.includes(diversityCandidate)) {
+      // Insert diversity pick as 5th slot (after top 3, fill 4th from remaining)
+      finalRecommendations = [...top4.slice(0, 3), diversityCandidate];
+
+      // Fill 4th slot from remaining (if available)
+      const remaining = seriesDeduped.filter(p =>
+        !finalRecommendations.includes(p) && p !== diversityCandidate
+      );
+      if (remaining.length > 0) {
+        finalRecommendations.splice(3, 0, remaining[0]); // Insert at position 3 (4th slot)
+      }
+    } else if (diversityCandidate && top4.includes(diversityCandidate)) {
+      // Diversity pick already in top 4 - just use top 5
+      finalRecommendations = seriesDeduped.slice(0, 5);
+    } else {
+      // Truly no diversity candidate possible (fewer than 2 genres available)
+      // Fall back to top 5
+      finalRecommendations = seriesDeduped.slice(0, 5);
+    }
+
+    // Ensure exactly 5 recommendations (or fewer if not enough books exist)
+    finalRecommendations = finalRecommendations.slice(0, 5);
+
+    // === LOG IMPRESSIONS ===
+    const impressionRecords = finalRecommendations.map(pub => ({
+      user_id: user_id,
       story_id: pub.story_id,
-      title: pub.stories.title,
-      genre: pub.genre,
-      cover_image_url: pub.stories.cover_image_url,
-      resonance_words: [] // Placeholder for now (Resonance is WhisperNet team scope)
+      shown_at: new Date().toISOString(),
+      action: 'ignored' // Default until user interacts
     }));
+
+    if (impressionRecords.length > 0) {
+      const { error: insertError } = await supabase
+        .from('recommendation_impressions')
+        .insert(impressionRecords);
+
+      if (insertError) {
+        console.error('Error logging impressions:', insertError);
+        // Non-fatal
+      }
+    }
+
+    // === FORMAT RESPONSE ===
+    const recommendations = finalRecommendations.map(pub => {
+      const storyResonances = resonanceMap[pub.story_id] || [];
+      // Get top 3 most common resonances for display
+      const resonanceFreq = {};
+      storyResonances.forEach(word => {
+        resonanceFreq[word] = (resonanceFreq[word] || 0) + 1;
+      });
+      const topResonances = Object.entries(resonanceFreq)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([word]) => word);
+
+      return {
+        publication_id: pub.id,
+        story_id: pub.story_id,
+        title: pub.stories.title,
+        genre: pub.genre,
+        cover_image_url: pub.stories.cover_image_url,
+        mood_tags: pub.mood_tags || [],
+        resonance_words: topResonances,
+        series_name: pub.stories.series_name,
+        book_number: pub.stories.book_number,
+        match_score: Math.round(pub.score),
+        is_diversity_pick: pub.isUnreadGenre
+      };
+    });
 
     res.json({
       success: true,
@@ -150,6 +361,65 @@ router.get('/recommendations', async (req, res) => {
 
   } catch (error) {
     console.error('Recommendations endpoint error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/discovery/recommendations/action
+ *
+ * Update a recommendation impression action when user interacts.
+ * Actions: 'added' (added to library), 'dismissed' (not interested)
+ */
+router.post('/recommendations/action', async (req, res) => {
+  try {
+    const { story_id, action } = req.body;
+
+    if (!story_id || !action) {
+      return res.status(400).json({
+        success: false,
+        error: 'story_id and action are required'
+      });
+    }
+
+    if (!['added', 'dismissed'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        error: 'action must be "added" or "dismissed"'
+      });
+    }
+
+    // Get authenticated user
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+
+    if (authError || !user) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    // Update the most recent impression for this user+story
+    const { error: updateError } = await supabase
+      .from('recommendation_impressions')
+      .update({ action })
+      .eq('user_id', user.id)
+      .eq('story_id', story_id)
+      .order('shown_at', { ascending: false })
+      .limit(1);
+
+    if (updateError) {
+      console.error('Error updating impression action:', updateError);
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    res.json({ success: true });
+
+  } catch (error) {
+    console.error('Impression action endpoint error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
