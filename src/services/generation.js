@@ -4634,11 +4634,15 @@ async function resumeStalledGenerations() {
       .not('generation_progress', 'is', null);
 
     // Query 3: Fix orphaned chapter_X_complete states (from before realtime push migration)
+    // Note: chapter_12_complete is a VALID state (triggers book completion interview in iOS).
+    // Only match intermediate chapter_X_complete states (e.g. chapter_3_complete, chapter_6_complete)
+    // that were artifacts of an older pipeline version.
     const { data: orphanedStories, error: orphanedError } = await supabaseAdmin
       .from('stories')
       .select('id, title, generation_progress')
       .eq('status', 'active')
-      .filter('generation_progress->>current_step', 'like', 'chapter_%_complete');
+      .filter('generation_progress->>current_step', 'like', 'chapter_%_complete')
+      .filter('generation_progress->>current_step', 'neq', 'chapter_12_complete');
 
     if (orphanedStories && orphanedStories.length > 0) {
       console.log(`🏥 Fixing ${orphanedStories.length} orphaned chapter_X_complete states`);
