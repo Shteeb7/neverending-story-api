@@ -225,7 +225,11 @@ setInterval(() => {
   console.log('\n📬 Running hourly daily digest check...');
   // Call the internal endpoint via HTTP
   const axios = require('axios');
-  axios.post(`http://localhost:${PORT}/api/notifications/send-daily-digests`)
+  const requestBody = process.env.DIGEST_CRON_SECRET
+    ? { secret: process.env.DIGEST_CRON_SECRET }
+    : {};
+
+  axios.post(`http://localhost:${PORT}/api/notifications/send-daily-digests`, requestBody)
     .then(response => {
       console.log(`📬 Daily digest check complete: ${response.data.message}`);
     })

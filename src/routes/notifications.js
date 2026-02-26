@@ -184,12 +184,27 @@ router.get('/digest', authenticateUser, asyncHandler(async (req, res) => {
 /**
  * POST /api/notifications/send-daily-digests
  * Trigger daily digest sending for all eligible users (internal endpoint)
- * No auth - restrict to localhost or use shared secret in production
+ * Auth: DIGEST_CRON_SECRET env var or localhost only
  */
 router.post('/send-daily-digests', asyncHandler(async (req, res) => {
-  // Basic security: only allow from localhost in development
-  // In production, add a shared secret or IP whitelist
+  // Security: Check shared secret or localhost
+  const { secret } = req.body;
   const clientIp = req.ip || req.connection.remoteAddress;
+
+  if (process.env.DIGEST_CRON_SECRET) {
+    // If secret is configured, require it
+    if (secret !== process.env.DIGEST_CRON_SECRET) {
+      console.warn(`🚨 Unauthorized daily digest attempt from ${clientIp}`);
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+  } else {
+    // Fallback: only allow localhost if no secret configured
+    const localhostIps = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
+    if (!localhostIps.includes(clientIp)) {
+      console.warn(`🚨 Unauthorized daily digest attempt from ${clientIp} (localhost only)`);
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+  }
 
   try {
     const { sendDailyDigest } = require('../services/notifications');

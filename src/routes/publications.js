@@ -290,6 +290,9 @@ router.get('/activity', authenticateUser, asyncHandler(async (req, res) => {
         whispernet_display_name,
         whispernet_show_city,
         city
+      ),
+      users:user_id (
+        is_minor
       )
     `)
     .in('story_id', storyIds)
@@ -304,8 +307,12 @@ router.get('/activity', authenticateUser, asyncHandler(async (req, res) => {
 
   // Transform sessions into activity items
   const activity = (sessions || []).map(session => {
-    const displayName = session.user_preferences?.whispernet_display_name || 'A Fellow Reader';
-    const showCity = session.user_preferences?.whispernet_show_city ?? false;
+    // Privacy: always use "A Fellow Reader" for minors
+    const isMinor = session.users?.is_minor ?? false;
+    const displayName = isMinor
+      ? 'A Fellow Reader'
+      : (session.user_preferences?.whispernet_display_name || 'A Fellow Reader');
+    const showCity = isMinor ? false : (session.user_preferences?.whispernet_show_city ?? false);
     const city = showCity ? session.user_preferences?.city : null;
     const storyTitle = storyTitles[session.story_id] || 'your story';
 

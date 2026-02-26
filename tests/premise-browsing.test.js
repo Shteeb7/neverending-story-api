@@ -1,6 +1,9 @@
 const { supabaseAdmin } = require('../src/config/supabase');
 const { generatePremises } = require('../src/services/generation');
 
+// Increase timeout for database operations
+jest.setTimeout(60000);
+
 describe('Premise Browsing - Show Me More', () => {
   let testUserId;
   const testPreferences = {
@@ -131,7 +134,7 @@ describe('Premise Browsing - Show Me More', () => {
     });
 
     expect(differentCount).toBeGreaterThanOrEqual(2);
-  }, 60000);
+  }, 120000);
 
   test('Multiple rounds maintain tier structure', async () => {
     // Round 1
@@ -149,5 +152,5 @@ describe('Premise Browsing - Show Me More', () => {
     // Both rounds should have comfort, stretch, wildcard
     expect(tiers1).toEqual(['comfort', 'stretch', 'wildcard']);
     expect(tiers2).toEqual(['comfort', 'stretch', 'wildcard']);
-  }, 60000);
+  }, 120000);
 });

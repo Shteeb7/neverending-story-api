@@ -1,6 +1,9 @@
 const { supabaseAdmin } = require('../src/config/supabase');
 const prospero = require('../src/config/prospero');
 
+// Increase timeout for database operations
+jest.setTimeout(60000);
+
 describe('Onboarding Age Context', () => {
   let testUserId;
   const currentYear = new Date().getFullYear();

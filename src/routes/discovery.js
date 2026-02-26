@@ -9,10 +9,12 @@
 
 const express = require('express');
 const router = express.Router();
-const { supabase } = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
+const { authenticateUser } = require('../middleware/auth');
+const { asyncHandler } = require('../middleware/error-handler');
 
 /**
- * GET /api/discovery/recommendations?user_id=X
+ * GET /api/discovery/recommendations
  *
  * Returns exactly 5 personalized story recommendations with 3-tier matching:
  * - TIER 1 (50%): Resonance Match - books where other readers used similar words
@@ -21,33 +23,15 @@ const { supabase } = require('../config/supabase');
  * - Anti-Repeat: Never show same book within 30 days
  * - Series Awareness: Max 1 book per series in batch
  */
-router.get('/recommendations', async (req, res) => {
-  try {
-    const { user_id } = req.query;
+router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) => {
+  const user_id = req.userId;
 
-    if (!user_id) {
-      return res.status(400).json({ success: false, error: 'user_id required' });
-    }
-
-    // Get authenticated user
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-
-    if (authError || !user || user.id !== user_id) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-
-    // === EXCLUSIONS ===
-    // 1. Books already on user's shelf
-    const { data: userLibrary, error: libraryError } = await supabase
-      .from('whispernet_library')
-      .select('story_id, stories:story_id(genre, series_id, book_number)')
-      .eq('user_id', user_id);
+  // === EXCLUSIONS ===
+  // 1. Books already on user's shelf
+  const { data: userLibrary, error: libraryError } = await supabaseAdmin
+    .from('whispernet_library')
+    .select('story_id, stories:story_id(genre, series_id, book_number)')
+    .eq('user_id', user_id);
 
     if (libraryError) {
       console.error('Error fetching user library:', libraryError);
@@ -371,58 +355,39 @@ router.get('/recommendations', async (req, res) => {
  * Update a recommendation impression action when user interacts.
  * Actions: 'added' (added to library), 'dismissed' (not interested)
  */
-router.post('/recommendations/action', async (req, res) => {
-  try {
-    const { story_id, action } = req.body;
+router.post('/recommendations/action', authenticateUser, asyncHandler(async (req, res) => {
+  const { story_id, action } = req.body;
 
-    if (!story_id || !action) {
-      return res.status(400).json({
-        success: false,
-        error: 'story_id and action are required'
-      });
-    }
-
-    if (!['added', 'dismissed'].includes(action)) {
-      return res.status(400).json({
-        success: false,
-        error: 'action must be "added" or "dismissed"'
-      });
-    }
-
-    // Get authenticated user
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-
-    if (authError || !user) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-
-    // Update the most recent impression for this user+story
-    const { error: updateError } = await supabase
-      .from('recommendation_impressions')
-      .update({ action })
-      .eq('user_id', user.id)
-      .eq('story_id', story_id)
-      .order('shown_at', { ascending: false })
-      .limit(1);
-
-    if (updateError) {
-      console.error('Error updating impression action:', updateError);
-      return res.status(500).json({ success: false, error: 'Database error' });
-    }
-
-    res.json({ success: true });
-
-  } catch (error) {
-    console.error('Impression action endpoint error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
+  if (!story_id || !action) {
+    return res.status(400).json({
+      success: false,
+      error: 'story_id and action are required'
+    });
   }
-});
+
+  if (!['added', 'dismissed'].includes(action)) {
+    return res.status(400).json({
+      success: false,
+      error: 'action must be "added" or "dismissed"'
+    });
+  }
+
+  // Update the most recent impression for this user+story
+  const { error: updateError } = await supabaseAdmin
+    .from('recommendation_impressions')
+    .update({ action })
+    .eq('user_id', req.userId)
+    .eq('story_id', story_id)
+    .order('shown_at', { ascending: false })
+    .limit(1);
+
+  if (updateError) {
+    console.error('Error updating impression action:', updateError);
+    return res.status(500).json({ success: false, error: 'Database error' });
+  }
+
+  res.json({ success: true });
+}));
 
 /**
  * GET /api/discovery/feed
@@ -431,24 +396,10 @@ router.post('/recommendations/action', async (req, res) => {
  * Synthesizes from reading_sessions and story_feedback to show emotionally compelling moments.
  * Respects whispernet_show_city privacy setting.
  */
-router.get('/feed', async (req, res) => {
-  try {
-    // Get authenticated user (feed is only for logged-in users)
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-
-    if (authError || !user) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-
-    // Synthesize feed from recent completed reading sessions
-    // Get sessions where user finished a chapter (completed = true) in last 24 hours
-    const { data: sessions, error: sessionsError } = await supabase
+router.get('/feed', authenticateUser, asyncHandler(async (req, res) => {
+  // Synthesize feed from recent completed reading sessions
+  // Get sessions where user finished a chapter (completed = true) in last 24 hours
+  const { data: sessions, error: sessionsError } = await supabaseAdmin
       .from('reading_sessions')
       .select(`
         user_id,
@@ -482,12 +433,12 @@ router.get('/feed', async (req, res) => {
     // Filter for WhisperNet books only
     const whispernetSessions = sessions.filter(s => s.stories?.whispernet_published);
 
-    // Get user preferences for each reader (to check whispernet_show_city)
+    // Get user preferences for each reader (to check whispernet_show_city and timezone)
     const userIds = [...new Set(whispernetSessions.map(s => s.user_id))];
 
-    const { data: userPrefs, error: prefsError } = await supabase
+    const { data: userPrefs, error: prefsError } = await supabaseAdmin
       .from('user_preferences')
-      .select('user_id, whispernet_display_name, whispernet_show_city')
+      .select('user_id, whispernet_display_name, whispernet_show_city, timezone')
       .in('user_id', userIds);
 
     if (prefsError) {
@@ -500,17 +451,77 @@ router.get('/feed', async (req, res) => {
       prefsMap[p.user_id] = p;
     });
 
-    // Generate feed items (only show book completions for emotionally compelling moments)
+    // Get minor status for privacy check
+    const { data: users, error: usersError } = await supabaseAdmin
+      .from('users')
+      .select('id, is_minor')
+      .in('id', userIds);
+
+    if (usersError) {
+      console.error('Error fetching users for feed:', usersError);
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    const minorMap = {};
+    users?.forEach(u => {
+      minorMap[u.id] = u.is_minor ?? false;
+    });
+
+    // Get max chapter number for each story to detect completions
+    const storyIds = [...new Set(whispernetSessions.map(s => s.story_id))];
+    const { data: maxChapters, error: chaptersError } = await supabaseAdmin
+      .from('reading_sessions')
+      .select('story_id')
+      .in('story_id', storyIds);
+
+    if (chaptersError) {
+      console.error('Error fetching max chapters:', chaptersError);
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    // Build map of max chapter per story
+    const maxChapterMap = {};
+    for (const storyId of storyIds) {
+      const { data: chapters } = await supabaseAdmin
+        .from('chapters')
+        .select('chapter_number')
+        .eq('story_id', storyId)
+        .order('chapter_number', { ascending: false })
+        .limit(1);
+
+      if (chapters && chapters.length > 0) {
+        maxChapterMap[storyId] = chapters[0].chapter_number;
+      }
+    }
+
+    // Generate feed items (only show book completions)
     const feedItems = whispernetSessions
-      .filter(s => s.chapter_number === 12) // Only show book completions (chapter 12)
+      .filter(s => {
+        const maxChapter = maxChapterMap[s.story_id];
+        return maxChapter && s.chapter_number === maxChapter;
+      })
       .slice(0, 10) // Limit to 10 items
       .map(session => {
         const prefs = prefsMap[session.user_id];
-        const readerName = prefs?.whispernet_display_name || 'A reader';
-        const showCity = prefs?.whispernet_show_city !== false;
+        const isMinor = minorMap[session.user_id] ?? false;
 
-        // For now, use generic location (in real system, would have actual city data)
-        const location = showCity ? ' in Tokyo' : '';
+        // Privacy: always use "A reader" for minors
+        const readerName = isMinor
+          ? 'A reader'
+          : (prefs?.whispernet_display_name || 'A reader');
+        const showCity = isMinor ? false : (prefs?.whispernet_show_city !== false);
+
+        // Parse timezone to extract region name
+        let location = '';
+        if (showCity && prefs?.timezone) {
+          const timezone = prefs.timezone;
+          const parts = timezone.split('/');
+          if (parts.length >= 2) {
+            // e.g., "America/New_York" → "New York"
+            const cityName = parts[parts.length - 1].replace(/_/g, ' ');
+            location = ` in ${cityName}`;
+          }
+        }
 
         return {
           id: `${session.user_id}_${session.story_id}_${session.session_end}`,
@@ -539,29 +550,14 @@ router.get('/feed', async (req, res) => {
  * Returns filtered browse results from whispernet_publications.
  * Supports filters: for_you, trending, new_releases, by_mood, genre, length
  */
-router.get('/browse', async (req, res) => {
-  try {
-    const { filter = 'for_you', genre, mood, length, user_id } = req.query;
+router.get('/browse', authenticateUser, asyncHandler(async (req, res) => {
+  const { filter = 'for_you', genre, mood, length } = req.query;
 
-    // Get authenticated user
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-
-    if (authError || !user) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-
-    // Get books already on user's shelf (to exclude them)
-    const actualUserId = user_id || user.id;
-    const { data: userLibrary, error: libraryError } = await supabase
-      .from('whispernet_library')
-      .select('story_id')
-      .eq('user_id', actualUserId);
+  // Get books already on user's shelf (to exclude them)
+  const { data: userLibrary, error: libraryError } = await supabaseAdmin
+    .from('whispernet_library')
+    .select('story_id')
+    .eq('user_id', req.userId);
 
     if (libraryError) {
       console.error('Error fetching user library:', libraryError);
@@ -571,7 +567,7 @@ router.get('/browse', async (req, res) => {
     const excludedStoryIds = userLibrary.map(entry => entry.story_id);
 
     // Base query
-    let query = supabase
+    let query = supabaseAdmin
       .from('whispernet_publications')
       .select(`
         id,

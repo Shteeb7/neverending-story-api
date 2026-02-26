@@ -120,7 +120,7 @@ async function checkEmberBadge(storyId) {
     .from('stories')
     .select('user_id, title')
     .eq('id', storyId)
-    .single();
+    .maybeSingle();
 
   if (!story) return null;
 
@@ -146,7 +146,7 @@ async function checkCurrentBadge(storyId) {
     .from('stories')
     .select('user_id, title')
     .eq('id', storyId)
-    .single();
+    .maybeSingle();
 
   if (!story) return null;
 
@@ -176,7 +176,7 @@ async function checkWorldwalkerBadge(storyId) {
     .from('stories')
     .select('user_id, title')
     .eq('id', storyId)
-    .single();
+    .maybeSingle();
 
   if (!story) return null;
 
@@ -215,7 +215,7 @@ async function checkResonantBadge(storyId) {
     .from('stories')
     .select('user_id, title')
     .eq('id', storyId)
-    .single();
+    .maybeSingle();
 
   if (!story) return null;
 
@@ -283,7 +283,7 @@ async function checkLamplighterBadge(claimerId) {
     .from('auth.users')
     .select('created_at')
     .eq('id', claimerId)
-    .single();
+    .maybeSingle();
 
   if (!claimer) return null;
 
@@ -348,7 +348,7 @@ async function isAncestor(linkId, targetIds) {
     .from('share_links')
     .select('parent_link_id')
     .eq('id', linkId)
-    .single();
+    .maybeSingle();
 
   if (!link) return false;
 
@@ -375,7 +375,7 @@ async function awardBadge(badgeType, userId, storyId, storyTitle) {
       story_id: storyId
     })
     .select()
-    .single();
+    .maybeSingle();
 
   // If error is due to unique constraint, badge already exists — return null
   if (error) {
@@ -392,7 +392,7 @@ async function awardBadge(badgeType, userId, storyId, storyTitle) {
     .from('user_preferences')
     .select('whispernet_display_name')
     .eq('user_id', userId)
-    .single();
+    .maybeSingle();
 
   const displayName = userPrefs?.whispernet_display_name || 'A Reader';
 
