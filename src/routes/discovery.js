@@ -342,7 +342,7 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
       success: true,
       recommendations
     });
-});
+}));
 
 /**
  * POST /api/discovery/recommendations/action
