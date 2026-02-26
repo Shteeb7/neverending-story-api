@@ -342,11 +342,6 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
       success: true,
       recommendations
     });
-
-  } catch (error) {
-    console.error('Recommendations endpoint error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
 });
 
 /**
