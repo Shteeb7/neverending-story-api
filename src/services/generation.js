@@ -3240,16 +3240,12 @@ Return ONLY valid JSON:
 }`;
 
   try {
-    const response = await callClaudeWithRetry(
-      prompt,
-      `World codex generation for "${storyTitle}"`,
-      storyId,
-      storyTitle,
-      {
-        model: 'claude-haiku-4-5-20251001',
-        maxTokens: 4000,
-        systemPrompt: 'You are a world-building architect that converts narrative prose into structured, explicit rule sets. Return only valid JSON.'
-      }
+    const messages = [{ role: 'user', content: prompt }];
+
+    const { response, inputTokens, outputTokens } = await callClaudeWithRetry(
+      messages,
+      16000,
+      { storyTitle, operation: 'world_codex_generation', userId }
     );
 
     const parsed = parseAndValidateJSON(response, ['systems', 'established_facts']);
@@ -3281,7 +3277,8 @@ Return ONLY valid JSON:
     storyLog(storyId, storyTitle, `🌍 [${storyTitle}] World codex: generated ✅ (${parsed.systems?.length || 0} systems, ${parsed.established_facts?.length || 0} facts, ${tokenEstimate} tokens, ${elapsed}ms)`);
 
     // Log cost
-    await logApiCost(userId, storyId, 'anthropic', 'claude-haiku-4-5-20251001', 'world_codex_generation', 0, 0, 0, {
+    await logApiCost(userId, 'world_codex_generation', inputTokens, outputTokens, {
+      storyId,
       systems_count: parsed.systems?.length || 0,
       facts_count: parsed.established_facts?.length || 0,
       token_estimate: tokenEstimate,

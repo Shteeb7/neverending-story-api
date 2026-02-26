@@ -131,7 +131,7 @@ Return ONLY valid JSON:
   try {
     const response = await anthropic.messages.create({
       model: HAIKU_PRICING.MODEL,
-      max_tokens: 2000,
+      max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }]
     });
 
