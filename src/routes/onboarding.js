@@ -298,15 +298,39 @@ router.post('/new-story-request', authenticateUser, requireAIConsentMiddleware, 
 
   // Normalize field names — premise_rejection's onboarding tool outputs storyDirection/favoriteGenres,
   // but returning_user tool outputs direction. Accept both conventions.
-  const normalizedDirection = storyRequest?.direction || storyRequest?.storyDirection || 'comfort';
-  const normalizedExplicitRequest = storyRequest?.explicitRequest || null;
+  let normalizedDirection = storyRequest?.direction || storyRequest?.storyDirection || 'comfort';
+  let normalizedExplicitRequest = storyRequest?.explicitRequest || null;
   const normalizedMoodShift = storyRequest?.moodShift || null;
-  const normalizedNewInterests = storyRequest?.newInterests || storyRequest?.favoriteGenres || [];
+  let normalizedNewInterests = storyRequest?.newInterests || storyRequest?.favoriteGenres || [];
   const rejectionInsight = storyRequest?.rejectionInsight || null;
+
+  // SAFETY NET: GPT-4o Realtime sometimes fails to classify a specific story request
+  // correctly — it sets direction="comfort" and leaves explicitRequest empty even when
+  // the user described an entire story concept in detail. Detect this by extracting
+  // user turns from the transcript and checking if they contain substantial story details.
+  if (!normalizedExplicitRequest && transcript) {
+    const userTurns = transcript
+      .split('\n')
+      .filter(line => line.startsWith('You:'))
+      .map(line => line.replace(/^You:\s*/, '').trim())
+      .filter(line => line.length > 10); // Skip "Bye-bye", "Thank you", etc.
+
+    const userContent = userTurns.join(' ');
+
+    // If the user said a LOT (200+ chars of meaningful content), they have a specific vision.
+    // Extract their words as the explicitRequest so premise generation can use them.
+    if (userContent.length >= 200) {
+      normalizedExplicitRequest = userContent;
+      normalizedDirection = 'specific';
+      console.log(`🛡️ SAFETY NET: GPT-4o classified as "${storyRequest?.direction || 'comfort'}" with no explicitRequest,`);
+      console.log(`   but transcript contains ${userContent.length} chars of user content. Auto-escalating to "specific".`);
+      console.log(`   User said: "${userContent.substring(0, 120)}..."`);
+    }
+  }
 
   console.log(`📖 New story request from returning user ${userId}`);
   console.log(`   Direction: ${normalizedDirection}`);
-  console.log(`   Explicit Request: ${normalizedExplicitRequest || 'none'}`);
+  console.log(`   Explicit Request: ${normalizedExplicitRequest ? normalizedExplicitRequest.substring(0, 80) + '...' : 'none'}`);
   console.log(`   Rejection Insight: ${rejectionInsight || 'none'}`);
 
   // 1. Fetch EXISTING preferences (do NOT overwrite them)
