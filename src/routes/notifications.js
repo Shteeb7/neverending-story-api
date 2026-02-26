@@ -11,6 +11,81 @@ const { asyncHandler } = require('../middleware/error-handler');
 const { authenticateUser } = require('../middleware/auth');
 
 /**
+ * Process daily digest sending for all eligible users
+ * Called by scheduled task in server.js
+ * @returns {Promise<{sent: number, total: number}>}
+ */
+async function processDailyDigests() {
+  try {
+    const { sendDailyDigest } = require('../services/notifications');
+
+    // Get all users with daily digest preference
+    const { data: users, error: usersError } = await supabaseAdmin
+      .from('user_preferences')
+      .select('user_id, timezone')
+      .eq('whisper_notification_pref', 'daily');
+
+    if (usersError) {
+      console.error('Error fetching users for daily digest:', usersError);
+      throw new Error(`Failed to fetch users: ${usersError.message}`);
+    }
+
+    if (!users || users.length === 0) {
+      console.log('📬 No users with daily digest preference');
+      return { sent: 0, total: 0 };
+    }
+
+    // Group users by timezone
+    const usersByTimezone = {};
+    for (const user of users) {
+      const tz = user.timezone || 'UTC';
+      if (!usersByTimezone[tz]) {
+        usersByTimezone[tz] = [];
+      }
+      usersByTimezone[tz].push(user);
+    }
+
+    let sentCount = 0;
+
+    // For each timezone, check if it's 9am local time
+    for (const [timezone, usersInTz] of Object.entries(usersByTimezone)) {
+      try {
+        // Get local hour in that timezone
+        const localHour = new Date().toLocaleString('en-US', {
+          timeZone: timezone,
+          hour: 'numeric',
+          hour12: false
+        });
+        const hour = parseInt(localHour);
+
+        // Only send if it's 9am in this timezone
+        if (hour === 9) {
+          console.log(`📬 Sending daily digests for ${usersInTz.length} users in ${timezone}`);
+
+          // Send digest to each user in this timezone
+          const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+          for (const user of usersInTz) {
+            await sendDailyDigest(user.user_id, oneDayAgo);
+            sentCount++;
+          }
+        }
+      } catch (tzError) {
+        console.error(`Error processing timezone ${timezone}:`, tzError);
+        // Continue with other timezones
+      }
+    }
+
+    console.log(`📬 Daily digest check complete: sent ${sentCount}/${users.length} digests`);
+    return { sent: sentCount, total: users.length };
+
+  } catch (error) {
+    console.error('❌ Error in processDailyDigests:', error);
+    throw error;
+  }
+}
+
+/**
  * PUT /api/preferences/timezone
  * Update user's timezone for daily digest scheduling
  */
@@ -207,75 +282,13 @@ router.post('/send-daily-digests', asyncHandler(async (req, res) => {
   }
 
   try {
-    const { sendDailyDigest } = require('../services/notifications');
-
-    // Get all users with daily digest preference
-    const { data: users, error: usersError } = await supabaseAdmin
-      .from('user_preferences')
-      .select('user_id, timezone')
-      .eq('whisper_notification_pref', 'daily');
-
-    if (usersError) {
-      console.error('Error fetching users for daily digest:', usersError);
-      throw new Error(`Failed to fetch users: ${usersError.message}`);
-    }
-
-    if (!users || users.length === 0) {
-      return res.json({
-        success: true,
-        sent: 0,
-        message: 'No users with daily digest preference'
-      });
-    }
-
-    // Group users by timezone
-    const now = new Date();
-    const usersByTimezone = {};
-    for (const user of users) {
-      const tz = user.timezone || 'UTC';
-      if (!usersByTimezone[tz]) {
-        usersByTimezone[tz] = [];
-      }
-      usersByTimezone[tz].push(user);
-    }
-
-    let sentCount = 0;
-
-    // For each timezone, check if it's 9am local time
-    for (const [timezone, usersInTz] of Object.entries(usersByTimezone)) {
-      try {
-        // Simple timezone check: get local hour in that timezone
-        // For production, use a proper timezone library like moment-timezone
-        const localHour = new Date().toLocaleString('en-US', {
-          timeZone: timezone,
-          hour: 'numeric',
-          hour12: false
-        });
-        const hour = parseInt(localHour);
-
-        // Only send if it's 9am in this timezone
-        if (hour === 9) {
-          console.log(`📬 Sending daily digests for ${usersInTz.length} users in ${timezone}`);
-
-          // Send digest to each user in this timezone
-          const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-          for (const user of usersInTz) {
-            await sendDailyDigest(user.user_id, oneDayAgo);
-            sentCount++;
-          }
-        }
-      } catch (tzError) {
-        console.error(`Error processing timezone ${timezone}:`, tzError);
-        // Continue with other timezones
-      }
-    }
+    const result = await processDailyDigests();
 
     res.json({
       success: true,
-      sent: sentCount,
-      total_daily_users: users.length,
-      message: `Processed ${users.length} users, sent ${sentCount} digests`
+      sent: result.sent,
+      total_daily_users: result.total,
+      message: `Processed ${result.total} users, sent ${result.sent} digests`
     });
 
   } catch (error) {
@@ -313,3 +326,4 @@ function buildEventDescription(event, storyTitle) {
 }
 
 module.exports = router;
+module.exports.processDailyDigests = processDailyDigests;

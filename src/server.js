@@ -226,21 +226,15 @@ console.log('=================================\n');
 
 // Daily digest scheduler: runs every hour, sends digests to users at 9am local time
 const ONE_HOUR = 60 * 60 * 1000;
-setInterval(() => {
-  console.log('\n📬 Running hourly daily digest check...');
-  // Call the internal endpoint via HTTP
-  const axios = require('axios');
-  const requestBody = process.env.DIGEST_CRON_SECRET
-    ? { secret: process.env.DIGEST_CRON_SECRET }
-    : {};
+const { processDailyDigests } = require('./routes/notifications');
 
-  axios.post(`http://localhost:${PORT}/api/notifications/send-daily-digests`, requestBody)
-    .then(response => {
-      console.log(`📬 Daily digest check complete: ${response.data.message}`);
-    })
-    .catch(error => {
-      console.error('❌ Daily digest check failed:', error.message);
-    });
+setInterval(async () => {
+  console.log('\n📬 Running hourly daily digest check...');
+  try {
+    await processDailyDigests();
+  } catch (error) {
+    console.error('❌ Daily digest check failed:', error.message);
+  }
 }, ONE_HOUR);
 
 console.log('📬 Daily digest scheduler enabled: checks every hour for 9am local time');
