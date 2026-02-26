@@ -224,22 +224,6 @@ setInterval(() => {
 console.log('🔄 Self-healing enabled: checks every 5 minutes for stalled generations');
 console.log('=================================\n');
 
-// Daily digest scheduler: runs every hour, sends digests to users at 9am local time
-const ONE_HOUR = 60 * 60 * 1000;
-const { processDailyDigests } = require('./routes/notifications');
-
-setInterval(async () => {
-  console.log('\n📬 Running hourly daily digest check...');
-  try {
-    await processDailyDigests();
-  } catch (error) {
-    console.error('❌ Daily digest check failed:', error.message);
-  }
-}, ONE_HOUR);
-
-console.log('📬 Daily digest scheduler enabled: checks every hour for 9am local time');
-console.log('=================================\n');
-
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully...');
