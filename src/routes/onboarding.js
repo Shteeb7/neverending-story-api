@@ -676,7 +676,7 @@ router.get('/user-preferences/:userId', authenticateUser, asyncHandler(async (re
   // Fetch user preferences from database
   const { data: userPrefs, error: prefsError } = await supabaseAdmin
     .from('user_preferences')
-    .select('preferences, name_confirmed')
+    .select('preferences, name_confirmed, parental_control_tier')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -695,9 +695,15 @@ router.get('/user-preferences/:userId', authenticateUser, asyncHandler(async (re
     .limit(1)
     .maybeSingle();
 
+  // Merge parental_control_tier into preferences so iOS ParentalControlManager can read it
+  const prefs = userPrefs?.preferences || {};
+  if (userPrefs?.parental_control_tier) {
+    prefs.parental_control_tier = userPrefs.parental_control_tier;
+  }
+
   res.json({
     success: true,
-    preferences: userPrefs?.preferences || null,
+    preferences: prefs,
     name_confirmed: userPrefs?.name_confirmed || false,
     recentlyDiscarded: recentDiscard?.discarded_premises || []
   });
