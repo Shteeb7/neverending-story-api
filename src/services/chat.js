@@ -471,7 +471,17 @@ async function sendMessage(sessionId, userMessage) {
             isReturningUser: true
           };
 
-          console.log('🔄 Generating refined premises after rejection:', {
+          // PERSIST enriched preferences so "show me more" / regenerate calls
+          // carry the interview context forward (fixes "genre lock" bug)
+          await supabaseAdmin
+            .from('user_preferences')
+            .update({
+              preferences: enrichedPreferences,
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', userId);
+
+          console.log('🔄 Generating refined premises after rejection (enriched prefs persisted):', {
             direction: enrichedPreferences.storyDirection,
             explicitRequest: enrichedPreferences.explicitRequest?.substring(0, 80),
             rejectionInsight: enrichedPreferences.rejectionInsight?.substring(0, 80)

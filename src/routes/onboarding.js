@@ -324,21 +324,7 @@ router.post('/new-story-request', authenticateUser, requireAIConsentMiddleware, 
     });
   }
 
-  // 2. Save the transcript (update, don't overwrite preferences)
-  const { error: updateError } = await supabaseAdmin
-    .from('user_preferences')
-    .update({
-      transcript: transcript,
-      session_id: sessionId || 'direct_websocket',
-      updated_at: new Date().toISOString()
-    })
-    .eq('user_id', userId);
-
-  if (updateError) {
-    console.log('⚠️ Failed to save transcript:', updateError);
-  }
-
-  // 3. Fetch user's existing stories for context
+  // 2. Fetch user's existing stories for context (needed for preference enrichment)
   const { data: existingStories } = await supabaseAdmin
     .from('stories')
     .select('title, premise')
@@ -348,7 +334,46 @@ router.post('/new-story-request', authenticateUser, requireAIConsentMiddleware, 
 
   const previousTitles = existingStories?.map(s => s.title).filter(Boolean) || [];
 
-  // 4. Clear any existing unused premise sets for this user
+  // 3. Build enriched preferences — merge existing prefs with new interview context.
+  // KEY DESIGN: Onboarding genres become CONTEXT (not constraint) after book one.
+  // The interview output (direction, explicitRequest, newInterests) is the PRIMARY signal.
+  const enrichedPreferences = {
+    ...userPrefs.preferences,
+    // Add returning user context — these fields persist so that subsequent
+    // "show me more" / regenerate calls carry the interview context forward.
+    // Without this, tapping "show me more" falls back to stale stored genres
+    // and the user gets trapped in their original genre (the "genre lock" bug).
+    storyDirection: normalizedDirection,
+    moodShift: normalizedMoodShift,
+    explicitRequest: normalizedExplicitRequest,
+    newInterests: normalizedNewInterests,
+    rejectionInsight: rejectionInsight,
+    previousStoryTitles: previousTitles,
+    isReturningUser: true
+  };
+
+  // 4. PERSIST enriched preferences + transcript to user_preferences.
+  // Previously only the transcript was saved — the enriched fields (storyDirection,
+  // explicitRequest, etc.) were transient and lost after the first generation call.
+  // This caused "genre lock": subsequent generate-premises calls read stale genres
+  // with no interview context, trapping users in their original genre forever.
+  const { error: updateError } = await supabaseAdmin
+    .from('user_preferences')
+    .update({
+      preferences: enrichedPreferences,
+      transcript: transcript,
+      session_id: sessionId || 'direct_websocket',
+      updated_at: new Date().toISOString()
+    })
+    .eq('user_id', userId);
+
+  if (updateError) {
+    console.log('⚠️ Failed to save enriched preferences + transcript:', updateError);
+  } else {
+    console.log('✅ Persisted enriched preferences (interview context will survive regeneration)');
+  }
+
+  // 5. Clear any existing unused premise sets for this user
   //    (so the new premises replace old ones)
   const { error: clearError } = await supabaseAdmin
     .from('story_premises')
@@ -362,23 +387,8 @@ router.post('/new-story-request', authenticateUser, requireAIConsentMiddleware, 
     console.log('🗑️ Discarded old premise sets for returning user');
   }
 
-  // 5. Generate new premises with BOTH existing preferences AND new direction
+  // 6. Generate new premises with enriched preferences
   const { generatePremises } = require('../services/generation');
-
-  // Merge existing preferences with the new story request direction.
-  // KEY DESIGN: Onboarding genres become CONTEXT (not constraint) after book one.
-  // The interview output (direction, explicitRequest, newInterests) is the PRIMARY signal.
-  const enrichedPreferences = {
-    ...userPrefs.preferences,
-    // Add returning user context
-    storyDirection: normalizedDirection,
-    moodShift: normalizedMoodShift,
-    explicitRequest: normalizedExplicitRequest,
-    newInterests: normalizedNewInterests,
-    rejectionInsight: rejectionInsight,
-    previousStoryTitles: previousTitles,
-    isReturningUser: true
-  };
 
   console.log('🤖 Generating premises with enriched preferences:', {
     direction: enrichedPreferences.storyDirection,
