@@ -5058,6 +5058,7 @@ module.exports = {
   buildCourseCorrections,
   generateEditorBrief,
   generateBatch,
+  generateWorldCodex,
   // Export utilities for testing and cross-service use
   calculateCost,
   parseAndValidateJSON,

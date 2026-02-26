@@ -642,4 +642,104 @@ router.post('/trigger-sequel', asyncHandler(async (req, res) => {
   });
 }));
 
+/**
+ * POST /admin/world-continuity/generate/:storyId
+ * Manually trigger world codex generation + world state ledger backfill for a story.
+ * Useful for stories that were generated before the world continuity system was deployed,
+ * or when the system failed silently during generation.
+ *
+ * Requires: story must have a bible with world_rules
+ * Does: generates codex (if missing), backfills ledger for all existing chapters (if missing)
+ */
+router.post('/world-continuity/generate/:storyId', authenticateUser, asyncHandler(async (req, res) => {
+  const { storyId } = req.params;
+
+  console.log(`🌍 [Admin] World continuity generation requested for story ${storyId}`);
+
+  // Fetch story + bible
+  const { data: story } = await supabaseAdmin
+    .from('stories')
+    .select('id, title, genre, user_id, bible_id')
+    .eq('id', storyId)
+    .single();
+
+  if (!story) {
+    return res.status(404).json({ error: 'Story not found' });
+  }
+
+  const { data: bible } = await supabaseAdmin
+    .from('story_bibles')
+    .select('*')
+    .eq('story_id', storyId)
+    .single();
+
+  if (!bible) {
+    return res.status(404).json({ error: 'Bible not found for story' });
+  }
+
+  const results = { codex: null, ledger: [] };
+
+  // Step 1: Generate world codex if missing
+  const { data: existingCodex } = await supabaseAdmin
+    .from('world_codex')
+    .select('id')
+    .eq('story_id', storyId)
+    .maybeSingle();
+
+  if (!existingCodex) {
+    try {
+      const { generateWorldCodex } = require('../services/generation');
+      const codex = await generateWorldCodex(storyId, story.user_id, bible, story.genre || 'fiction');
+      results.codex = codex ? 'generated' : 'failed (parse error)';
+      console.log(`🌍 [Admin] World codex: ${results.codex}`);
+    } catch (err) {
+      results.codex = `error: ${err.message}`;
+      console.error(`🌍 [Admin] World codex generation failed:`, err.message);
+    }
+  } else {
+    results.codex = 'already exists';
+  }
+
+  // Step 2: Backfill world state ledger for existing chapters
+  const { data: chapters } = await supabaseAdmin
+    .from('chapters')
+    .select('chapter_number, content')
+    .eq('story_id', storyId)
+    .order('chapter_number', { ascending: true });
+
+  if (chapters && chapters.length > 0) {
+    const { extractWorldStateLedger } = require('../services/world-continuity');
+
+    for (const chapter of chapters) {
+      // Check if ledger entry already exists
+      const { data: existing } = await supabaseAdmin
+        .from('world_state_ledger')
+        .select('id')
+        .eq('story_id', storyId)
+        .eq('chapter_number', chapter.chapter_number)
+        .maybeSingle();
+
+      if (existing) {
+        results.ledger.push({ chapter: chapter.chapter_number, status: 'already exists' });
+        continue;
+      }
+
+      try {
+        await extractWorldStateLedger(storyId, chapter.chapter_number, chapter.content, story.user_id);
+        results.ledger.push({ chapter: chapter.chapter_number, status: 'generated' });
+        console.log(`🌍 [Admin] World ledger extracted for chapter ${chapter.chapter_number}`);
+      } catch (err) {
+        results.ledger.push({ chapter: chapter.chapter_number, status: `error: ${err.message}` });
+        console.error(`🌍 [Admin] World ledger failed for chapter ${chapter.chapter_number}:`, err.message);
+      }
+    }
+  }
+
+  res.json({
+    success: true,
+    story: story.title,
+    results
+  });
+}));
+
 module.exports = router;

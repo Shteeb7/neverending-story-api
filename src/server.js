@@ -101,7 +101,8 @@ app.get('/health', (req, res) => {
     success: true,
     status: 'healthy',
     uptime: process.uptime(),
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    commit: (process.env.RAILWAY_GIT_COMMIT_SHA || 'unknown').substring(0, 8)
   });
 });
 
@@ -190,6 +191,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('   ... and more');
   console.log('=================================');
   console.log(`🤖 AI Models: Claude=${process.env.CLAUDE_GENERATION_MODEL || 'claude-opus-4-6'}, OpenAI Realtime=${process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-mini-realtime-preview-2024-12-17'}`);
+  // Log deployed commit SHA for debugging (Railway sets RAILWAY_GIT_COMMIT_SHA)
+  const commitSha = process.env.RAILWAY_GIT_COMMIT_SHA || 'unknown';
+  const commitMsg = process.env.RAILWAY_GIT_COMMIT_MESSAGE || '';
+  console.log(`📦 Deploy: ${commitSha.substring(0, 8)} ${commitMsg ? '— ' + commitMsg.substring(0, 60) : ''}`);
   console.log('=================================\n');
 });
 
