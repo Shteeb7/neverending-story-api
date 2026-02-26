@@ -528,16 +528,11 @@ router.get('/feed', authenticateUser, asyncHandler(async (req, res) => {
         };
       });
 
-    res.json({
-      success: true,
-      feed: feedItems
-    });
-
-  } catch (error) {
-    console.error('Feed endpoint error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
+  res.json({
+    success: true,
+    feed: feedItems
+  });
+}));
 
 /**
  * GET /api/discovery/browse?filter=trending&genre=fantasy
@@ -638,16 +633,11 @@ router.get('/browse', authenticateUser, asyncHandler(async (req, res) => {
       resonance_words: [] // Placeholder
     }));
 
-    res.json({
-      success: true,
-      filter,
-      results: books
-    });
-
-  } catch (error) {
-    console.error('Browse endpoint error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
+  res.json({
+    success: true,
+    filter,
+    results: books
+  });
+}));
 
 module.exports = router;
