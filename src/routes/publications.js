@@ -73,6 +73,29 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
     });
   }
 
+  // Verify story is complete before publishing
+  const { data: storyWithProgress, error: progressError } = await supabaseAdmin
+    .from('stories')
+    .select('generation_progress')
+    .eq('id', story_id)
+    .single();
+
+  if (progressError) {
+    console.error('Error fetching generation progress:', progressError);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to verify story completion status'
+    });
+  }
+
+  const currentStep = storyWithProgress?.generation_progress?.current_step;
+  if (currentStep !== 'complete') {
+    return res.status(403).json({
+      success: false,
+      error: 'Story must be fully complete before publishing to WhisperNet'
+    });
+  }
+
   // Check if publication already exists
   const { data: existingPub, error: checkError } = await supabaseAdmin
     .from('whispernet_publications')
@@ -435,6 +458,29 @@ router.post('/classify', authenticateUser, asyncHandler(async (req, res) => {
     return res.status(403).json({
       success: false,
       error: 'You can only classify your own stories'
+    });
+  }
+
+  // Verify story is complete before classification
+  const { data: storyWithProgress, error: progressError } = await supabaseAdmin
+    .from('stories')
+    .select('generation_progress')
+    .eq('id', story_id)
+    .single();
+
+  if (progressError) {
+    console.error('Error fetching generation progress:', progressError);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to verify story completion status'
+    });
+  }
+
+  const currentStep = storyWithProgress?.generation_progress?.current_step;
+  if (currentStep !== 'complete') {
+    return res.status(403).json({
+      success: false,
+      error: 'Story must be fully complete before classification'
     });
   }
 
