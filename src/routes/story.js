@@ -397,6 +397,87 @@ router.get('/:storyId/current-state', authenticateUser, asyncHandler(async (req,
 }));
 
 /**
+ * GET /:storyId/sequel
+ * Get the next book in the series (if exists and has at least 1 chapter)
+ */
+router.get('/:storyId/sequel', authenticateUser, asyncHandler(async (req, res) => {
+  const { storyId } = req.params;
+  const { userId } = req;
+
+  // Get current story with series_id and created_at
+  const { data: currentStory, error: storyError } = await supabaseAdmin
+    .from('stories')
+    .select('id, series_id, created_at')
+    .eq('id', storyId)
+    .eq('user_id', userId)
+    .single();
+
+  if (storyError || !currentStory) {
+    return res.status(404).json({
+      success: false,
+      error: 'Story not found'
+    });
+  }
+
+  // If not in a series, no sequel exists
+  if (!currentStory.series_id) {
+    return res.json({
+      success: true,
+      sequel: null
+    });
+  }
+
+  // Find next book in series (created after current book, same series_id)
+  const { data: sequelStories, error: sequelError } = await supabaseAdmin
+    .from('stories')
+    .select('*')
+    .eq('series_id', currentStory.series_id)
+    .eq('user_id', userId)
+    .gt('created_at', currentStory.created_at)
+    .order('created_at', { ascending: true })
+    .limit(1);
+
+  if (sequelError) {
+    throw new Error(`Failed to fetch sequel: ${sequelError.message}`);
+  }
+
+  // No sequel found
+  if (!sequelStories || sequelStories.length === 0) {
+    return res.json({
+      success: true,
+      sequel: null
+    });
+  }
+
+  const sequel = sequelStories[0];
+
+  // Check if sequel has at least 1 chapter (is readable)
+  const { data: chapters, error: chaptersError } = await supabaseAdmin
+    .from('chapters')
+    .select('id')
+    .eq('story_id', sequel.id)
+    .limit(1);
+
+  if (chaptersError) {
+    throw new Error(`Failed to check sequel chapters: ${chaptersError.message}`);
+  }
+
+  // If sequel has no chapters, it's not readable yet
+  if (!chapters || chapters.length === 0) {
+    return res.json({
+      success: true,
+      sequel: null
+    });
+  }
+
+  // Sequel exists and is readable
+  res.json({
+    success: true,
+    sequel
+  });
+}));
+
+/**
  * POST /story/:storyId/generate-sequel
  * Generate the next book in a series after completing Book 1
  */
