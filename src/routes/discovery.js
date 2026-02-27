@@ -62,7 +62,7 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
 
     // 2. Books shown in last 30 days (anti-repeat)
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: recentImpressions, error: impressionsError } = await supabase
+    const { data: recentImpressions, error: impressionsError } = await supabaseAdmin
       .from('recommendation_impressions')
       .select('story_id')
       .eq('user_id', user_id)
@@ -76,7 +76,7 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
     const allExcludedIds = [...excludedStoryIds, ...recentlyShownIds];
 
     // === GET USER PREFERENCES ===
-    const { data: prefs, error: prefsError } = await supabase
+    const { data: prefs, error: prefsError } = await supabaseAdmin
       .from('user_preferences')
       .select('preferred_genres, preferences')
       .eq('user_id', user_id)
@@ -94,7 +94,7 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
     }
 
     // === TIER 1: GET USER'S RESONANCE WORDS ===
-    const { data: userResonances, error: resonancesError } = await supabase
+    const { data: userResonances, error: resonancesError } = await supabaseAdmin
       .from('resonances')
       .select('word')
       .eq('user_id', user_id);
@@ -108,7 +108,7 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
     );
 
     // === FETCH CANDIDATE PUBLICATIONS ===
-    let query = supabase
+    let query = supabaseAdmin
       .from('whispernet_publications')
       .select(`
         id,
@@ -150,7 +150,7 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
 
     // === GET RESONANCE DATA FOR ALL CANDIDATE BOOKS ===
     const candidateStoryIds = publications.map(p => p.story_id);
-    const { data: allResonances, error: allResonancesError } = await supabase
+    const { data: allResonances, error: allResonancesError } = await supabaseAdmin
       .from('resonances')
       .select('story_id, word')
       .in('story_id', candidateStoryIds);
@@ -300,7 +300,7 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
     }));
 
     if (impressionRecords.length > 0) {
-      const { error: insertError } = await supabase
+      const { error: insertError } = await supabaseAdmin
         .from('recommendation_impressions')
         .insert(impressionRecords);
 
