@@ -127,6 +127,7 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
         )
       `)
       .eq('is_active', true)
+      .neq('publisher_id', user_id)
       .limit(100); // Fetch more candidates for scoring
 
     if (allExcludedIds.length > 0) {
@@ -573,6 +574,7 @@ router.get('/browse', authenticateUser, asyncHandler(async (req, res) => {
         )
       `)
       .eq('is_active', true)
+      .neq('publisher_id', req.userId)
       .limit(20);
 
     // Exclude books already on user's shelf
