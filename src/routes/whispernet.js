@@ -141,8 +141,11 @@ router.get('/library/check', authenticateUser, asyncHandler(async (req, res) => 
   const { user_id, story_id } = req.query;
   const { userId } = req;
 
+  console.log(`📚 [Shelf Check] user_id=${user_id}, story_id=${story_id}, auth_userId=${userId}`);
+
   // Verify user can only check their own shelf
   if (user_id !== userId) {
+    console.log(`📚 [Shelf Check] ❌ user_id mismatch: query=${user_id} vs auth=${userId}`);
     return res.status(403).json({
       success: false,
       error: 'Forbidden'
@@ -182,8 +185,11 @@ router.post('/library', authenticateUser, asyncHandler(async (req, res) => {
   const { user_id, story_id, source } = req.body;
   const { userId } = req;
 
+  console.log(`📚 [Add to Shelf] Request from user ${userId}, body:`, JSON.stringify(req.body));
+
   // Verify user can only add to their own shelf
   if (user_id !== userId) {
+    console.log(`📚 [Add to Shelf] ❌ user_id mismatch: body=${user_id} vs auth=${userId}`);
     return res.status(403).json({
       success: false,
       error: 'Forbidden'
@@ -191,6 +197,7 @@ router.post('/library', authenticateUser, asyncHandler(async (req, res) => {
   }
 
   if (!story_id || !source) {
+    console.log(`📚 [Add to Shelf] ❌ Missing fields: story_id=${story_id}, source=${source}`);
     return res.status(400).json({
       success: false,
       error: 'story_id and source required'
@@ -237,10 +244,11 @@ router.post('/library', authenticateUser, asyncHandler(async (req, res) => {
     });
 
   if (insertError) {
-    console.error('Error adding to shelf:', insertError);
+    console.error(`📚 [Add to Shelf] ❌ Insert failed for user ${userId}, story ${story_id}:`, insertError);
     throw new Error(`Failed to add to shelf: ${insertError.message}`);
   }
 
+  console.log(`📚 [Add to Shelf] ✅ Added story ${story_id} to shelf for user ${userId}`);
   res.json({
     success: true,
     message: 'Added to WhisperNet shelf'
