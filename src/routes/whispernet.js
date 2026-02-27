@@ -286,4 +286,54 @@ router.put('/library/:libraryId/mark-seen', authenticateUser, asyncHandler(async
   });
 }));
 
+/**
+ * DELETE /whispernet/library/:libraryId
+ * Remove a book from the user's WhisperNet shelf
+ */
+router.delete('/library/:libraryId', authenticateUser, asyncHandler(async (req, res) => {
+  const { libraryId } = req.params;
+  const { userId } = req;
+
+  // Verify the library record belongs to this user
+  const { data: libraryEntry, error: fetchError } = await supabaseAdmin
+    .from('whispernet_library')
+    .select('id, user_id, story_id')
+    .eq('id', libraryId)
+    .maybeSingle();
+
+  if (fetchError) {
+    throw new Error(`Failed to fetch library entry: ${fetchError.message}`);
+  }
+
+  if (!libraryEntry) {
+    return res.status(404).json({
+      success: false,
+      error: 'Library entry not found'
+    });
+  }
+
+  if (libraryEntry.user_id !== userId) {
+    return res.status(403).json({
+      success: false,
+      error: 'You do not have permission to remove this book'
+    });
+  }
+
+  // Delete the library entry
+  const { error: deleteError } = await supabaseAdmin
+    .from('whispernet_library')
+    .delete()
+    .eq('id', libraryId);
+
+  if (deleteError) {
+    throw new Error(`Failed to remove book: ${deleteError.message}`);
+  }
+
+  console.log(`📚 WhisperNet book removed from shelf (user: ${userId}, library_id: ${libraryId})`);
+
+  res.json({
+    success: true
+  });
+}));
+
 module.exports = router;
