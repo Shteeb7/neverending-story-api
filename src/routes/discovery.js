@@ -122,7 +122,6 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
           cover_image_url,
           genre,
           series_id,
-          series_name,
           book_number
         )
       `)
@@ -332,7 +331,6 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
         cover_image_url: pub.stories.cover_image_url,
         mood_tags: pub.mood_tags || [],
         resonance_words: topResonances,
-        series_name: pub.stories.series_name,
         book_number: pub.stories.book_number,
         match_score: Math.round(pub.score),
         is_diversity_pick: pub.isUnreadGenre
