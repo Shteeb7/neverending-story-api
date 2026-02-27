@@ -101,6 +101,140 @@ async function logApiCost(userId, storyId, operation, inputTokens, outputTokens,
 }
 
 /**
+ * For sequels: fetch the parent book's final character/world ledger state to seed Chapter 1.
+ * Without this, Book 2 Chapter 1 generates with zero continuity context — the rich emotional
+ * states, relationships, callbacks, and world facts from Book 1's 12 chapters are lost.
+ *
+ * @param {string} storyId - The CURRENT book's story ID
+ * @param {string} type - 'character' or 'world'
+ * @returns {string|null} Formatted XML context block, or null if not a sequel
+ */
+async function getParentBookFinalLedger(storyId, type) {
+  try {
+    // Check if this story is a sequel
+    const { data: story } = await supabaseAdmin
+      .from('stories')
+      .select('parent_story_id, book_number, series_id')
+      .eq('id', storyId)
+      .single();
+
+    if (!story || !story.parent_story_id || !story.book_number || story.book_number <= 1) {
+      return null; // Not a sequel
+    }
+
+    // For Book 3+, walk the full series chain — get ALL previous books' final ledger entries
+    const { data: previousBooks } = await supabaseAdmin
+      .from('stories')
+      .select('id, title, book_number')
+      .eq('series_id', story.series_id)
+      .lt('book_number', story.book_number)
+      .order('book_number', { ascending: true });
+
+    if (!previousBooks || previousBooks.length === 0) return null;
+
+    if (type === 'character') {
+      // Fetch the final character ledger entry from each previous book
+      const allEntries = [];
+      for (const prevBook of previousBooks) {
+        const { data: finalEntry } = await supabaseAdmin
+          .from('character_ledger_entries')
+          .select('chapter_number, ledger_data, callback_bank, compressed_summary')
+          .eq('story_id', prevBook.id)
+          .order('chapter_number', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (finalEntry) {
+          allEntries.push({ book: prevBook, entry: finalEntry });
+        }
+      }
+
+      if (allEntries.length === 0) return null;
+
+      console.log(`📚 Seeding Book ${story.book_number} character state from ${allEntries.length} previous book(s)`);
+
+      // Build a context block from previous books' final character states
+      let block = `\n<character_continuity_from_previous_books>
+  <instruction>
+    This is a sequel. The following shows where each character LEFT OFF at the end of previous book(s).
+    Their emotional states, relationship dynamics, private knowledge, and unresolved tensions
+    MUST carry forward into this book. Characters don't reset between books.
+  </instruction>\n`;
+
+      for (const { book, entry } of allEntries) {
+        block += `\n  <book_${book.book_number}_final_state title="${book.title}" chapter="${entry.chapter_number}">
+    ${entry.compressed_summary || JSON.stringify(entry.ledger_data, null, 2)}
+  </book_${book.book_number}_final_state>\n`;
+
+        // Include callback bank from the most recent book
+        if (entry.callback_bank && entry.callback_bank.length > 0) {
+          block += `  <unresolved_callbacks_from_book_${book.book_number}>
+    These moments from the previous book are worth calling back to in this sequel:
+    ${JSON.stringify(entry.callback_bank.filter(cb => cb.status !== 'used'), null, 2)}
+  </unresolved_callbacks_from_book_${book.book_number}>\n`;
+        }
+      }
+
+      block += `</character_continuity_from_previous_books>\n`;
+      return block;
+
+    } else if (type === 'world') {
+      // Fetch the final world state ledger entry from each previous book
+      const allEntries = [];
+      for (const prevBook of previousBooks) {
+        const { data: finalEntry } = await supabaseAdmin
+          .from('world_state_ledger')
+          .select('chapter_number, ledger_data, compressed_summary')
+          .eq('story_id', prevBook.id)
+          .order('chapter_number', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (finalEntry) {
+          allEntries.push({ book: prevBook, entry: finalEntry });
+        }
+      }
+
+      if (allEntries.length === 0) return null;
+
+      console.log(`📚 Seeding Book ${story.book_number} world state from ${allEntries.length} previous book(s)`);
+
+      let block = `\n<world_state_from_previous_books>
+  <instruction>
+    This is a sequel. The following shows the world state at the END of previous book(s).
+    All facts established, geography revealed, timeline events, and reader promises
+    MUST be respected. The world doesn't reset between books.
+  </instruction>\n`;
+
+      for (const { book, entry } of allEntries) {
+        block += `\n  <book_${book.book_number}_final_world title="${book.title}" chapter="${entry.chapter_number}">
+    ${entry.compressed_summary || JSON.stringify(entry.ledger_data, null, 2)}
+  </book_${book.book_number}_final_world>\n`;
+
+        // Include pending reader promises
+        const promises = entry.ledger_data?.reader_promises?.filter(
+          p => p.status === 'pending' || p.status === 'advanced'
+        );
+        if (promises && promises.length > 0) {
+          block += `  <unfulfilled_promises_from_book_${book.book_number}>
+    These narrative promises from the previous book remain unresolved:
+    ${JSON.stringify(promises, null, 2)}
+  </unfulfilled_promises_from_book_${book.book_number}>\n`;
+        }
+      }
+
+      block += `</world_state_from_previous_books>\n`;
+      return block;
+    }
+
+    return null;
+  } catch (err) {
+    console.warn(`⚠️ getParentBookFinalLedger(${type}) failed: ${err.message}`);
+    return null; // Non-fatal — generation continues without seed data
+  }
+}
+
+/**
  * Extract character relationship ledger from a newly generated chapter
  * Uses Claude Haiku to create structured JSON tracking each character's subjective experience
  *
@@ -315,7 +449,12 @@ async function buildCharacterContinuityBlock(storyId, targetChapterNumber) {
     }
 
     if (!ledgerEntries || ledgerEntries.length === 0) {
-      // No ledger entries yet (generating chapter 1)
+      // No ledger entries for this book yet — check if this is a sequel
+      // and seed from the parent book's final character ledger state
+      const parentLedger = await getParentBookFinalLedger(storyId, 'character');
+      if (parentLedger) {
+        return parentLedger;
+      }
       return '';
     }
 
@@ -868,5 +1007,6 @@ module.exports = {
   buildCharacterContinuityBlock,
   compressLedgerEntry,
   reviewCharacterVoices,
-  applyVoiceRevisions
+  applyVoiceRevisions,
+  getParentBookFinalLedger
 };

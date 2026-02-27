@@ -1748,6 +1748,104 @@ function buildPreviousBooksContextBlock(previousBibles, bookNumber) {
 }
 
 /**
+ * Fetch all story_series_context entries for previous books in this series.
+ * This is the rich end-of-book extraction (character states, relationships,
+ * accomplishments, world changes, key events) that was previously only used
+ * during bible generation and then discarded.
+ */
+async function fetchSeriesContext(storyId, story = null) {
+  if (!story) {
+    const { data: fetchedStory } = await supabaseAdmin
+      .from('stories')
+      .select('id, book_number, series_id')
+      .eq('id', storyId)
+      .single();
+    story = fetchedStory;
+  }
+
+  if (!story || !story.series_id || !story.book_number || story.book_number <= 1) {
+    return [];
+  }
+
+  const { data: contexts } = await supabaseAdmin
+    .from('story_series_context')
+    .select('*')
+    .eq('series_id', story.series_id)
+    .lt('book_number', story.book_number)
+    .order('book_number', { ascending: true });
+
+  return contexts || [];
+}
+
+/**
+ * Build a context block from story_series_context entries for injection into prompts.
+ * Contains the detailed end-of-book state that captures nuance lost in bible compression.
+ */
+function buildSeriesContextBlock(seriesContexts) {
+  if (!seriesContexts || seriesContexts.length === 0) return '';
+
+  let block = `
+<series_continuity_detail>
+  <instruction>
+    The following is a DETAILED record of how each previous book ended — character growth,
+    relationships formed, accomplishments earned, world changes, and key events.
+    This is MORE SPECIFIC than the story bibles above. Use it to ensure sequel chapters
+    reference specific events, honor specific character growth, and build on specific
+    relationships rather than generic summaries.
+  </instruction>
+`;
+
+  for (const ctx of seriesContexts) {
+    block += `
+  <book_${ctx.book_number}_end_state>`;
+
+    if (ctx.character_states) {
+      block += `
+    <character_states>
+      ${JSON.stringify(ctx.character_states, null, 4)}
+    </character_states>`;
+    }
+
+    if (ctx.relationships) {
+      block += `
+    <relationships>
+      ${JSON.stringify(ctx.relationships, null, 4)}
+    </relationships>`;
+    }
+
+    if (ctx.accomplishments) {
+      block += `
+    <accomplishments>
+      ${JSON.stringify(ctx.accomplishments, null, 4)}
+    </accomplishments>`;
+    }
+
+    if (ctx.world_state) {
+      block += `
+    <world_changes>
+      ${JSON.stringify(ctx.world_state, null, 4)}
+    </world_changes>`;
+    }
+
+    if (ctx.key_events) {
+      block += `
+    <key_events_to_reference>
+      ${JSON.stringify(ctx.key_events, null, 4)}
+    </key_events_to_reference>`;
+    }
+
+    block += `
+  </book_${ctx.book_number}_end_state>`;
+  }
+
+  block += `
+</series_continuity_detail>
+`;
+
+  return block;
+}
+
+/**
  * Generate 12-chapter arc outline
  */
 async function generateArcOutline(storyId, userId) {
@@ -1809,6 +1907,10 @@ async function generateArcOutline(storyId, userId) {
   const { previousBibles, bookNumber, isSequel } = await fetchPreviousBooksContext(storyId, story);
   const previousBooksBlock = buildPreviousBooksContextBlock(previousBibles, bookNumber);
 
+  // Fetch detailed series context (end-of-book state from each previous book)
+  const seriesContexts = await fetchSeriesContext(storyId, story);
+  const seriesContextBlock = buildSeriesContextBlock(seriesContexts);
+
   const prompt = `You are an expert story structure designer creating a detailed roadmap for compelling fiction.
 
 Using this story bible, create a detailed 12-chapter outline following a classic 3-act structure:
@@ -1839,7 +1941,7 @@ Using this story bible, create a detailed 12-chapter outline following a classic
 
   <target_age>${ageRange}</target_age>
 </story_bible_summary>
-${previousBooksBlock}
+${previousBooksBlock}${seriesContextBlock}
 <world_rules>
 ${worldRulesForArc}
 </world_rules>
@@ -3165,10 +3267,10 @@ async function generateProseDirective(storyId, userId) {
     return null;
   }
 
-  // Fetch story genre
+  // Fetch story genre (include parent_story_id and book_number for sequel voice inheritance)
   const { data: story } = await supabaseAdmin
     .from('stories')
-    .select('title, genre, premise_id')
+    .select('title, genre, premise_id, parent_story_id, book_number, series_id')
     .eq('id', storyId)
     .single();
 
@@ -3200,6 +3302,45 @@ async function generateProseDirective(storyId, userId) {
   const themes = bible.themes || bible.content?.themes || [];
   const themeStr = Array.isArray(themes) ? themes.join(', ') : themes;
 
+  // For sequels: fetch the predecessor book's prose directive for voice continuity
+  let predecessorDirectiveBlock = '';
+  if (story?.parent_story_id || (story?.book_number && story.book_number > 1)) {
+    // Need full story record to get parent_story_id
+    const { data: fullStory } = await supabaseAdmin
+      .from('stories')
+      .select('parent_story_id, book_number, series_id')
+      .eq('id', storyId)
+      .single();
+
+    if (fullStory?.series_id) {
+      // Get the immediate predecessor's prose directive
+      const { data: predecessorBooks } = await supabaseAdmin
+        .from('stories')
+        .select('id, title, book_number, generation_config')
+        .eq('series_id', fullStory.series_id)
+        .lt('book_number', fullStory.book_number)
+        .order('book_number', { ascending: false })
+        .limit(1);
+
+      const predecessor = predecessorBooks?.[0];
+      if (predecessor?.generation_config?.prose_directive) {
+        const pd = predecessor.generation_config.prose_directive;
+        predecessorDirectiveBlock = `
+SERIES VOICE CONTINUITY (Book ${predecessor.book_number}: "${predecessor.title}"):
+The previous book in this series had this prose directive:
+- Author Identity: ${pd.author_identity}
+- Style Example: ${pd.style_example?.substring(0, 300)}${pd.style_example?.length > 300 ? '...' : ''}
+- Lean Into: ${pd.craft_rules?.lean_into?.join(', ') || 'N/A'}
+- Dialogue Style: ${pd.craft_rules?.dialogue_style || 'N/A'}
+- Emotional Register: ${pd.craft_rules?.emotional_register || 'N/A'}
+
+IMPORTANT: This is the SAME SERIES. The voice should EVOLVE, not reset. Keep the core identity recognizable while allowing natural maturation. A reader who loved Book ${predecessor.book_number}'s voice should feel at home in Book ${fullStory.book_number}. Don't copy it exactly — let it grow. But don't discard it either.
+`;
+        console.log(`✏️ [${storyTitle}] Prose directive: inheriting voice from Book ${predecessor.book_number}`);
+      }
+    }
+  }
+
   console.log(`✏️ [${storyTitle}] Generating prose directive...`);
   const startTime = Date.now();
 
@@ -3220,7 +3361,7 @@ Sentence Rhythm: ${narrativeVoice.sentence_rhythm || 'Not specified'}
 Narrator Personality: ${narrativeVoice.narrative_personality || 'Not specified'}
 Signature Techniques: ${(narrativeVoice.signature_techniques || []).join(', ') || 'Not specified'}
 Never Sounds Like: ${narrativeVoice.never_sounds_like || 'Not specified'}` : 'No narrative voice defined yet — create one from scratch based on genre and story DNA.'}
-
+${predecessorDirectiveBlock}
 YOUR TASK: Create a complete prose directive that will guide every chapter of this novel. Be SPECIFIC and OPINIONATED. Generic advice like "use vivid descriptions" is useless. We need directives so precise that two different AI models given this brief would produce prose that sounds recognizably similar.
 
 ${belovedStories.length > 0 ? `CRITICAL: The reader loves ${belovedStories.join(', ')}. The prose should feel like it belongs on the same shelf as these books — not imitation, but a kindred voice that would appeal to the same reader. Study what makes those authors' prose distinctive and channel similar energy.` : ''}
@@ -3310,6 +3451,48 @@ async function generateWorldCodex(storyId, userId, bible, genre) {
 
   const startTime = Date.now();
 
+  // For sequels: fetch previous book's world codex to carry forward hard rules
+  let previousCodexBlock = '';
+  const { data: currentStoryInfo } = await supabaseAdmin
+    .from('stories')
+    .select('parent_story_id, book_number, series_id')
+    .eq('id', storyId)
+    .single();
+
+  if (currentStoryInfo?.parent_story_id && currentStoryInfo.book_number > 1) {
+    // Fetch all previous books' codexes in order
+    const { data: previousBooks } = await supabaseAdmin
+      .from('stories')
+      .select('id, title, book_number')
+      .eq('series_id', currentStoryInfo.series_id)
+      .lt('book_number', currentStoryInfo.book_number)
+      .order('book_number', { ascending: true });
+
+    if (previousBooks && previousBooks.length > 0) {
+      const codexParts = [];
+      for (const pb of previousBooks) {
+        const { data: prevCodex } = await supabaseAdmin
+          .from('world_codex')
+          .select('codex_data')
+          .eq('story_id', pb.id)
+          .maybeSingle();
+        if (prevCodex) {
+          codexParts.push(`Book ${pb.book_number} ("${pb.title}") Codex:\n${JSON.stringify(prevCodex.codex_data, null, 2)}`);
+        }
+      }
+      if (codexParts.length > 0) {
+        previousCodexBlock = `\n<previous_books_world_codex>
+CRITICAL: The following world rules were established in previous books.
+ALL rules carry forward unless the narrative EXPLICITLY changes them.
+New rules should BUILD ON these, not contradict them.
+
+${codexParts.join('\n\n')}
+</previous_books_world_codex>\n`;
+        console.log(`🌍 [${storyTitle}] World codex: inheriting rules from ${codexParts.length} previous book(s)`);
+      }
+    }
+  }
+
   // Genre-adaptive extraction template
   const genreLower = (genre || 'fiction').toLowerCase();
   let genreCategories = '';
@@ -3369,7 +3552,7 @@ ${JSON.stringify(bible?.key_locations || [], null, 2)}
 </key_locations>
 
 ${genreCategories}
-
+${previousCodexBlock}
 FOR EVERY GENRE, also extract:
 - ESTABLISHED FACTS: Concrete truths about this world that MUST remain consistent (character capabilities, historical events, physical laws, social rules).
 - TIMELINE ANCHORS: Key events and their temporal relationships.
@@ -3500,6 +3683,10 @@ async function generateChapter(storyId, chapterNumber, userId, editorBrief = nul
   // Fetch previous books' bibles for sequel continuity
   const { previousBibles, bookNumber } = await fetchPreviousBooksContext(storyId, story);
   const previousBooksBlock = buildPreviousBooksContextBlock(previousBibles, bookNumber);
+
+  // Fetch detailed series context (end-of-book state from each previous book)
+  const seriesContexts = await fetchSeriesContext(storyId, story);
+  const seriesContextBlock = buildSeriesContextBlock(seriesContexts);
 
   // Fetch bible and arc separately
   const { data: bible } = await supabaseAdmin
@@ -3673,7 +3860,7 @@ Notice: no em dashes. Short sentences for tension. Physical sensation instead of
 ${proseGuardrailsBlock}
 
 Write Chapter ${chapterNumber} of "${bible.title}" following this outline and craft rules.
-${previousBooksBlock}
+${previousBooksBlock}${seriesContextBlock}
 <story_context>
   <protagonist>
     <name>${bible.characters.protagonist.name}</name>
@@ -4483,48 +4670,73 @@ Return ONLY a JSON object:
 }
 
 /**
- * Generate sequel bible with continuity from Book 1
+ * Generate sequel bible with continuity from all previous books in the series.
+ * predecessorStoryId is the immediate predecessor (e.g., Book 2 for a Book 3 generation).
  */
-async function generateSequelBible(book1StoryId, userPreferences, userId) {
-  console.log(`📚 Generating sequel bible for story ${book1StoryId}...`);
+async function generateSequelBible(predecessorStoryId, userPreferences, userId) {
+  console.log(`📚 Generating sequel bible for story ${predecessorStoryId}...`);
 
-  // Get Book 1 bible
+  // Get predecessor story info
+  const { data: predecessorStory } = await supabaseAdmin
+    .from('stories')
+    .select('series_id, book_number, premise_id')
+    .eq('id', predecessorStoryId)
+    .single();
+
+  const predecessorBookNumber = predecessorStory?.book_number || 1;
+  const nextBookNumber = predecessorBookNumber + 1;
+
+  // Get predecessor bible (most important — it's the direct predecessor)
   const { data: book1Bible, error: bibleError } = await supabaseAdmin
     .from('story_bibles')
     .select('*')
-    .eq('story_id', book1StoryId)
+    .eq('story_id', predecessorStoryId)
     .single();
 
   if (bibleError || !book1Bible) {
-    throw new Error(`Failed to fetch Book 1 bible: ${bibleError?.message}`);
+    throw new Error(`Failed to fetch Book ${predecessorBookNumber} bible: ${bibleError?.message}`);
   }
 
-  // Get Book 1 context from series_context table (should have been stored)
-  const { data: book1Story } = await supabaseAdmin
-    .from('stories')
-    .select('series_id, book_number, premise_id')
-    .eq('id', book1StoryId)
-    .single();
+  // Fetch ALL previous books' contexts from story_series_context (not just predecessor)
+  let allContexts = [];
+  if (predecessorStory?.series_id) {
+    const { data: storedContexts } = await supabaseAdmin
+      .from('story_series_context')
+      .select('*')
+      .eq('series_id', predecessorStory.series_id)
+      .order('book_number', { ascending: true });
 
-  let book1Context;
-  const { data: storedContext } = await supabaseAdmin
-    .from('story_series_context')
-    .select('*')
-    .eq('series_id', book1Story.series_id)
-    .eq('book_number', book1Story.book_number)
-    .single();
+    allContexts = storedContexts || [];
+  }
 
-  if (storedContext) {
+  // The predecessor's context is the most important — use it as the primary
+  let book1Context = allContexts.find(c => c.book_number === predecessorBookNumber);
+
+  if (book1Context) {
     book1Context = {
-      character_states: storedContext.character_states,
-      relationships: storedContext.relationships,
-      accomplishments: storedContext.accomplishments,
-      world_state: storedContext.world_state,
-      key_events: storedContext.key_events
+      character_states: book1Context.character_states,
+      relationships: book1Context.relationships,
+      accomplishments: book1Context.accomplishments,
+      world_state: book1Context.world_state,
+      key_events: book1Context.key_events
     };
   } else {
     // Extract if not stored
-    book1Context = await extractBookContext(book1StoryId, userId);
+    book1Context = await extractBookContext(predecessorStoryId, userId);
+  }
+
+  // Build cumulative context from ALL previous books for Book 3+
+  let cumulativeSeriesHistory = '';
+  if (allContexts.length > 1) {
+    cumulativeSeriesHistory = '\n\nFULL SERIES HISTORY (ALL PREVIOUS BOOKS):\n';
+    for (const ctx of allContexts) {
+      if (ctx.book_number === predecessorBookNumber) continue; // Already covered in detail above
+      cumulativeSeriesHistory += `\nBook ${ctx.book_number} Summary:
+- Key Events: ${(ctx.key_events || []).join(', ')}
+- Character Growth: ${JSON.stringify(ctx.character_states?.protagonist?.growth || 'N/A')}
+- World Changes: ${(ctx.world_state || []).join(', ')}
+- Accomplishments: ${(ctx.accomplishments || []).join(', ')}\n`;
+    }
   }
 
   // Fetch age range from Book 1's preferences
@@ -4543,46 +4755,47 @@ async function generateSequelBible(book1StoryId, userPreferences, userId) {
     }
   }
 
-  // Generate Book 2 bible with strong continuity
-  const sequelPrompt = `You are creating BOOK 2 in a series for ages ${ageRange}.
+  // Generate sequel bible with strong continuity
+  const sequelPrompt = `You are creating BOOK ${nextBookNumber} in a series for ages ${ageRange}.
 
-CRITICAL: This is a SEQUEL. You must preserve continuity.
+CRITICAL: This is a SEQUEL. You must preserve continuity with ALL previous books.
 
 ═══════════════════════════════════════════════════════
-BOOK 1 FOUNDATION (MUST HONOR):
+BOOK ${predecessorBookNumber} FOUNDATION (IMMEDIATE PREDECESSOR — MUST HONOR):
 ═══════════════════════════════════════════════════════
 
 TITLE: "${book1Bible.title}"
 GENRE: ${book1Bible.content.characters.protagonist.name}'s adventures - ${JSON.stringify(book1Bible.themes)} ← SAME GENRE/THEMES REQUIRED
 
-PROTAGONIST (as they ENDED Book 1):
+PROTAGONIST (as they ENDED Book ${predecessorBookNumber}):
 Name: ${book1Bible.content.characters.protagonist.name}
 Age: ${book1Bible.content.characters.protagonist.age}
-Growth in Book 1: ${book1Context.character_states.protagonist.growth}
-Skills Gained: ${book1Context.character_states.protagonist.skills_gained.join(', ')}
+Growth in Book ${predecessorBookNumber}: ${book1Context.character_states.protagonist.growth}
+Skills Gained: ${(book1Context.character_states.protagonist.skills_gained || []).join(', ')}
 Emotional State: ${book1Context.character_states.protagonist.emotional_state}
 Current Location: ${book1Context.character_states.protagonist.current_location}
 
-⚠️ Book 2 protagonist MUST:
+⚠️ Book ${nextBookNumber} protagonist MUST:
 - Be the SAME character
-- START more capable than Book 1 beginning (they've grown!)
-- RETAIN all skills/growth from Book 1
-- Remember and reference Book 1 events naturally
+- START more capable than Book ${predecessorBookNumber} beginning (they've grown across ${predecessorBookNumber} book${predecessorBookNumber > 1 ? 's' : ''}!)
+- RETAIN all skills/growth from ALL previous books
+- Remember and reference previous book events naturally
 
 WORLD RULES (MUST PRESERVE):
 ${JSON.stringify(book1Bible.world_rules, null, 2)}
 
-World Changes from Book 1:
-${book1Context.world_state.join('\n- ')}
+World Changes from Book ${predecessorBookNumber}:
+${(book1Context.world_state || []).join('\n- ')}
 
 RELATIONSHIPS ESTABLISHED:
 ${JSON.stringify(book1Context.relationships, null, 2)}
 
-BOOK 1 ACCOMPLISHMENTS:
-${book1Context.accomplishments.join('\n- ')}
+BOOK ${predecessorBookNumber} ACCOMPLISHMENTS:
+${(book1Context.accomplishments || []).join('\n- ')}
 
-KEY EVENTS FROM BOOK 1:
-${book1Context.key_events.join('\n- ')}
+KEY EVENTS FROM BOOK ${predecessorBookNumber}:
+${(book1Context.key_events || []).join('\n- ')}
+${cumulativeSeriesHistory}
 
 ═══════════════════════════════════════════════════════
 READER'S PREFERENCES FOR BOOK 2:
@@ -4591,25 +4804,25 @@ READER'S PREFERENCES FOR BOOK 2:
 ${userPreferences ? JSON.stringify(userPreferences, null, 2) : 'Continue the adventure naturally'}
 
 ═══════════════════════════════════════════════════════
-BOOK 2 REQUIREMENTS:
+BOOK ${nextBookNumber} REQUIREMENTS:
 ═══════════════════════════════════════════════════════
 
 Create a NEW adventure that:
 
 1. CONTINUITY:
-   - Takes place 3-6 months after Book 1
-   - Character is MORE experienced than Book 1 start
-   - References Book 1 events naturally
+   - Takes place 3-6 months after Book ${predecessorBookNumber}
+   - Character is MORE experienced than Book ${predecessorBookNumber} start (they've grown across ${predecessorBookNumber} book${predecessorBookNumber > 1 ? 's' : ''})
+   - References previous book events naturally
    - Relationships continue/evolve
-   - World reflects Book 1 changes
+   - World reflects ALL changes from previous books
 
 2. NEW CONFLICT:
-   - DIFFERENT type than Book 1 main conflict
-   - Bigger stakes (protagonist more capable)
-   - Requires NEW skills (not just Book 1 skills)
+   - DIFFERENT type than Book ${predecessorBookNumber} main conflict
+   - Bigger stakes (protagonist more capable after ${predecessorBookNumber} book${predecessorBookNumber > 1 ? 's' : ''})
+   - Requires NEW skills (not just previous books' skills)
    - Introduces new locations while honoring established ones
 
-3. EVOLVED THEMES — Each theme MUST evolve from Book 1. Show how the sequel explores a NEW dimension or complication of the same core theme. Do NOT copy Book 1 theme descriptions verbatim. The theme's essence stays, but the lens changes.
+3. EVOLVED THEMES — Each theme MUST evolve from previous books. Show how the sequel explores a NEW dimension or complication of the same core theme. Do NOT copy previous theme descriptions verbatim. The theme's essence stays, but the lens changes.
 4. AGE-APPROPRIATE: ${ageRange} years old
 5. INCORPORATE reader preferences where appropriate
 
@@ -4618,17 +4831,17 @@ CRITICAL FORMAT INSTRUCTIONS:
 - Keep values CONCISE — 1-3 sentences per field, not paragraphs
 - Supporting characters: MAX 4 entries
 - Key locations: MAX 5 entries
-- Do NOT duplicate Book 1 world_rules verbatim — summarize changes/additions only
+- Do NOT duplicate previous books' world_rules verbatim — summarize changes/additions only
 
-Return Book 2 Bible in this EXACT format:
+Return Book ${nextBookNumber} Bible in this EXACT format:
 {
-  "title": "A standalone creative title for Book 2 — NOT a subtitle, NOT 'Book 2 of...', just a strong title like Book 1 had",
+  "title": "A standalone creative title for Book ${nextBookNumber} — NOT a subtitle, NOT 'Book ${nextBookNumber} of...', just a strong title like previous books had",
   "world_rules": {
     "magic_system": "brief summary of magic rules (1-2 sentences)",
     "technology_level": "brief (1 sentence)",
     "social_structure": "brief (1 sentence)",
     "key_rules": ["rule 1", "rule 2", "rule 3"],
-    "changes_from_book1": "what changed in the world since Book 1 (1-2 sentences)"
+    "changes_from_previous_books": "what changed in the world since previous book(s) (1-2 sentences)"
   },
   "characters": {
     "protagonist": {
@@ -4644,7 +4857,7 @@ Return Book 2 Bible in this EXACT format:
       "name": "name",
       "role": "1 sentence",
       "motivation": "1 sentence",
-      "connection_to_book1": "1 sentence"
+      "connection_to_previous_books": "1 sentence"
     },
     "supporting": [
       {"name": "name", "role": "1 sentence", "arc": "1 sentence"}
@@ -4652,7 +4865,7 @@ Return Book 2 Bible in this EXACT format:
   },
   "central_conflict": {
     "description": "2-3 sentences",
-    "connection_to_book1": "1 sentence",
+    "connection_to_previous_books": "1 sentence",
     "escalation": "1 sentence"
   },
   "stakes": {
@@ -4664,7 +4877,7 @@ Return Book 2 Bible in this EXACT format:
     {"name": "location", "description": "1 sentence", "new_or_returning": "new/returning"}
   ],
   "timeline": {
-    "time_after_book1": "e.g. 3 months later",
+    "time_after_previous_book": "e.g. 3 months later",
     "duration": "e.g. spans 2 weeks",
     "season": "e.g. early winter"
   },

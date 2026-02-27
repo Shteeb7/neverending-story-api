@@ -558,38 +558,41 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
     console.log(`📚 Created series "${seriesName}" (${seriesId})`);
   }
 
-  // Extract Book 1 context if not already done
+  // Determine next book number (supports Book 3+, not just Book 2)
   const { extractBookContext, generateSequelBible, generateArcOutline, orchestratePreGeneration } = require('../services/generation');
 
-  let book1Context;
-  const { data: storedContext } = await supabaseAdmin
+  const currentBookNumber = book1Story.book_number || 1;
+  const nextBookNumber = currentBookNumber + 1;
+  console.log(`📚 Creating Book ${nextBookNumber} sequel (predecessor is Book ${currentBookNumber})`);
+
+  // Extract context from the predecessor book if not already stored
+  const { data: storedPredecessorCtx } = await supabaseAdmin
     .from('story_series_context')
     .select('*')
     .eq('series_id', seriesId)
-    .eq('book_number', 1)
-    .single();
+    .eq('book_number', currentBookNumber)
+    .maybeSingle();
 
-  if (storedContext) {
-    console.log('✅ Using stored Book 1 context');
-    book1Context = storedContext;
+  if (storedPredecessorCtx) {
+    console.log(`✅ Using stored Book ${currentBookNumber} context`);
   } else {
-    console.log('📊 Extracting Book 1 context...');
+    console.log(`📊 Extracting Book ${currentBookNumber} context...`);
     const context = await extractBookContext(storyId, userId);
 
-    // Get bible_id for Book 1
-    const { data: book1Bible } = await supabaseAdmin
+    // Get bible_id for the predecessor book
+    const { data: predecessorBible } = await supabaseAdmin
       .from('story_bibles')
       .select('id')
       .eq('story_id', storyId)
-      .single();
+      .maybeSingle();
 
     // Store context for future use
     await supabaseAdmin
       .from('story_series_context')
       .insert({
         series_id: seriesId,
-        book_number: 1,
-        bible_id: book1Bible.id,
+        book_number: currentBookNumber,
+        bible_id: predecessorBible?.id || null,
         character_states: context.character_states,
         world_state: context.world_state,
         relationships: context.relationships,
@@ -598,23 +601,23 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
         reader_preferences: userPreferences || {}
       });
 
-    book1Context = context;
+    console.log(`✅ Stored Book ${currentBookNumber} context for series continuity`);
   }
 
-  console.log('📚 Generating Book 2 bible...');
-  const book2BibleContent = await generateSequelBible(storyId, userPreferences, userId);
+  console.log(`📚 Generating Book ${nextBookNumber} bible...`);
+  const sequelBibleContent = await generateSequelBible(storyId, userPreferences, userId);
 
-  // Create Book 2 story record (inherit genre and tier from Book 1)
+  // Create sequel story record (inherit genre and tier from predecessor)
   const { data: book2Story, error: book2Error } = await supabaseAdmin
     .from('stories')
     .insert({
       user_id: userId,
       series_id: seriesId,
-      book_number: 2,
+      book_number: nextBookNumber,
       parent_story_id: storyId,
-      title: book2BibleContent.title,
-      genre: book1Story.genre || null,              // Inherit genre from Book 1
-      premise_tier: book1Story.premise_tier || null, // Inherit tier from Book 1 (sequels continue the original choice)
+      title: sequelBibleContent.title,
+      genre: book1Story.genre || null,              // Inherit genre from predecessor
+      premise_tier: book1Story.premise_tier || null, // Inherit tier from predecessor (sequels continue the original choice)
       status: 'generating',
       generation_progress: {
         bible_complete: false,
@@ -627,49 +630,50 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
     .single();
 
   if (book2Error) {
-    throw new Error(`Failed to create Book 2 story: ${book2Error.message}`);
+    throw new Error(`Failed to create Book ${nextBookNumber} story: ${book2Error.message}`);
   }
 
-  console.log(`✅ Created Book 2 story: ${book2Story.id}`);
+  console.log(`✅ Created Book ${nextBookNumber} story: ${book2Story.id}`);
 
-  // Store Book 2 bible
+  // Store sequel bible
   const { data: book2Bible, error: bibleError } = await supabaseAdmin
     .from('story_bibles')
     .insert({
       user_id: userId,
       story_id: book2Story.id,
-      content: book2BibleContent,
-      title: book2BibleContent.title,
-      world_rules: book2BibleContent.world_rules,
-      characters: book2BibleContent.characters,
-      central_conflict: book2BibleContent.central_conflict,
-      stakes: book2BibleContent.stakes,
-      themes: book2BibleContent.themes,
-      key_locations: book2BibleContent.key_locations,
-      timeline: book2BibleContent.timeline
+      content: sequelBibleContent,
+      title: sequelBibleContent.title,
+      world_rules: sequelBibleContent.world_rules,
+      characters: sequelBibleContent.characters,
+      central_conflict: sequelBibleContent.central_conflict,
+      stakes: sequelBibleContent.stakes,
+      themes: sequelBibleContent.themes,
+      key_locations: sequelBibleContent.key_locations,
+      timeline: sequelBibleContent.timeline
     })
     .select()
     .single();
 
   if (bibleError) {
-    throw new Error(`Failed to store Book 2 bible: ${bibleError.message}`);
+    throw new Error(`Failed to store Book ${nextBookNumber} bible: ${bibleError.message}`);
   }
 
-  console.log('📐 Generating Book 2 arc...');
+  console.log(`📐 Generating Book ${nextBookNumber} arc...`);
   await generateArcOutline(book2Story.id, userId);
 
-  console.log('📝 Starting Book 2 chapter generation (1-3 initial batch)...');
+  console.log(`📝 Starting Book ${nextBookNumber} chapter generation (1-3 initial batch)...`);
 
   // Start pre-generation in background (3 chapters)
   orchestratePreGeneration(book2Story.id, userId).catch(error => {
-    console.error('Book 2 pre-generation failed:', error);
+    console.error(`Book ${nextBookNumber} pre-generation failed:`, error);
   });
 
   res.json({
     success: true,
-    book2: book2Story,
+    sequel: book2Story,
+    bookNumber: nextBookNumber,
     seriesId,
-    message: 'Book 2 is being conjured. Check back soon for the first chapters!'
+    message: `Book ${nextBookNumber} is being conjured. Check back soon for the first chapters!`
   });
 }));
 

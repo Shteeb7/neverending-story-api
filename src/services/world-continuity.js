@@ -310,6 +310,13 @@ async function buildWorldContextBlock(storyId, targetChapterNumber, chapterOutli
     const codexData = codex.codex_data;
     const codexXml = buildCodexXml(codexData);
 
+    // If no ledger entries yet (Book 2+ Chapter 1), seed from parent book's final world state
+    let parentWorldBlock = '';
+    if (!ledgerEntries || ledgerEntries.length === 0) {
+      const { getParentBookFinalLedger } = require('./character-intelligence');
+      parentWorldBlock = await getParentBookFinalLedger(storyId, 'world') || '';
+    }
+
     // Build world state progression (with compression)
     let worldStateXml = '';
     if (ledgerEntries && ledgerEntries.length > 0) {
@@ -391,6 +398,11 @@ ${entry.summary}
   <world_codex>
 ${codexXml}
   </world_codex>`;
+
+    // Inject parent book world state for sequel Chapter 1
+    if (parentWorldBlock) {
+      block += `\n${parentWorldBlock}`;
+    }
 
     if (worldStateXml) {
       block += `
