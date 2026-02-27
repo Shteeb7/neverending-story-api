@@ -2737,6 +2737,16 @@ async function generateBatch(storyId, startChapter, endChapter, userId, editorBr
   }
 
   storyLog(storyId, storyTitle, `✅ [${storyTitle}] Batch complete: chapters ${startChapter}-${endChapter}`);
+
+  // If chapter 9 was just generated, trigger pre-classification (fire-and-forget)
+  if (endChapter >= 9 && startChapter <= 9) {
+    storyLog(storyId, storyTitle, `📋 [${storyTitle}] Pre-classification triggered after chapter 9`);
+    const { classifyStoryContent } = require('./content-classification');
+    classifyStoryContent(storyId)
+      .catch(err => {
+        console.error(`❌ [${storyTitle}] Pre-classification failed (non-blocking):`, err.message);
+      });
+  }
 }
 
 /**

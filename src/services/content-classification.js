@@ -5,7 +5,34 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
 });
 
-const MODEL = 'claude-opus-4-20250514';
+const MODEL = 'claude-sonnet-4-5-20250929';
+
+/**
+ * Get existing classification for a story if one exists
+ * @param {string} storyId - The story ID
+ * @returns {Promise<{rating: string, reason: string} | null>} - Existing classification or null
+ */
+async function getExistingClassification(storyId) {
+  const { data: review, error } = await supabaseAdmin
+    .from('content_reviews')
+    .select('ai_rating, final_rating, status')
+    .eq('story_id', storyId)
+    .in('status', ['resolved', 'pending_review'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !review) {
+    return null;
+  }
+
+  // Use final_rating if available (after dispute), otherwise ai_rating
+  const rating = review.final_rating || review.ai_rating;
+  return {
+    rating,
+    reason: 'Previously classified'
+  };
+}
 
 /**
  * Classify story content for maturity rating
@@ -13,6 +40,12 @@ const MODEL = 'claude-opus-4-20250514';
  * @returns {Promise<{rating: string, reason: string}>} - The maturity rating and explanation
  */
 async function classifyStoryContent(storyId) {
+  // Check for existing classification first
+  const existing = await getExistingClassification(storyId);
+  if (existing) {
+    console.log(`📋 [Classification] Using cached classification for story ${storyId}: ${existing.rating}`);
+    return existing;
+  }
   console.log(`📋 [Classification] Starting classification for story ${storyId}`);
 
   // Fetch the story
@@ -46,24 +79,40 @@ async function classifyStoryContent(storyId) {
     .map(ch => `CHAPTER ${ch.chapter_number}\n\n${ch.content}`)
     .join('\n\n---\n\n');
 
-  // Build classification prompt
+  // Build classification prompt (calibrated for better accuracy)
   const classificationPrompt = `You are a content classifier for Mythweaver, a personalized fiction platform. Read the following story and classify its maturity level.
 
-Consider:
-- Violence intensity (graphic descriptions, harm to characters)
-- Romantic/sexual content (implications, descriptions)
-- Language (profanity, slurs)
-- Dark themes (death, trauma, horror)
-- Emotional intensity (fear, grief, mature psychological themes)
+MATURITY LEVELS (use the LOWEST appropriate tier):
 
-MATURITY LEVELS:
-- all_ages: Suitable for readers of all ages (like G or PG movies)
-- teen_13: Suitable for teens 13+ (like PG-13 movies - some mature themes but not graphic)
-- mature_17: Suitable for mature teens 17+ (like R movies - explicit content, intense themes)
+all_ages — Suitable for all readers. May include:
+- Mild conflict, cartoon-style action, pratfalls
+- Characters in peril that resolves safely
+- Themes of friendship, courage, discovery
+- No profanity, no romantic content beyond hand-holding
+- Examples: Charlotte's Web, Percy Jackson (book 1), Narnia
+
+teen_13 — Suitable for teens 13+. May include:
+- Action violence (sword fights, battles, explosions) without graphic gore or torture
+- Characters can die, but death is not dwelt on with graphic physical detail
+- Mild profanity (damn, hell) used sparingly
+- Romantic tension, kissing, implied attraction — but no explicit sexual content
+- Dark themes (war, loss, injustice, moral ambiguity) handled without nihilism
+- Horror atmosphere and tension without sustained graphic body horror
+- Examples: Harry Potter (books 4-7), Hunger Games, Pirates of the Caribbean, Lord of the Rings
+
+mature_17 — For mature readers 17+. Contains one or more of:
+- Graphic violence with detailed physical descriptions of injury, torture, or gore
+- Explicit sexual content or detailed nudity
+- Heavy/frequent profanity (f-word, slurs)
+- Sustained psychological horror, graphic body horror
+- Detailed depictions of drug use, self-harm, or abuse
+- Examples: Game of Thrones, The Road, American Psycho
+
+IMPORTANT: Lean toward the LOWER rating when content is borderline. Action-adventure violence (battles, chases, peril) is teen_13, not mature_17, unless it includes graphic gore or torture. Fantasy/sci-fi tropes (monsters, magical combat, post-apocalyptic settings) are not inherently mature.
 
 Return EXACTLY ONE of: all_ages, teen_13, mature_17
 
-Then provide a brief explanation (2-3 sentences) of why you chose this rating.
+Then provide a brief explanation (2-3 sentences) of why you chose this rating, citing specific content from the story.
 
 Format your response EXACTLY like this:
 RATING: [rating]
@@ -111,5 +160,6 @@ ${fullStoryText}`;
 }
 
 module.exports = {
-  classifyStoryContent
+  classifyStoryContent,
+  getExistingClassification
 };

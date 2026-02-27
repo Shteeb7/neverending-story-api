@@ -12,6 +12,136 @@ const { authenticateUser } = require('../middleware/auth');
 const { processWhisperEvent } = require('../services/notifications');
 
 /**
+ * Helper: Convert rating to numeric value for comparison
+ */
+function ratingToNum(rating) {
+  const map = { 'all_ages': 0, 'teen_13': 1, 'mature_17': 2 };
+  return map[rating] !== undefined ? map[rating] : 1;
+}
+
+/**
+ * Helper: Generate instant Prospero acknowledgment for dispute
+ */
+function generateProsperoAcknowledgment(aiRating, publisherRating, argument) {
+  const acknowledgments = [
+    `You raise a fair point about the content. Let me reconsider — `,
+    `I appreciate you sharing your perspective on this. `,
+    `That's a thoughtful argument, and I want to give it proper weight. `,
+  ];
+  const ack = acknowledgments[Math.floor(Math.random() * acknowledgments.length)];
+
+  // If publisher wants LOWER rating
+  if (ratingToNum(publisherRating) < ratingToNum(aiRating)) {
+    return `${ack}You know your story's intent better than anyone. I'm taking another careful look at the content now with your points in mind. Give me just a moment to reconsider.`;
+  }
+  // If publisher wants HIGHER rating (rare but possible)
+  return `${ack}I want to make sure readers are appropriately prepared. Let me review the content again with your perspective in mind.`;
+}
+
+/**
+ * Helper: Re-evaluate classification with publisher's argument (background task)
+ */
+async function reEvaluateClassification(reviewId, review, publisherRating, argument) {
+  const Anthropic = require('@anthropic-ai/sdk');
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  // Fetch story chapters
+  const { data: chapters, error } = await supabaseAdmin
+    .from('chapters')
+    .select('chapter_number, content')
+    .eq('story_id', review.story_id)
+    .order('chapter_number', { ascending: true });
+
+  if (error || !chapters || chapters.length === 0) {
+    throw new Error('Failed to fetch chapters for re-evaluation');
+  }
+
+  const fullStoryText = chapters
+    .map(ch => `CHAPTER ${ch.chapter_number}\n\n${ch.content}`)
+    .join('\n\n---\n\n');
+
+  // Re-evaluation prompt with calibrated criteria + publisher argument
+  const reEvalPrompt = `You are re-evaluating a story's maturity rating. The publisher has disputed the original classification.
+
+ORIGINAL CLASSIFICATION: ${review.ai_rating}
+PUBLISHER'S REQUESTED RATING: ${publisherRating}
+PUBLISHER'S ARGUMENT: "${argument}"
+
+MATURITY LEVELS (use the LOWEST appropriate tier):
+
+all_ages — Suitable for all readers. May include:
+- Mild conflict, cartoon-style action, pratfalls
+- Characters in peril that resolves safely
+- Themes of friendship, courage, discovery
+- No profanity, no romantic content beyond hand-holding
+- Examples: Charlotte's Web, Percy Jackson (book 1), Narnia
+
+teen_13 — Suitable for teens 13+. May include:
+- Action violence (sword fights, battles, explosions) without graphic gore or torture
+- Characters can die, but death is not dwelt on with graphic physical detail
+- Mild profanity (damn, hell) used sparingly
+- Romantic tension, kissing, implied attraction — but no explicit sexual content
+- Dark themes (war, loss, injustice, moral ambiguity) handled without nihilism
+- Horror atmosphere and tension without sustained graphic body horror
+- Examples: Harry Potter (books 4-7), Hunger Games, Pirates of the Caribbean, Lord of the Rings
+
+mature_17 — For mature readers 17+. Contains one or more of:
+- Graphic violence with detailed physical descriptions of injury, torture, or gore
+- Explicit sexual content or detailed nudity
+- Heavy/frequent profanity (f-word, slurs)
+- Sustained psychological horror, graphic body horror
+- Detailed depictions of drug use, self-harm, or abuse
+- Examples: Game of Thrones, The Road, American Psycho
+
+IMPORTANT: Lean toward the LOWER rating when content is borderline. Action-adventure violence (battles, chases, peril) is teen_13, not mature_17, unless it includes graphic gore or torture. Fantasy/sci-fi tropes (monsters, magical combat, post-apocalyptic settings) are not inherently mature.
+
+Consider the publisher's argument carefully. They know their story's intent. However, your job is to protect readers — if the content genuinely warrants a higher rating, maintain it.
+
+Return EXACTLY ONE of: all_ages, teen_13, mature_17
+
+Then provide a brief explanation (2-3 sentences) of why you chose this rating, citing specific content from the story.
+
+Format your response EXACTLY like this:
+RATING: [rating]
+REASON: [explanation]
+
+Story to re-evaluate:
+
+${fullStoryText}`;
+
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5-20250929',
+    max_tokens: 1024,
+    messages: [{ role: 'user', content: reEvalPrompt }]
+  });
+
+  const responseText = response.content[0].text;
+  const ratingMatch = responseText.match(/RATING:\s*(all_ages|teen_13|mature_17)/i);
+  const reasonMatch = responseText.match(/REASON:\s*(.+?)(?=\n\n|$)/is);
+
+  if (!ratingMatch) {
+    throw new Error('Failed to parse re-evaluation rating');
+  }
+
+  const newRating = ratingMatch[1].toLowerCase();
+  const newReason = reasonMatch ? reasonMatch[1].trim() : 'Re-evaluated after publisher feedback';
+
+  // Update content_reviews with final rating
+  await supabaseAdmin
+    .from('content_reviews')
+    .update({
+      final_rating: newRating,
+      status: 'resolved',
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', reviewId);
+
+  console.log(`📋 Re-evaluation complete for review ${reviewId}: ${newRating}`);
+
+  return { rating: newRating, reason: newReason, changed: newRating !== review.ai_rating };
+}
+
+/**
  * POST /api/publications
  * Publish a story to WhisperNet
  */
@@ -484,7 +614,29 @@ router.post('/classify', authenticateUser, asyncHandler(async (req, res) => {
     });
   }
 
-  // Run AI classification
+  // Check if a content_review already exists (from pre-classification)
+  const { data: existingReview } = await supabaseAdmin
+    .from('content_reviews')
+    .select('*')
+    .eq('story_id', story_id)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existingReview) {
+    console.log(`📋 Using existing classification for story ${story_id}`);
+    // Return existing classification
+    const rating = existingReview.final_rating || existingReview.ai_rating;
+    return res.json({
+      success: true,
+      content_review_id: existingReview.id,
+      rating,
+      reason: 'Previously classified',
+      cached: true
+    });
+  }
+
+  // No existing review - run AI classification (fallback for old stories)
   const { classifyStoryContent } = require('../services/content-classification');
   const { rating, reason } = await classifyStoryContent(story_id);
 
@@ -518,7 +670,8 @@ router.post('/classify', authenticateUser, asyncHandler(async (req, res) => {
     success: true,
     content_review_id: contentReview.id,
     rating,
-    reason
+    reason,
+    cached: false
   });
 }));
 
@@ -626,74 +779,97 @@ router.post('/classify/respond', authenticateUser, asyncHandler(async (req, res)
     timestamp: new Date().toISOString()
   });
 
-  // Call Claude to get Prospero's response
-  const Anthropic = require('@anthropic-ai/sdk');
-  const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY
-  });
+  // PHASE 1: Generate instant acknowledgment (no AI call)
+  const acknowledgment = generateProsperoAcknowledgment(review.ai_rating, publisher_rating, argument);
 
-  const prosperoPrompt = `You are Prospero, the AI storyteller for Mythweaver. You classified a story as "${review.ai_rating}" (all_ages/teen_13/mature_17).
-
-The publisher wants it classified as "${publisher_rating}" instead.
-
-Their argument: "${argument}"
-
-Consider their perspective carefully. You can:
-1. Change your rating if they make a valid point: "You make a fair point. I'll update it to [new_rating]."
-2. Stand firm if you believe your rating is correct: "I understand your perspective, but I believe [rating] is appropriate because [explanation]. If you'd still like to contest this, I can flag it for our team to review."
-
-Be thoughtful, respectful, and clear in your reasoning. Respond in 2-3 sentences.`;
-
-  const messages = [{ role: 'user', content: prosperoPrompt }];
-
-  const response = await anthropic.messages.create({
-    model: 'claude-opus-4-20250514',
-    max_tokens: 512,
-    messages
-  });
-
-  const prosperoResponse = response.content[0].text;
-
-  // Check if Prospero changed the rating
-  const ratingChangeMatch = prosperoResponse.match(/update it to (all_ages|teen_13|mature_17)/i);
-  const newRating = ratingChangeMatch ? ratingChangeMatch[1].toLowerCase() : null;
-
-  // Add Prospero's response to conversation
+  // Add acknowledgment to conversation
   conversation.messages.push({
     role: 'prospero',
-    content: prosperoResponse,
+    content: acknowledgment,
     timestamp: new Date().toISOString(),
-    rating_changed: !!newRating,
-    new_rating: newRating
+    is_acknowledgment: true
   });
 
-  // Update content review
+  // Update review with acknowledgment and set status to 'reviewing'
   await supabaseAdmin
     .from('content_reviews')
     .update({
       publisher_rating,
       prospero_conversation: conversation,
-      status: newRating ? 'resolved' : 'disputed',
-      final_rating: newRating || undefined
+      status: 'reviewing'
     })
     .eq('id', content_review_id);
 
-  // Update story status
-  await supabaseAdmin
-    .from('stories')
-    .update({
-      content_classification_status: newRating ? 'publisher_confirmed' : 'disputed',
-      maturity_rating: newRating || undefined
-    })
-    .eq('id', review.story_id);
+  // PHASE 2: Fire background re-evaluation (fire-and-forget)
+  reEvaluateClassification(content_review_id, review, publisher_rating, argument)
+    .catch(err => console.error('❌ Re-evaluation failed:', err));
 
+  // Return instant response
   res.json({
     success: true,
-    prospero_response: prosperoResponse,
-    status: newRating ? 'resolved' : 'disputed',
-    final_rating: newRating,
+    prospero_response: acknowledgment,
+    status: 'reviewing',
+    final_rating: null,
     exchange_count: exchangeCount + 1,
     max_exchanges_reached: exchangeCount + 1 >= 3
+  });
+}));
+
+/**
+ * GET /api/publications/classify/review-status/:reviewId
+ * Check status of a classification review (for polling after dispute)
+ */
+router.get('/classify/review-status/:reviewId', authenticateUser, asyncHandler(async (req, res) => {
+  const { reviewId } = req.params;
+  const { userId } = req;
+
+  const { data: review, error } = await supabaseAdmin
+    .from('content_reviews')
+    .select('id, status, final_rating, ai_rating, publisher_id, prospero_conversation')
+    .eq('id', reviewId)
+    .single();
+
+  if (error || !review) {
+    return res.status(404).json({
+      success: false,
+      error: 'Review not found'
+    });
+  }
+
+  if (review.publisher_id !== userId) {
+    return res.status(403).json({
+      success: false,
+      error: 'Not authorized'
+    });
+  }
+
+  // If status is 'resolved', return the final rating with explanation
+  if (review.status === 'resolved') {
+    const rating = review.final_rating || review.ai_rating;
+    const ratingChanged = review.final_rating && review.final_rating !== review.ai_rating;
+
+    // Generate Prospero's follow-up message
+    let followUpMessage;
+    if (ratingChanged) {
+      followUpMessage = `After a closer look, I agree — ${rating} is more appropriate for this story. Updated!`;
+    } else {
+      followUpMessage = `I've looked again carefully, and I still believe ${rating} is the right call. If you'd like, you can escalate this for a human review.`;
+    }
+
+    return res.json({
+      success: true,
+      status: 'resolved',
+      final_rating: rating,
+      rating_changed: ratingChanged,
+      follow_up_message: followUpMessage
+    });
+  }
+
+  // Still reviewing
+  res.json({
+    success: true,
+    status: review.status,
+    final_rating: null
   });
 }));
 
