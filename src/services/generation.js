@@ -1594,6 +1594,160 @@ Return ONLY a JSON object in this exact format:
 }
 
 /**
+ * Fetch previous books' bibles for sequel continuity.
+ * If this story is Book 2+ in a series, returns structured context from all prior books.
+ * Returns { previousBibles: [...], bookNumber, isSequel } or empty defaults.
+ */
+async function fetchPreviousBooksContext(storyId, story = null) {
+  // If story wasn't passed in, fetch it
+  if (!story) {
+    const { data: fetchedStory } = await supabaseAdmin
+      .from('stories')
+      .select('id, title, book_number, series_id')
+      .eq('id', storyId)
+      .single();
+    story = fetchedStory;
+  }
+
+  if (!story || !story.book_number || story.book_number <= 1 || !story.series_id) {
+    return { previousBibles: [], bookNumber: story?.book_number || 1, isSequel: false };
+  }
+
+  // Fetch all previous books in this series
+  const { data: previousBooks, error: prevBooksError } = await supabaseAdmin
+    .from('stories')
+    .select('id, title, book_number')
+    .eq('series_id', story.series_id)
+    .lt('book_number', story.book_number)
+    .order('book_number', { ascending: true });
+
+  if (prevBooksError || !previousBooks || previousBooks.length === 0) {
+    console.log(`📚 Story ${storyId} is Book ${story.book_number} but no previous books found in series`);
+    return { previousBibles: [], bookNumber: story.book_number, isSequel: true };
+  }
+
+  console.log(`📚 Fetching ${previousBooks.length} previous book(s) for sequel continuity`);
+
+  const previousBibles = [];
+  for (const prevBook of previousBooks) {
+    const { data: prevBible } = await supabaseAdmin
+      .from('story_bibles')
+      .select('title, characters, key_locations, world_rules, central_conflict, stakes, themes, timeline')
+      .eq('story_id', prevBook.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (prevBible) {
+      previousBibles.push({
+        book_number: prevBook.book_number,
+        title: prevBook.title || prevBible.title,
+        bible: prevBible
+      });
+    }
+  }
+
+  console.log(`✅ Loaded ${previousBibles.length} previous bible(s) for sequel continuity`);
+  return { previousBibles, bookNumber: story.book_number, isSequel: true };
+}
+
+/**
+ * Build a formatted context block from previous books' bibles for injection into prompts.
+ * Focuses on continuity-critical data: characters, locations, events, timeline, world rules.
+ */
+function buildPreviousBooksContextBlock(previousBibles, bookNumber) {
+  if (!previousBibles || previousBibles.length === 0) return '';
+
+  let block = `
+<previous_books_continuity>
+  <instruction>This is Book ${bookNumber} in a multi-book series. You MUST maintain continuity with everything that happened in previous books. Contradicting established events, character histories, or world state is a CRITICAL FAILURE.</instruction>
+
+`;
+
+  for (const prevBook of previousBibles) {
+    const b = prevBook.bible;
+    block += `  <book number="${prevBook.book_number}" title="${prevBook.title}">
+`;
+
+    // Characters — protagonist, antagonist, and supporting cast
+    if (b.characters) {
+      block += `    <characters>
+`;
+      if (b.characters.protagonist) {
+        block += `      <protagonist name="${b.characters.protagonist.name}" age="${b.characters.protagonist.age || 'N/A'}">
+        Goals: ${b.characters.protagonist.goals || 'N/A'}
+        Personality: ${b.characters.protagonist.personality || 'N/A'}
+        Arc: ${b.characters.protagonist.internal_contradiction || 'N/A'}
+      </protagonist>
+`;
+      }
+      if (b.characters.antagonist) {
+        block += `      <antagonist name="${b.characters.antagonist.name}">
+        Motivation: ${b.characters.antagonist.motivation || 'N/A'}
+      </antagonist>
+`;
+      }
+      if (b.characters.supporting && b.characters.supporting.length > 0) {
+        for (const sc of b.characters.supporting) {
+          block += `      <supporting name="${sc.name}" role="${sc.role || 'N/A'}" relationship="${sc.relationship_dynamic || sc.relationship || 'N/A'}" />
+`;
+        }
+      }
+      block += `    </characters>
+`;
+    }
+
+    // Key locations
+    if (b.key_locations && b.key_locations.length > 0) {
+      block += `    <locations>
+`;
+      for (const loc of b.key_locations) {
+        block += `      <location name="${loc.name}">${loc.description || ''}</location>
+`;
+      }
+      block += `    </locations>
+`;
+    }
+
+    // Central conflict and resolution
+    if (b.central_conflict) {
+      block += `    <central_conflict>${typeof b.central_conflict === 'string' ? b.central_conflict : b.central_conflict.description || JSON.stringify(b.central_conflict)}</central_conflict>
+`;
+    }
+
+    // Timeline
+    if (b.timeline) {
+      block += `    <timeline>${typeof b.timeline === 'string' ? b.timeline : JSON.stringify(b.timeline)}</timeline>
+`;
+    }
+
+    // World rules (brief — the current book's bible/codex has the full version)
+    if (b.world_rules) {
+      block += `    <world_rules_established>${typeof b.world_rules === 'string' ? b.world_rules : JSON.stringify(b.world_rules)}</world_rules_established>
+`;
+    }
+
+    block += `  </book>
+`;
+  }
+
+  block += `
+  <continuity_rules>
+    - If a character visited a location in a previous book, you CANNOT claim they haven't been there in years/decades
+    - Character relationships must BUILD ON previous interactions, not reset or contradict them
+    - World state changes from previous books (destroyed buildings, new alliances, deaths, discoveries) PERSIST
+    - Reference previous events naturally when relevant — readers expect callbacks
+    - Maintain timeline consistency — check when events occurred before making ANY time-based claims
+    - Characters who died in previous books stay dead unless resurrection is an established world mechanic
+    - Skills, abilities, and knowledge characters gained in previous books carry forward
+  </continuity_rules>
+</previous_books_continuity>
+`;
+
+  return block;
+}
+
+/**
  * Generate 12-chapter arc outline
  */
 async function generateArcOutline(storyId, userId) {
@@ -1651,6 +1805,10 @@ async function generateArcOutline(storyId, userId) {
     ? JSON.stringify(worldCodex.codex_data, null, 2)
     : JSON.stringify(bible.world_rules || {}, null, 2);
 
+  // Fetch previous books' bibles for sequel continuity
+  const { previousBibles, bookNumber, isSequel } = await fetchPreviousBooksContext(storyId, story);
+  const previousBooksBlock = buildPreviousBooksContextBlock(previousBibles, bookNumber);
+
   const prompt = `You are an expert story structure designer creating a detailed roadmap for compelling fiction.
 
 Using this story bible, create a detailed 12-chapter outline following a classic 3-act structure:
@@ -1681,7 +1839,7 @@ Using this story bible, create a detailed 12-chapter outline following a classic
 
   <target_age>${ageRange}</target_age>
 </story_bible_summary>
-
+${previousBooksBlock}
 <world_rules>
 ${worldRulesForArc}
 </world_rules>
@@ -3339,6 +3497,10 @@ async function generateChapter(storyId, chapterNumber, userId, editorBrief = nul
   // Get generation config for feature flags
   const config = story.generation_config || {};
 
+  // Fetch previous books' bibles for sequel continuity
+  const { previousBibles, bookNumber } = await fetchPreviousBooksContext(storyId, story);
+  const previousBooksBlock = buildPreviousBooksContextBlock(previousBibles, bookNumber);
+
   // Fetch bible and arc separately
   const { data: bible } = await supabaseAdmin
     .from('story_bibles')
@@ -3511,7 +3673,7 @@ Notice: no em dashes. Short sentences for tension. Physical sensation instead of
 ${proseGuardrailsBlock}
 
 Write Chapter ${chapterNumber} of "${bible.title}" following this outline and craft rules.
-
+${previousBooksBlock}
 <story_context>
   <protagonist>
     <name>${bible.characters.protagonist.name}</name>
