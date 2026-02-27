@@ -5034,6 +5034,30 @@ async function resumeStalledGenerations() {
     }
 
     console.log('\n✅ Stalled/failed generation check complete\n');
+
+    // --- Catch missed pre-classifications ---
+    const { getExistingClassification, classifyStoryContent } = require('./content-classification');
+
+    const { data: unclassifiedStories } = await supabaseAdmin
+      .from('stories')
+      .select('id, title, generation_progress')
+      .eq('status', 'active')
+      .not('generation_progress->current_step', 'in', '("generating_bible","generating_arc","generating_chapters_1_3","generating_chapters_4_6")')
+      .limit(20);
+
+    if (unclassifiedStories?.length) {
+      for (const story of unclassifiedStories) {
+        const chaptersGenerated = story.generation_progress?.chapters_generated || 0;
+        if (chaptersGenerated >= 9) {
+          const existing = await getExistingClassification(story.id);
+          if (!existing) {
+            console.log(`📋 [${story.title}] Missed pre-classification — triggering now`);
+            classifyStoryContent(story.id)
+              .catch(err => console.error(`❌ [${story.title}] Missed classification failed:`, err.message));
+          }
+        }
+      }
+    }
   } catch (error) {
     console.error('❌ Error in resumeStalledGenerations:', error);
 
