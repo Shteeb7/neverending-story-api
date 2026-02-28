@@ -60,20 +60,8 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
       }
     });
 
-    // 2. Books shown in last 30 days (anti-repeat)
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: recentImpressions, error: impressionsError } = await supabaseAdmin
-      .from('recommendation_impressions')
-      .select('story_id')
-      .eq('user_id', user_id)
-      .gte('shown_at', thirtyDaysAgo);
-
-    if (impressionsError) {
-      console.error('Error fetching impressions:', impressionsError);
-    }
-
-    const recentlyShownIds = recentImpressions?.map(imp => imp.story_id) || [];
-    const allExcludedIds = [...excludedStoryIds, ...recentlyShownIds];
+    // Only exclusion: books already on the user's shelf. That's it.
+    const allExcludedIds = [...excludedStoryIds];
 
     // === GET USER PREFERENCES ===
     const { data: prefs, error: prefsError } = await supabaseAdmin
@@ -290,25 +278,6 @@ router.get('/recommendations', authenticateUser, asyncHandler(async (req, res) =
 
     // Ensure exactly 5 recommendations (or fewer if not enough books exist)
     finalRecommendations = finalRecommendations.slice(0, 5);
-
-    // === LOG IMPRESSIONS ===
-    const impressionRecords = finalRecommendations.map(pub => ({
-      user_id: user_id,
-      story_id: pub.story_id,
-      shown_at: new Date().toISOString(),
-      action: 'ignored' // Default until user interacts
-    }));
-
-    if (impressionRecords.length > 0) {
-      const { error: insertError } = await supabaseAdmin
-        .from('recommendation_impressions')
-        .insert(impressionRecords);
-
-      if (insertError) {
-        console.error('Error logging impressions:', insertError);
-        // Non-fatal
-      }
-    }
 
     // === FORMAT RESPONSE ===
     const recommendations = finalRecommendations.map(pub => {
