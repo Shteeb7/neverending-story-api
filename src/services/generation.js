@@ -4741,11 +4741,11 @@ async function generateSequelBible(predecessorStoryId, userPreferences, userId) 
 
   // Fetch age range from Book 1's preferences
   let ageRange = '25+'; // default to adult
-  if (book1Story.premise_id) {
+  if (predecessorStory.premise_id) {
     const { data: premiseRecord } = await supabaseAdmin
       .from('story_premises')
       .select('preferences_used')
-      .eq('id', book1Story.premise_id)
+      .eq('id', predecessorStory.premise_id)
       .single();
 
     if (premiseRecord?.preferences_used?.ageRange) {
@@ -4896,7 +4896,7 @@ Return Book ${nextBookNumber} Bible in this EXACT format:
   );
 
   await logApiCost(userId, 'generate_sequel_bible', inputTokens, outputTokens, {
-    parentStoryId: book1StoryId
+    parentStoryId: predecessorStoryId
   });
 
   const parsed = parseAndValidateJSON(bibleJson, [
