@@ -2,6 +2,7 @@ const { anthropic } = require('../config/ai-clients');
 const { supabaseAdmin } = require('../config/supabase');
 const { reportToPeggy } = require('../middleware/peggy-error-reporter');
 const { storyLog, getStoryLogs, clearStoryLogs } = require('./story-logger');
+const { extractChapterConstraints, validateChapterConstraints, buildConstraintsBlock } = require('./chapter-constraints');
 const crypto = require('crypto');
 
 /**
@@ -3818,6 +3819,51 @@ async function generateChapter(storyId, chapterNumber, userId, editorBrief = nul
     console.log(`⚙️ [${storyTitle}] World ledger DISABLED by generation_config`);
   }
 
+  // --- THREE-PASS CONSTRAINT EXTRACTION (Pass 1) ---
+  const useConstraints = config.three_pass_constraints !== false;
+  let constraintsData = null;
+  let constraintsBlock = '';
+
+  if (useConstraints) {
+    try {
+      // Extract key events from previous chapters for constraint extraction
+      const previousChaptersKeyEvents = previousChapters && previousChapters.length > 0
+        ? previousChapters.map(ch => ({
+            chapter_number: ch.chapter_number,
+            key_events: ch.metadata?.key_events || []
+          }))
+        : [];
+
+      const extractResult = await extractChapterConstraints(
+        effectiveOutline,
+        previousChaptersKeyEvents,
+        worldContextBlock,
+        characterContinuityBlock,
+        storyId,
+        storyTitle,
+        chapterNumber
+      );
+
+      constraintsData = {
+        constraints: extractResult.constraints,
+        extraction_tokens: {
+          input: extractResult.inputTokens,
+          output: extractResult.outputTokens
+        },
+        extraction_duration_ms: extractResult.duration
+      };
+
+      constraintsBlock = buildConstraintsBlock(extractResult.constraints);
+    } catch (error) {
+      storyLog(storyId, storyTitle, `❌ [${storyTitle}] Ch${chapterNumber}: Constraint extraction failed, proceeding without constraints — ${error.message}`);
+      console.error('Constraint extraction error:', error);
+      // Don't fail chapter generation if constraint extraction fails
+      // Just proceed without constraints
+    }
+  } else {
+    console.log(`⚙️ [${storyTitle}] Three-pass constraints DISABLED by generation_config`);
+  }
+
   // --- PROSE DIRECTIVE: story-specific voice or fallback to static rules ---
   const proseDirective = config.prose_directive || null;
 
@@ -3917,6 +3963,7 @@ ${bible.narrative_voice ? `<narrative_voice>
   These voice directives are AS IMPORTANT as plot — a chapter with correct events but wrong voice is a failed chapter.
 </narrative_voice>
 ` : ''}
+${constraintsBlock}
 <chapter_outline>
   <chapter_number>${chapterNumber}</chapter_number>
   <title>${effectiveOutline.title}</title>
@@ -4037,6 +4084,106 @@ Return ONLY a JSON object in this exact format:
         continue; // Retry generation
       } else {
         storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] Chapter ${chapterNumber} still has prose violations after 3 attempts. Proceeding to quality review.`);
+      }
+    }
+
+    // --- THREE-PASS CONSTRAINT VALIDATION (Pass 3) ---
+    let constraintValidationData = null;
+
+    if (useConstraints && constraintsData) {
+      try {
+        const validationResult = await validateChapterConstraints(
+          chapter.content,
+          constraintsData.constraints,
+          storyId,
+          storyTitle,
+          chapterNumber
+        );
+
+        constraintValidationData = {
+          validation: validationResult.validation,
+          validation_tokens: {
+            input: validationResult.inputTokens,
+            output: validationResult.outputTokens
+          },
+          validation_duration_ms: validationResult.duration,
+          revision_attempted: false,
+          revision_passed: null
+        };
+
+        // If validation failed, attempt targeted revision (max 1 revision)
+        if (validationResult.validation.verdict === 'FAIL' && regenerationCount < 2) {
+          storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] Ch${chapterNumber}: Constraint validation FAILED — ${validationResult.validation.specific_issues.length} issues, attempting targeted revision`);
+
+          // Build revision prompt
+          const revisionPrompt = `Your chapter failed constraint validation. Fix ONLY the following issues while preserving everything else:
+
+${validationResult.validation.specific_issues.map((issue, i) => `${i + 1}. ${issue}`).join('\n')}
+
+Here is the chapter that needs revision:
+<chapter_to_revise>
+${chapter.content}
+</chapter_to_revise>
+
+Rewrite the chapter fixing these specific issues. Do NOT change scenes or passages that aren't related to the failed constraints. Preserve the prose quality, voice, and everything that's working.
+
+Return ONLY a JSON object with the revised chapter:
+{
+  "chapter": {
+    "chapter_number": ${chapterNumber},
+    "title": "${chapter.title}",
+    "content": "The revised chapter text here...",
+    "word_count": number,
+    "opening_hook": "First sentence or two",
+    "closing_hook": "Last sentence or two",
+    "key_events": ["event1", "event2"],
+    "character_development": "Brief note on character growth"
+  }
+}`;
+
+          // Call Opus for targeted revision
+          const { response: revisionResponse, inputTokens: revisionInputTokens, outputTokens: revisionOutputTokens } = await callClaudeWithRetry(
+            [{ role: 'user', content: revisionPrompt }],
+            32000,
+            { operation: 'constraint_revision', userId, storyId, storyTitle }
+          );
+
+          await logApiCost(userId, 'constraint_revision', revisionInputTokens, revisionOutputTokens, {
+            storyId,
+            chapterNumber
+          });
+
+          const revisedParsed = parseAndValidateJSON(revisionResponse, ['chapter']);
+          chapter = revisedParsed.chapter;
+
+          constraintValidationData.revision_attempted = true;
+
+          // Re-validate after revision (but only once — max 2 total attempts)
+          const revalidationResult = await validateChapterConstraints(
+            chapter.content,
+            constraintsData.constraints,
+            storyId,
+            storyTitle,
+            chapterNumber
+          );
+
+          constraintValidationData.validation = revalidationResult.validation;
+          constraintValidationData.validation_tokens.input += revalidationResult.inputTokens;
+          constraintValidationData.validation_tokens.output += revalidationResult.outputTokens;
+          constraintValidationData.validation_duration_ms += revalidationResult.duration;
+          constraintValidationData.revision_passed = revalidationResult.validation.verdict === 'PASS';
+
+          if (revalidationResult.validation.verdict === 'FAIL') {
+            storyLog(storyId, storyTitle, `🛑 [${storyTitle}] Ch${chapterNumber}: Constraint validation FAILED after revision — storing with flag`);
+          }
+        } else if (validationResult.validation.verdict === 'FAIL') {
+          storyLog(storyId, storyTitle, `🛑 [${storyTitle}] Ch${chapterNumber}: Constraint validation FAILED — max retries reached, storing with flag`);
+        }
+      } catch (error) {
+        storyLog(storyId, storyTitle, `❌ [${storyTitle}] Ch${chapterNumber}: Constraint validation error — ${error.message}`);
+        console.error('Constraint validation error:', error);
+        // Don't fail chapter generation if constraint validation fails
+        // Just proceed without constraint validation data
       }
     }
 
@@ -4220,6 +4367,45 @@ Return ONLY a JSON object in this exact format:
 
   if (chapterError) {
     throw new Error(`Failed to store chapter: ${chapterError.message}`);
+  }
+
+  // Store constraint validation results if available
+  if (constraintsData || constraintValidationData) {
+    try {
+      const validationRecord = {
+        constraints_extracted: constraintsData?.constraints || null,
+        extraction_tokens: constraintsData?.extraction_tokens || null,
+        extraction_duration_ms: constraintsData?.extraction_duration_ms || null,
+        constraint_validation: constraintValidationData?.validation || null,
+        validation_tokens: constraintValidationData?.validation_tokens || null,
+        validation_duration_ms: constraintValidationData?.validation_duration_ms || null,
+        constraint_revision_attempted: constraintValidationData?.revision_attempted || false,
+        constraint_revision_passed: constraintValidationData?.revision_passed || null,
+        verdict: constraintValidationData?.validation?.verdict || null
+      };
+
+      await supabaseAdmin
+        .from('chapter_validations')
+        .insert({
+          chapter_id: storedChapter.id,
+          story_id: storyId,
+          chapter_number: chapterNumber,
+          validation_result: validationRecord,
+          severity: constraintValidationData?.validation?.verdict === 'FAIL' ? 'warning' : 'info',
+          auto_revised: constraintValidationData?.revision_attempted || false,
+          revision_diff: null,  // Not tracking diff for constraint revisions
+          model_used: constraintValidationData ? 'claude-sonnet-4-5-20250929' : 'claude-haiku-4-5-20251001',
+          input_tokens: (constraintsData?.extraction_tokens?.input || 0) + (constraintValidationData?.validation_tokens?.input || 0),
+          output_tokens: (constraintsData?.extraction_tokens?.output || 0) + (constraintValidationData?.validation_tokens?.output || 0),
+          validation_time_ms: (constraintsData?.extraction_duration_ms || 0) + (constraintValidationData?.validation_duration_ms || 0)
+        });
+
+      storyLog(storyId, storyTitle, `💾 [${storyTitle}] Ch${chapterNumber}: Constraint validation data stored`);
+    } catch (error) {
+      storyLog(storyId, storyTitle, `⚠️ [${storyTitle}] Ch${chapterNumber}: Failed to store constraint validation data — ${error.message}`);
+      console.error('Failed to store constraint validation data:', error);
+      // Don't fail chapter generation if storing validation data fails
+    }
   }
 
   // Update story progress
