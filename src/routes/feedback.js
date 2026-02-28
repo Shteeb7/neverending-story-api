@@ -96,6 +96,9 @@ async function triggerCheckpointGeneration(storyId, userId, normalizedCheckpoint
           current_step: `generating_chapter_${startChapter}`,
           batch_start: startChapter,
           batch_end: endChapter,
+          health_check_retries: 0,  // Reset retries for new batch — old retries were for a different step
+          last_error: null,
+          recovery_started: null,
           last_updated: new Date().toISOString()
         }
       })
