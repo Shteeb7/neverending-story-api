@@ -765,6 +765,7 @@ router.post('/investigate-passage', authenticateUser, asyncHandler(async (req, r
     wasCorrection: result.wasCorrection,
     correctedText: result.correctedText,
     isGenuineIssue: result.isGenuineIssue,
+    interactionType: result.interactionType,
     correctionId: result.correctionId,
     investigationTimeMs: result.investigationTimeMs
   });
@@ -795,6 +796,7 @@ router.post('/pushback', authenticateUser, asyncHandler(async (req, res) => {
     correctedText: result.correctedText,
     reconsidered: result.reconsidered,
     isGenuineIssue: result.isGenuineIssue,
+    interactionType: result.interactionType,
     investigationTimeMs: result.investigationTimeMs
   });
 }));

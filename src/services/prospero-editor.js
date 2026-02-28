@@ -15,7 +15,7 @@ const { anthropic } = require('../config/ai-clients');
 const { supabaseAdmin } = require('../config/supabase');
 const { logApiCost } = require('./generation');
 
-const EDITOR_MODEL = 'claude-haiku-4-5-20251001';
+const EDITOR_MODEL = 'claude-sonnet-4-5-20250929';
 
 /**
  * Investigate a reader-flagged passage.
@@ -43,7 +43,7 @@ async function investigatePassage(params) {
   const startTime = Date.now();
 
   // Fetch context in parallel
-  const [chapterResult, bibleResult, entitiesResult] = await Promise.all([
+  const [chapterResult, bibleResult, entitiesResult, ledgerResult, worldLedgerResult, codexResult, priorCorrectionsResult] = await Promise.all([
     supabaseAdmin
       .from('chapters')
       .select('content, title')
@@ -58,12 +58,46 @@ async function investigatePassage(params) {
       .from('chapter_entities')
       .select('entity_type, entity_name, fact, canonical_value, chapter_number')
       .eq('story_id', storyId)
-      .order('chapter_number', { ascending: true })
+      .order('chapter_number', { ascending: true }),
+    // Character ledger — last entry for each chapter up to current
+    supabaseAdmin
+      .from('character_ledger_entries')
+      .select('chapter_number, entry_data')
+      .eq('story_id', storyId)
+      .lte('chapter_number', chapterNumber)
+      .order('chapter_number', { ascending: false })
+      .limit(3),
+    // World state ledger — last few entries
+    supabaseAdmin
+      .from('world_state_ledger')
+      .select('chapter_number, entry_data')
+      .eq('story_id', storyId)
+      .lte('chapter_number', chapterNumber)
+      .order('chapter_number', { ascending: false })
+      .limit(3),
+    // World codex — hard rules
+    supabaseAdmin
+      .from('world_codex')
+      .select('codex_data')
+      .eq('story_id', storyId)
+      .maybeSingle(),
+    // Prior corrections in this story — so Prospero knows about past fixes
+    supabaseAdmin
+      .from('reader_corrections')
+      .select('chapter_number, highlighted_text, corrected_text, correction_category, was_corrected')
+      .eq('story_id', storyId)
+      .eq('was_corrected', true)
+      .order('created_at', { ascending: false })
+      .limit(10)
   ]);
 
   const chapter = chapterResult.data;
   const bible = bibleResult.data;
   const entities = entitiesResult.data || [];
+  const ledgerEntries = ledgerResult.data || [];
+  const worldLedger = worldLedgerResult.data || [];
+  const codex = codexResult.data;
+  const priorCorrections = priorCorrectionsResult.data || [];
 
   if (!chapter) {
     throw new Error(`Chapter ${chapterId} not found`);
@@ -78,13 +112,21 @@ async function investigatePassage(params) {
   // Build bible reference
   const bibleReference = buildBibleReference(bible);
 
-  // Single Haiku call: investigate + generate Prospero's response
+  // Build enriched context blocks
+  const characterLedgerContext = buildCharacterLedgerContext(ledgerEntries);
+  const worldContext = buildWorldContext(worldLedger, codex, highlightedText, readerDescription);
+  const priorCorrectionsContext = buildPriorCorrectionsContext(priorCorrections);
+
+  // Single Sonnet call: investigate + generate Prospero's response
   const prompt = buildInvestigationPrompt({
     highlightedText,
     surroundingContext,
     readerDescription,
     bibleReference,
     relevantEntities,
+    characterLedgerContext,
+    worldContext,
+    priorCorrectionsContext,
     chapterNumber,
     chapterTitle: chapter.title
   });
@@ -158,6 +200,7 @@ async function investigatePassage(params) {
       original_text: originalText,
       corrected_text: correctedText,
       correction_category: investigation.category || 'other',
+      interaction_type: investigation.interaction_type || (investigation.is_genuine_issue ? 'correction' : 'misunderstanding'),
       is_author: isAuthor,
       author_reviewed: isAuthor, // If author flagged it, it's already "reviewed"
       model_used: EDITOR_MODEL,
@@ -189,6 +232,7 @@ async function investigatePassage(params) {
     originalText,
     category: investigation.category,
     isGenuineIssue: investigation.is_genuine_issue,
+    interactionType: investigation.interaction_type || (investigation.is_genuine_issue ? 'correction' : 'misunderstanding'),
     correctionId: correctionRecord?.id,
     investigationTimeMs
   };
@@ -288,9 +332,117 @@ function buildBibleReference(bible) {
 }
 
 /**
- * Build the investigation prompt for Haiku.
+ * Build character ledger context from recent chapter entries.
  */
-function buildInvestigationPrompt({ highlightedText, surroundingContext, readerDescription, bibleReference, relevantEntities, chapterNumber, chapterTitle }) {
+function buildCharacterLedgerContext(ledgerEntries) {
+  if (!ledgerEntries || !ledgerEntries.length) return '';
+
+  const characterStates = [];
+  ledgerEntries.forEach(entry => {
+    if (!entry.entry_data) return;
+    const data = entry.entry_data;
+
+    // Extract key character state information
+    if (data.characters && Array.isArray(data.characters)) {
+      data.characters.forEach(char => {
+        if (char.name) {
+          const state = [];
+          if (char.emotional_state) state.push(`emotional: ${char.emotional_state}`);
+          if (char.current_goal) state.push(`goal: ${char.current_goal}`);
+          if (char.key_relationships) state.push(`relationships: ${JSON.stringify(char.key_relationships).substring(0, 100)}`);
+
+          if (state.length) {
+            characterStates.push(`[Ch${entry.chapter_number}] ${char.name}: ${state.join(', ')}`);
+          }
+        }
+      });
+    }
+  });
+
+  if (!characterStates.length) return '';
+
+  return `\nCHARACTER STATE (from recent chapters):\n${characterStates.slice(0, 10).join('\n')}\n`;
+}
+
+/**
+ * Build world context from world ledger and codex, filtered by relevance.
+ */
+function buildWorldContext(worldLedger, codex, highlightedText, readerDescription) {
+  const sections = [];
+  const searchText = (highlightedText + ' ' + readerDescription).toLowerCase();
+
+  // World codex — hard rules (filter for relevance)
+  if (codex && codex.codex_data) {
+    const codexData = codex.codex_data;
+    const relevantRules = [];
+
+    // Check for magic system mentions
+    if (codexData.magic_system && (searchText.includes('magic') || searchText.includes('spell') || searchText.includes('power'))) {
+      relevantRules.push(`Magic: ${JSON.stringify(codexData.magic_system).substring(0, 300)}`);
+    }
+
+    // Check for geography mentions
+    if (codexData.geography && codexData.geography.length) {
+      codexData.geography.forEach(place => {
+        if (place.name && searchText.includes(place.name.toLowerCase())) {
+          relevantRules.push(`${place.name}: ${place.description || ''}`);
+        }
+      });
+    }
+
+    // Check for timeline/historical events
+    if (codexData.timeline && codexData.timeline.length) {
+      codexData.timeline.forEach(event => {
+        if (event.description && searchText.includes(event.description.toLowerCase().substring(0, 20))) {
+          relevantRules.push(`Timeline: ${event.description.substring(0, 200)}`);
+        }
+      });
+    }
+
+    if (relevantRules.length) {
+      sections.push(`WORLD RULES (codex):\n${relevantRules.join('\n')}`);
+    }
+  }
+
+  // World state ledger — facts from recent chapters
+  if (worldLedger && worldLedger.length) {
+    const worldFacts = [];
+    worldLedger.forEach(entry => {
+      if (!entry.entry_data) return;
+      const data = entry.entry_data;
+
+      if (data.new_facts && Array.isArray(data.new_facts)) {
+        data.new_facts.forEach(fact => {
+          if (fact) worldFacts.push(`[Ch${entry.chapter_number}] ${fact}`);
+        });
+      }
+    });
+
+    if (worldFacts.length) {
+      sections.push(`WORLD STATE (recent chapters):\n${worldFacts.slice(0, 8).join('\n')}`);
+    }
+  }
+
+  return sections.length ? '\n' + sections.join('\n') + '\n' : '';
+}
+
+/**
+ * Build prior corrections context — patterns to watch for.
+ */
+function buildPriorCorrectionsContext(corrections) {
+  if (!corrections || !corrections.length) return '';
+
+  const formatted = corrections.map(c =>
+    `Ch${c.chapter_number}: "${c.highlighted_text.substring(0, 50)}${c.highlighted_text.length > 50 ? '...' : ''}" → "${c.corrected_text?.substring(0, 50) || 'N/A'}" [${c.correction_category}]`
+  ).join('\n');
+
+  return `\nPRIOR CORRECTIONS IN THIS STORY (patterns to watch for):\n${formatted}\n`;
+}
+
+/**
+ * Build the investigation prompt for Sonnet.
+ */
+function buildInvestigationPrompt({ highlightedText, surroundingContext, readerDescription, bibleReference, relevantEntities, characterLedgerContext, worldContext, priorCorrectionsContext, chapterNumber, chapterTitle }) {
   return `You are investigating a passage in Chapter ${chapterNumber}${chapterTitle ? ` ("${chapterTitle}")` : ''} of a novel that a reader has flagged as potentially inconsistent.
 
 HIGHLIGHTED PASSAGE:
@@ -307,12 +459,20 @@ ${bibleReference}
 
 ENTITY LEDGER (facts established in prior chapters):
 ${relevantEntities}
-
+${characterLedgerContext}${worldContext}${priorCorrectionsContext}
 INSTRUCTIONS:
-1. Determine if the reader has found a genuine inconsistency with the story bible or previously established facts.
-2. If YES (genuine issue): provide corrected_text that is a DROP-IN REPLACEMENT for the exact highlighted text shown above. The corrected_text will be spliced directly into the sentence at the exact position of the highlighted text — so it must fit grammatically and seamlessly into the surrounding words. Do NOT repeat words that already appear before or after the highlight. Change the minimum words necessary.
-3. If NO (text is actually correct): explain why, using an IN-WORLD explanation (reference story events, not technical details). Set corrected_text to null.
-4. Categorize the issue type.
+1. First, determine what the reader is doing:
+   - CORRECTION: They believe the text is factually wrong or inconsistent with established story facts
+   - CLARIFICATION: They're asking a question about terminology, world-building, character motivation, or meaning — NOT reporting an error
+   - MISUNDERSTANDING: They think something is wrong, but the text is actually correct
+
+2. If CORRECTION (genuine issue found): provide corrected_text that is a DROP-IN REPLACEMENT for the exact highlighted text shown above. The corrected_text will be spliced directly into the sentence at the exact position of the highlighted text — so it must fit grammatically and seamlessly into the surrounding words. Do NOT repeat words that already appear before or after the highlight. Change the minimum words necessary.
+
+3. If MISUNDERSTANDING (reader thinks it's wrong but it's not): explain why the text is correct using an IN-WORLD explanation. Be warm, not condescending. Reference specific story events or established facts.
+
+4. If CLARIFICATION (reader is asking, not reporting): answer their question helpfully and in-character. You're a storyteller explaining your craft, not defending an error. Be delighted they're curious — "Ah, a keen question!"
+
+5. Categorize the issue type. Use "vocabulary" for word meaning questions, "lore_question" for world-building curiosity.
 
 CRITICAL — corrected_text RULES:
 - corrected_text replaces ONLY the highlighted text, nothing more
@@ -328,10 +488,11 @@ You are Prospero, the story's narrator-guide. Your response to the reader must b
 
 Return ONLY valid JSON:
 {
+  "interaction_type": "correction|misunderstanding|clarification",
   "is_genuine_issue": true/false,
   "prospero_response": "Your 1-2 sentence in-character response to the reader",
-  "category": "name_inconsistency|timeline_error|description_drift|world_rule|plot_thread|other",
-  "corrected_text": "Drop-in replacement for ONLY the highlighted text (null if no issue)",
+  "category": "name_inconsistency|timeline_error|description_drift|world_rule|plot_thread|vocabulary|lore_question|other",
+  "corrected_text": "Drop-in replacement for ONLY the highlighted text (null if not a correction)",
   "reasoning": "Brief internal reasoning about what you found (not shown to reader)"
 }`;
 }
@@ -461,8 +622,8 @@ async function handlePushback(params) {
     throw new Error(`Correction record ${correctionId} not found`);
   }
 
-  // Fetch context for reconsideration
-  const [chapterResult, bibleResult, entitiesResult] = await Promise.all([
+  // Fetch enriched context for reconsideration
+  const [chapterResult, bibleResult, entitiesResult, ledgerResult, worldLedgerResult, codexResult, priorCorrectionsResult] = await Promise.all([
     supabaseAdmin
       .from('chapters')
       .select('content, title')
@@ -477,18 +638,53 @@ async function handlePushback(params) {
       .from('chapter_entities')
       .select('entity_type, entity_name, fact, canonical_value, chapter_number')
       .eq('story_id', original.story_id)
-      .order('chapter_number', { ascending: true })
+      .order('chapter_number', { ascending: true }),
+    supabaseAdmin
+      .from('character_ledger_entries')
+      .select('chapter_number, entry_data')
+      .eq('story_id', original.story_id)
+      .lte('chapter_number', original.chapter_number)
+      .order('chapter_number', { ascending: false })
+      .limit(3),
+    supabaseAdmin
+      .from('world_state_ledger')
+      .select('chapter_number, entry_data')
+      .eq('story_id', original.story_id)
+      .lte('chapter_number', original.chapter_number)
+      .order('chapter_number', { ascending: false })
+      .limit(3),
+    supabaseAdmin
+      .from('world_codex')
+      .select('codex_data')
+      .eq('story_id', original.story_id)
+      .maybeSingle(),
+    supabaseAdmin
+      .from('reader_corrections')
+      .select('chapter_number, highlighted_text, corrected_text, correction_category, was_corrected')
+      .eq('story_id', original.story_id)
+      .eq('was_corrected', true)
+      .order('created_at', { ascending: false })
+      .limit(10)
   ]);
 
   const chapter = chapterResult.data;
   const bible = bibleResult.data;
   const entities = entitiesResult.data || [];
+  const ledgerEntries = ledgerResult.data || [];
+  const worldLedger = worldLedgerResult.data || [];
+  const codex = codexResult.data;
+  const priorCorrections = priorCorrectionsResult.data || [];
 
   const surroundingContext = extractSurroundingContext(
     chapter.content, original.highlight_start, original.highlight_end
   );
   const relevantEntities = buildRelevantEntityContext(entities, original.highlighted_text, pushbackText);
   const bibleReference = buildBibleReference(bible);
+  const characterLedgerContext = buildCharacterLedgerContext(ledgerEntries);
+  const worldContext = buildWorldContext(worldLedger, codex, original.highlighted_text, pushbackText);
+  const priorCorrectionsContext = buildPriorCorrectionsContext(priorCorrections);
+
+  const originalInteractionType = original.interaction_type || 'misunderstanding';
 
   // Build the reconsideration prompt — deeper thinking this time
   const prompt = `You are Prospero, narrator-guide of a novel. A reader flagged a passage and you gave an initial assessment. The reader is now PUSHING BACK on your assessment. You must reconsider MORE CAREFULLY this time.
@@ -504,7 +700,7 @@ READER'S ORIGINAL CONCERN:
 
 YOUR INITIAL ASSESSMENT:
 "${original.prospero_response}"
-You said this was ${original.investigation_result?.is_genuine_issue ? 'a genuine issue' : 'NOT an issue'}.
+You said this was ${originalInteractionType === 'clarification' ? 'a clarification question' : original.investigation_result?.is_genuine_issue ? 'a genuine issue' : 'NOT an issue'}.
 
 READER'S PUSHBACK:
 "${pushbackText}"
@@ -514,17 +710,18 @@ ${bibleReference}
 
 ENTITY LEDGER (facts established in prior chapters):
 ${relevantEntities}
-
+${characterLedgerContext}${worldContext}${priorCorrectionsContext}
 INSTRUCTIONS:
-The reader disagrees with you. Take their argument seriously and reconsider with FRESH EYES. Look more carefully at the evidence. The reader may have noticed something you missed, OR your original assessment may have been correct.
-
-- If you NOW agree with the reader: provide corrected_text (same drop-in rules as before — replaces ONLY the highlighted text, fits seamlessly into surrounding words, matches the story's prose style).
-- If you STILL disagree: stand your ground warmly but firmly. This is your FINAL WORD.
+${originalInteractionType === 'clarification'
+  ? 'The reader asked for more information. Elaborate on your explanation helpfully and in-character. Answer follow-up questions with warmth.'
+  : 'The reader disagrees with you. Take their argument seriously and reconsider with FRESH EYES. Look more carefully at the evidence. The reader may have noticed something you missed, OR your original assessment may have been correct.\n\n- If you NOW agree with the reader: provide corrected_text (same drop-in rules as before — replaces ONLY the highlighted text, fits seamlessly into surrounding words, matches the story\'s prose style).\n- If you STILL disagree: stand your ground warmly but firmly. This is your FINAL WORD.'
+}
 
 Either way, this is the last exchange. Your response should feel like a graceful closing — you're sending the reader back to the story.
 
 Return ONLY valid JSON:
 {
+  "interaction_type": "${originalInteractionType === 'clarification' ? 'clarification' : 'correction|misunderstanding'}",
   "reconsidered": true/false (did you change your mind?),
   "is_genuine_issue": true/false,
   "prospero_response": "Your 1-2 sentence in-character response. If standing firm, end with something warm that sends them back to reading.",
@@ -608,6 +805,7 @@ Return ONLY valid JSON:
     correctedText: wasCorrection ? reconsideration.corrected_text : null,
     reconsidered: reconsideration.reconsidered,
     isGenuineIssue: reconsideration.is_genuine_issue,
+    interactionType: reconsideration.interaction_type || originalInteractionType,
     investigationTimeMs
   };
 }
