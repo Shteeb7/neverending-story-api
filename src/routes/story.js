@@ -8,6 +8,33 @@ const { requireAIConsentMiddleware } = require('../middleware/consent');
 const router = express.Router();
 
 /**
+ * Check if a user owns a story OR has it on their WhisperNet shelf.
+ * Returns the story if access is granted, null otherwise.
+ */
+async function verifyStoryAccess(storyId, userId) {
+  const { data: story } = await supabaseAdmin
+    .from('stories')
+    .select('id, user_id')
+    .eq('id', storyId)
+    .single();
+
+  if (!story) return null;
+
+  // Owner always has access
+  if (story.user_id === userId) return story;
+
+  // Check WhisperNet shelf
+  const { data: shelfEntry } = await supabaseAdmin
+    .from('whispernet_library')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('story_id', storyId)
+    .maybeSingle();
+
+  return shelfEntry ? story : null;
+}
+
+/**
  * POST /story/select-premise
  * User selects a premise and triggers pre-generation of first chapters
  * FAST RETURN: Creates story record and returns immediately (1-2s), then generates in background
@@ -151,19 +178,21 @@ router.get('/generation-status/:storyId', authenticateUser, asyncHandler(async (
   const { storyId } = req.params;
   const { userId } = req;
 
-  const { data: story, error } = await supabaseAdmin
-    .from('stories')
-    .select('*')
-    .eq('id', storyId)
-    .eq('user_id', userId)
-    .single();
-
-  if (error || !story) {
+  // Allow owner OR WhisperNet shelf reader
+  const story = await verifyStoryAccess(storyId, userId);
+  if (!story) {
     return res.status(404).json({
       success: false,
       error: 'Story not found'
     });
   }
+
+  // Fetch full story data
+  const { data: fullStory } = await supabaseAdmin
+    .from('stories')
+    .select('*')
+    .eq('id', storyId)
+    .single();
 
   // Count distinct chapter numbers (not rows) to handle any duplicates
   const { data: countData } = await supabaseAdmin
@@ -174,12 +203,12 @@ router.get('/generation-status/:storyId', authenticateUser, asyncHandler(async (
 
   res.json({
     success: true,
-    storyId: story.id,
-    title: story.title,
-    status: story.status,
-    progress: story.generation_progress || {},
+    storyId: fullStory.id,
+    title: fullStory.title,
+    status: fullStory.status,
+    progress: fullStory.generation_progress || {},
     chaptersAvailable: chapterCount || 0,
-    error: story.error_message || null
+    error: fullStory.error_message || null
   });
 }));
 
@@ -191,15 +220,9 @@ router.get('/:storyId/chapters', authenticateUser, asyncHandler(async (req, res)
   const { storyId } = req.params;
   const { userId } = req;
 
-  // Verify story belongs to user
-  const { data: story, error: storyError } = await supabaseAdmin
-    .from('stories')
-    .select('id')
-    .eq('id', storyId)
-    .eq('user_id', userId)
-    .single();
-
-  if (storyError || !story) {
+  // Verify story belongs to user OR is on their WhisperNet shelf
+  const story = await verifyStoryAccess(storyId, userId);
+  if (!story) {
     return res.status(404).json({
       success: false,
       error: 'Story not found'
@@ -357,12 +380,20 @@ router.get('/:storyId/current-state', authenticateUser, asyncHandler(async (req,
   const { storyId } = req.params;
   const { userId } = req;
 
-  // Get story details
+  // Verify access (owner or WhisperNet shelf)
+  const accessCheck = await verifyStoryAccess(storyId, userId);
+  if (!accessCheck) {
+    return res.status(404).json({
+      success: false,
+      error: 'Story not found'
+    });
+  }
+
+  // Get full story details
   const { data: story, error: storyError } = await supabaseAdmin
     .from('stories')
     .select('*')
     .eq('id', storyId)
-    .eq('user_id', userId)
     .single();
 
   if (storyError || !story) {
