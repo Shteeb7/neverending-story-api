@@ -609,4 +609,89 @@ router.get('/browse', authenticateUser, asyncHandler(async (req, res) => {
   });
 }));
 
+/**
+ * GET /api/discovery/search
+ * Text search across WhisperNet publications by title, genre, and premise
+ */
+router.get('/search', authenticateUser, asyncHandler(async (req, res) => {
+  const { query, user_id } = req.query;
+
+  if (!query || query.trim().length === 0) {
+    return res.json({ success: true, results: [] });
+  }
+
+  const searchTerm = `%${query.trim()}%`;
+
+  // Search published stories by title, genre, or premise
+  const { data: publications, error } = await supabaseAdmin
+    .from('whispernet_publications')
+    .select(`
+      id,
+      story_id,
+      genre,
+      mood_tags,
+      stories (
+        id,
+        title,
+        genre,
+        premise,
+        cover_image_url,
+        user_id,
+        series_id,
+        book_number
+      )
+    `)
+    .eq('is_active', true)
+    .neq('publisher_id', user_id)
+    .limit(20);
+
+  if (error) {
+    console.error('Search error:', error);
+    throw new Error(`Search failed: ${error.message}`);
+  }
+
+  // Filter by search term on client-side (since .or() with joined columns is tricky)
+  const filteredPubs = (publications || []).filter(pub => {
+    if (!pub.stories) return false;
+    const title = (pub.stories.title || '').toLowerCase();
+    const genre = (pub.stories.genre || '').toLowerCase();
+    const premise = (pub.stories.premise || '').toLowerCase();
+    const searchLower = query.toLowerCase();
+    return title.includes(searchLower) || genre.includes(searchLower) || premise.includes(searchLower);
+  });
+
+  // Check which stories the user already has on their shelf
+  const storyIds = filteredPubs.map(p => p.story_id);
+
+  let shelfEntries = [];
+  if (storyIds.length > 0) {
+    const { data: shelf } = await supabaseAdmin
+      .from('whispernet_library')
+      .select('story_id')
+      .eq('user_id', user_id)
+      .in('story_id', storyIds);
+    shelfEntries = shelf || [];
+  }
+
+  const shelfStoryIds = new Set(shelfEntries.map(e => e.story_id));
+
+  // Format results to match DiscoveryRecommendation structure
+  const results = filteredPubs.map(pub => ({
+    publication_id: pub.id,
+    story_id: pub.story_id,
+    title: pub.stories.title,
+    genre: pub.genre || pub.stories.genre || 'Unknown',
+    cover_image_url: pub.stories.cover_image_url,
+    mood_tags: pub.mood_tags || [],
+    resonance_words: [], // Empty for search results
+    is_on_shelf: shelfStoryIds.has(pub.story_id),
+    book_number: pub.stories.book_number
+  }));
+
+  res.json({
+    success: true,
+    results
+  });
+}));
+
 module.exports = router;
