@@ -654,4 +654,77 @@ router.patch('/:id', authenticateUser, asyncHandler(async (req, res) => {
   });
 }));
 
+/**
+ * POST /bug-reports/deflection
+ * Log a Peggy deflection (no bug report created)
+ */
+router.post('/deflection', authenticateUser, asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { resolution_type, matched_topic, user_satisfied, interview_mode } = req.body;
+
+  try {
+    const { error } = await supabaseAdmin
+      .from('peggy_deflections')
+      .insert({
+        user_id: userId,
+        resolution_type,
+        matched_topic,
+        user_satisfied: user_satisfied !== false, // default true
+        interview_mode: interview_mode || 'text'
+      });
+
+    if (error) throw error;
+
+    console.log(`✅ Deflection logged: ${matched_topic} (${resolution_type})`);
+    res.json({ success: true });
+  } catch (err) {
+    console.log('⚠️ Deflection log failed (non-critical):', err.message);
+    // Still return success — deflection logging is analytics, not critical path
+    res.json({ success: true });
+  }
+}));
+
+/**
+ * GET /bug-reports/deflection-stats
+ * Deflection analytics for dashboard
+ */
+router.get('/deflection-stats', authenticateUser, asyncHandler(async (req, res) => {
+  try {
+    const { data: deflections, error } = await supabaseAdmin
+      .from('peggy_deflections')
+      .select('resolution_type, matched_topic, user_satisfied, created_at')
+      .gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString()) // Last 30 days
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // Compute stats
+    const total = deflections.length;
+    const satisfied = deflections.filter(d => d.user_satisfied).length;
+    const topicCounts = {};
+    deflections.forEach(d => {
+      topicCounts[d.matched_topic] = (topicCounts[d.matched_topic] || 0) + 1;
+    });
+
+    const topTopics = Object.entries(topicCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([topic, count]) => ({ topic, count }));
+
+    res.json({
+      total_deflections: total,
+      satisfaction_rate: total > 0 ? Math.round((satisfied / total) * 100) : 0,
+      top_topics: topTopics,
+      by_type: {
+        deflected: deflections.filter(d => d.resolution_type === 'deflected').length,
+        known_issue: deflections.filter(d => d.resolution_type === 'known_issue_acknowledged').length,
+        redirected: deflections.filter(d => d.resolution_type === 'redirected_to_prospero').length
+      }
+    });
+  } catch (err) {
+    console.error('❌ Deflection stats error:', err);
+    res.status(500).json({ error: 'Failed to fetch deflection stats' });
+  }
+}));
+
 module.exports = router;

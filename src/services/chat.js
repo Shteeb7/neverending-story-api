@@ -94,41 +94,99 @@ const CHAT_TOOLS = {
 };
 
 // Peggy tools for bug reports and suggestions
-CHAT_TOOLS.bug_report = [{
-  name: 'submit_bug_report',
-  description: 'Submit the gathered bug report details. Call this when you have all the information about the bug.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      summary: { type: 'string', description: 'One-sentence description of the bug' },
-      category: { type: 'string', enum: ['navigation', 'generation', 'reading', 'interview', 'visual', 'performance', 'feature_request', 'other'], description: 'Bug category' },
-      severity_hint: { type: 'string', enum: ['critical', 'annoying', 'cosmetic', 'idea'], description: 'Severity level' },
-      user_description: { type: 'string', description: 'Full description in user\'s words' },
-      steps_to_reproduce: { type: 'string', description: 'Steps to reproduce the bug, if described' },
-      expected_behavior: { type: 'string', description: 'What the user expected to happen' },
-      sign_off_message: { type: 'string', description: 'Peggy\'s closing line' }
-    },
-    required: ['summary', 'category', 'severity_hint', 'user_description']
+CHAT_TOOLS.bug_report = [
+  {
+    name: 'submit_bug_report',
+    description: 'Submit the gathered bug report details. Call this when you have all the information about the bug.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: 'One-sentence description of the bug' },
+        category: { type: 'string', enum: ['navigation', 'generation', 'reading', 'interview', 'visual', 'performance', 'feature_request', 'story_content', 'other'], description: 'Bug category' },
+        severity_hint: { type: 'string', enum: ['critical', 'annoying', 'cosmetic', 'idea'], description: 'Severity level' },
+        user_description: { type: 'string', description: 'Full description in user\'s words' },
+        steps_to_reproduce: { type: 'string', description: 'Steps to reproduce the bug, if described' },
+        expected_behavior: { type: 'string', description: 'What the user expected to happen' },
+        sign_off_message: { type: 'string', description: 'Peggy\'s closing line' }
+      },
+      required: ['summary', 'category', 'severity_hint', 'user_description']
+    }
+  },
+  {
+    name: 'resolve_without_report',
+    description: 'Use this when you\'ve successfully helped the user with their question using your app knowledge, and no bug report needs to be filed. Only call this when the user confirms your answer helped.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        resolution_type: {
+          type: 'string',
+          enum: ['deflected', 'known_issue_acknowledged', 'redirected_to_prospero'],
+          description: 'How the conversation was resolved'
+        },
+        matched_topic: {
+          type: 'string',
+          description: 'The feature or FAQ topic that matched (e.g., \'Release to the Mists\', \'Page mode reader settings\')'
+        },
+        user_satisfied: {
+          type: 'boolean',
+          description: 'Whether the user confirmed the answer helped'
+        },
+        sign_off_message: {
+          type: 'string',
+          description: 'Peggy\'s closing line'
+        }
+      },
+      required: ['resolution_type', 'matched_topic', 'user_satisfied', 'sign_off_message']
+    }
   }
-}];
+];
 
-CHAT_TOOLS.suggestion = [{
-  name: 'submit_bug_report',
-  description: 'Submit the gathered suggestion details. Call this when you have all the information about the feature request.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      summary: { type: 'string', description: 'One-sentence description of the suggestion' },
-      category: { type: 'string', description: 'Should be "feature_request" for suggestions' },
-      severity_hint: { type: 'string', description: 'Should be "idea" for suggestions' },
-      user_description: { type: 'string', description: 'Full description in user\'s words' },
-      steps_to_reproduce: { type: 'string', description: 'Not usually applicable for suggestions' },
-      expected_behavior: { type: 'string', description: 'What the user envisions' },
-      sign_off_message: { type: 'string', description: 'Peggy\'s closing line' }
-    },
-    required: ['summary', 'category', 'severity_hint', 'user_description']
+CHAT_TOOLS.suggestion = [
+  {
+    name: 'submit_bug_report',
+    description: 'Submit the gathered suggestion details. Call this when you have all the information about the feature request.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: 'One-sentence description of the suggestion' },
+        category: { type: 'string', description: 'Should be "feature_request" for suggestions' },
+        severity_hint: { type: 'string', description: 'Should be "idea" for suggestions' },
+        user_description: { type: 'string', description: 'Full description in user\'s words' },
+        steps_to_reproduce: { type: 'string', description: 'Not usually applicable for suggestions' },
+        expected_behavior: { type: 'string', description: 'What the user envisions' },
+        sign_off_message: { type: 'string', description: 'Peggy\'s closing line' }
+      },
+      required: ['summary', 'category', 'severity_hint', 'user_description']
+    }
+  },
+  {
+    name: 'resolve_without_report',
+    description: 'Use this when you\'ve successfully helped the user with their question using your app knowledge, and no bug report needs to be filed. Only call this when the user confirms your answer helped.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        resolution_type: {
+          type: 'string',
+          enum: ['deflected', 'known_issue_acknowledged', 'redirected_to_prospero'],
+          description: 'How the conversation was resolved'
+        },
+        matched_topic: {
+          type: 'string',
+          description: 'The feature or FAQ topic that matched (e.g., \'Release to the Mists\', \'Page mode reader settings\')'
+        },
+        user_satisfied: {
+          type: 'boolean',
+          description: 'Whether the user confirmed the answer helped'
+        },
+        sign_off_message: {
+          type: 'string',
+          description: 'Peggy\'s closing line'
+        }
+      },
+      required: ['resolution_type', 'matched_topic', 'user_satisfied', 'sign_off_message']
+    }
   }
-}];
+];
 
 // These prompt-building functions are now replaced by prospero.js config
 // Kept as reference but no longer used in createChatSession
@@ -280,6 +338,24 @@ async function sendMessage(sessionId, userMessage) {
       arguments: toolUseBlock.input
     };
     sessionComplete = true;
+
+    // Handle resolve_without_report tool call
+    if (toolUseBlock.name === 'resolve_without_report') {
+      console.log('✅ Peggy deflected conversation — no bug report filed');
+      // Log the deflection
+      try {
+        await supabaseAdmin.from('peggy_deflections').insert({
+          user_id: session.user_id,
+          resolution_type: toolUseBlock.input.resolution_type,
+          matched_topic: toolUseBlock.input.matched_topic,
+          user_satisfied: toolUseBlock.input.user_satisfied,
+          interview_mode: 'text'
+        });
+        console.log(`📊 Deflection logged: ${toolUseBlock.input.matched_topic} (${toolUseBlock.input.resolution_type})`);
+      } catch (err) {
+        console.log('⚠️ Failed to log deflection (non-critical):', err.message);
+      }
+    }
 
     // Handle checkpoint feedback tool call server-side
     if (toolUseBlock.name === 'submit_checkpoint_feedback') {
