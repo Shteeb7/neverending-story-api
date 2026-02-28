@@ -438,4 +438,44 @@ describe('Database Constraint Sync', () => {
       expect(missing).toEqual([]);
     });
   });
+
+  // ============================================================
+  // reader_corrections.correction_category
+  // ============================================================
+  describe('reader_corrections.correction_category', () => {
+    const CONSTRAINT_VALUES = [
+      'name_inconsistency', 'timeline_error', 'description_drift',
+      'world_rule', 'plot_thread', 'vocabulary', 'lore_question', 'other'
+    ];
+
+    // Values from src/services/prospero-editor.js buildInvestigationPrompt category enum
+    const CODE_WRITES_INVESTIGATION = [
+      'name_inconsistency', 'timeline_error', 'description_drift',
+      'world_rule', 'plot_thread', 'vocabulary', 'lore_question', 'other'
+    ];
+
+    test('all correction_category values from investigation are in the constraint', () => {
+      const missing = CODE_WRITES_INVESTIGATION.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
+
+  // ============================================================
+  // reader_corrections.interaction_type
+  // ============================================================
+  describe('reader_corrections.interaction_type', () => {
+    const CONSTRAINT_VALUES = [
+      'correction', 'misunderstanding', 'clarification'
+    ];
+
+    // Values from src/services/prospero-editor.js investigatePassage + buildInvestigationPrompt
+    const CODE_WRITES = [
+      'correction', 'misunderstanding', 'clarification'
+    ];
+
+    test('all interaction_type values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
 });
