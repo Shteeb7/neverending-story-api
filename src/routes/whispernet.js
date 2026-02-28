@@ -138,19 +138,10 @@ router.get('/library', authenticateUser, asyncHandler(async (req, res) => {
  * Check if a book is already on the user's WhisperNet shelf
  */
 router.get('/library/check', authenticateUser, asyncHandler(async (req, res) => {
-  const { user_id, story_id } = req.query;
+  const { story_id } = req.query;
   const { userId } = req;
 
-  console.log(`📚 [Shelf Check] user_id=${user_id}, story_id=${story_id}, auth_userId=${userId}`);
-
-  // Verify user can only check their own shelf
-  if (user_id !== userId) {
-    console.log(`📚 [Shelf Check] ❌ user_id mismatch: query=${user_id} vs auth=${userId}`);
-    return res.status(403).json({
-      success: false,
-      error: 'Forbidden'
-    });
-  }
+  console.log(`📚 [Shelf Check] story_id=${story_id}, auth_userId=${userId}`);
 
   if (!story_id) {
     return res.status(400).json({
@@ -182,19 +173,10 @@ router.get('/library/check', authenticateUser, asyncHandler(async (req, res) => 
  * Add a book to the user's WhisperNet shelf
  */
 router.post('/library', authenticateUser, asyncHandler(async (req, res) => {
-  const { user_id, story_id, source } = req.body;
+  const { story_id, source } = req.body;
   const { userId } = req;
 
-  console.log(`📚 [Add to Shelf] Request from user ${userId}, body:`, JSON.stringify(req.body));
-
-  // Verify user can only add to their own shelf
-  if (user_id !== userId) {
-    console.log(`📚 [Add to Shelf] ❌ user_id mismatch: body=${user_id} vs auth=${userId}`);
-    return res.status(403).json({
-      success: false,
-      error: 'Forbidden'
-    });
-  }
+  console.log(`📚 [Add to Shelf] Request from user ${userId}, story=${story_id}, source=${source}`);
 
   if (!story_id || !source) {
     console.log(`📚 [Add to Shelf] ❌ Missing fields: story_id=${story_id}, source=${source}`);
