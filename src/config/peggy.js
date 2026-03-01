@@ -80,7 +80,7 @@ USERS MIGHT SAY: "Prospero keeps interrupting", "skip the interview", "too many 
 
 FEATURE: Prospero's Editor
 WHAT: If something in the story doesn't seem right (wrong name, plot hole, inconsistency), you can flag it directly while reading
-ACCESS: Long-press/highlight text while reading → tap "Prospero" → he investigates and can fix it on the spot
+ACCESS: Select (highlight) the text that seems off → a menu appears → tap "Prospero" → he investigates and can fix it on the spot
 USERS MIGHT SAY: "wrong character name", "plot hole", "story doesn't make sense", "something is wrong in the text", "incorrect detail"
 
 FEATURE: WhisperNet
@@ -133,7 +133,7 @@ HOW TO HELP: "I hear ya — he does love to chat. Good news though, you can skip
 
 MISCONCEPTION: "The story has a mistake / wrong name / plot hole" (filed as bug)
 REALITY: This is a story content issue, not an app bug. Prospero's Editor handles it directly.
-HOW TO HELP: "That sounds like somethin' Prospero can fix right on the spot! While you're reading, long-press the text that seems off and tap 'Prospero.' He'll investigate and can rewrite it for ya. The old guy loves a sharp-eyed reader."
+HOW TO HELP: "That sounds like somethin' Prospero can fix right on the spot! While you're reading, select the text that seems off — a little menu'll pop up — and tap 'Prospero.' He'll investigate and can rewrite it for ya. The old guy loves a sharp-eyed reader."
 
 MISCONCEPTION: "I can't share my story with anyone"
 REALITY: You can publish to WhisperNet. Long-press book → "Publish to WhisperNet."
@@ -384,9 +384,9 @@ const GREETING_TEMPLATES = {
  * @param {string} reportType - 'bug_report' | 'suggestion'
  * @param {string} medium - 'voice' | 'text'
  * @param {object} context - Report-specific context (user_name, reading_level, account_age, num_stories)
- * @returns {string} The complete system prompt
+ * @returns {Promise<string>} The complete system prompt
  */
-function assemblePrompt(reportType, medium, context = {}) {
+async function assemblePrompt(reportType, medium, context = {}) {
   const template = REPORT_TEMPLATES[reportType];
   if (!template) throw new Error(`Unknown report type: ${reportType}`);
 
@@ -395,7 +395,36 @@ function assemblePrompt(reportType, medium, context = {}) {
 
   const reportInstructions = typeof template === 'function' ? template(context) : template;
 
-  return `${CORE_PERSONALITY}\n${BACKSTORY}\n${KNOWLEDGE_BASE}\n${mediumAdapter}\n${reportInstructions}`;
+  // Fetch dynamic knowledge base entries
+  let dynamicKnowledge = '';
+  try {
+    const { supabaseAdmin } = require('../config/supabase');
+    const { data: dynamicKB } = await supabaseAdmin
+      .from('peggy_knowledge_base')
+      .select('section, title, content, peggy_phrasing, user_triggers')
+      .eq('active', true)
+      .order('section')
+      .order('created_at', { ascending: false });
+
+    if (dynamicKB && dynamicKB.length > 0) {
+      dynamicKnowledge = '\n\n═══════════════════════════════════════════\nADDITIONAL KNOWLEDGE (recently added)\n═══════════════════════════════════════════\n';
+      for (const entry of dynamicKB) {
+        dynamicKnowledge += `\n${entry.section.toUpperCase()}: ${entry.title}\n`;
+        dynamicKnowledge += `INFO: ${entry.content}\n`;
+        if (entry.peggy_phrasing) {
+          dynamicKnowledge += `HOW TO HELP: "${entry.peggy_phrasing}"\n`;
+        }
+        if (entry.user_triggers?.length) {
+          dynamicKnowledge += `USERS MIGHT SAY: ${entry.user_triggers.map(t => `"${t}"`).join(', ')}\n`;
+        }
+      }
+    }
+  } catch (err) {
+    // Graceful degradation — static knowledge base still works if table query fails
+    console.log('⚠️ Failed to fetch dynamic knowledge base (non-critical):', err.message);
+  }
+
+  return `${CORE_PERSONALITY}\n${BACKSTORY}\n${KNOWLEDGE_BASE}${dynamicKnowledge}\n${mediumAdapter}\n${reportInstructions}`;
 }
 
 /**

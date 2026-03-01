@@ -663,6 +663,21 @@ router.post('/deflection', authenticateUser, asyncHandler(async (req, res) => {
   const { resolution_type, matched_topic, user_satisfied, interview_mode } = req.body;
 
   try {
+    // Try to link to knowledge base entry
+    let kbEntryId = null;
+    try {
+      const { data: kbEntry } = await supabaseAdmin
+        .from('peggy_knowledge_base')
+        .select('id')
+        .eq('active', true)
+        .ilike('title', `%${matched_topic}%`)
+        .limit(1)
+        .maybeSingle();
+      kbEntryId = kbEntry?.id || null;
+    } catch (lookupErr) {
+      // Non-critical
+    }
+
     const { error } = await supabaseAdmin
       .from('peggy_deflections')
       .insert({
@@ -670,7 +685,8 @@ router.post('/deflection', authenticateUser, asyncHandler(async (req, res) => {
         resolution_type,
         matched_topic,
         user_satisfied: user_satisfied !== false, // default true
-        interview_mode: interview_mode || 'text'
+        interview_mode: interview_mode || 'text',
+        knowledge_base_entry_id: kbEntryId
       });
 
     if (error) throw error;

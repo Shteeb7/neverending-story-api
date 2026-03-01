@@ -478,4 +478,23 @@ describe('Database Constraint Sync', () => {
       expect(missing).toEqual([]);
     });
   });
+
+  // ============================================================
+  // peggy_knowledge_base.section
+  // ============================================================
+  describe('peggy_knowledge_base.section', () => {
+    const CONSTRAINT_VALUES = [
+      'feature_map', 'misconception', 'faq', 'limitation', 'known_issue'
+    ];
+
+    // Values that could be written via CLAUDE.md examples
+    const CODE_WRITES = [
+      'feature_map', 'misconception', 'faq', 'limitation', 'known_issue'
+    ];
+
+    test('all section values are in the constraint', () => {
+      const missing = CODE_WRITES.filter(v => !CONSTRAINT_VALUES.includes(v));
+      expect(missing).toEqual([]);
+    });
+  });
 });

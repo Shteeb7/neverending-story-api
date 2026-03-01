@@ -320,7 +320,7 @@ router.post('/system-prompt', authenticateUser, requireAIConsentMiddleware, asyn
         });
       }
 
-      prompt = peggy.assemblePrompt(reportType, medium, enrichedContext);
+      prompt = await peggy.assemblePrompt(reportType, medium, enrichedContext);
       greeting = peggy.getGreeting(reportType, enrichedContext);
 
     } else {

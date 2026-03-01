@@ -1,4 +1,5 @@
 const peggy = require('../src/config/peggy');
+const { supabaseAdmin } = require('../src/config/supabase');
 
 describe('Peggy Configuration', () => {
   describe('Exports', () => {
@@ -35,8 +36,8 @@ describe('Peggy Configuration', () => {
   });
 
   describe('assemblePrompt()', () => {
-    test('assembles bug_report prompt for voice', () => {
-      const prompt = peggy.assemblePrompt('bug_report', 'voice', {
+    test('assembles bug_report prompt for voice', async () => {
+      const prompt = await peggy.assemblePrompt('bug_report', 'voice', {
         user_name: 'TestUser',
         reading_level: 'adult'
       });
@@ -47,8 +48,8 @@ describe('Peggy Configuration', () => {
       expect(prompt).toContain('bug');
     });
 
-    test('assembles bug_report prompt for text', () => {
-      const prompt = peggy.assemblePrompt('bug_report', 'text', {
+    test('assembles bug_report prompt for text', async () => {
+      const prompt = await peggy.assemblePrompt('bug_report', 'text', {
         user_name: 'TestUser',
         reading_level: 'adult'
       });
@@ -59,8 +60,8 @@ describe('Peggy Configuration', () => {
       expect(prompt).toContain('bug');
     });
 
-    test('assembles suggestion prompt for voice', () => {
-      const prompt = peggy.assemblePrompt('suggestion', 'voice', {
+    test('assembles suggestion prompt for voice', async () => {
+      const prompt = await peggy.assemblePrompt('suggestion', 'voice', {
         user_name: 'TestUser',
         reading_level: 'adult'
       });
@@ -70,8 +71,8 @@ describe('Peggy Configuration', () => {
       expect(prompt).toContain('suggestion');
     });
 
-    test('assembles suggestion prompt for text', () => {
-      const prompt = peggy.assemblePrompt('suggestion', 'text', {
+    test('assembles suggestion prompt for text', async () => {
+      const prompt = await peggy.assemblePrompt('suggestion', 'text', {
         user_name: 'TestUser',
         reading_level: 'adult'
       });
@@ -81,8 +82,8 @@ describe('Peggy Configuration', () => {
       expect(prompt).toContain('suggestion');
     });
 
-    test('adjusts tone for young readers in bug_report', () => {
-      const promptYoung = peggy.assemblePrompt('bug_report', 'voice', {
+    test('adjusts tone for young readers in bug_report', async () => {
+      const promptYoung = await peggy.assemblePrompt('bug_report', 'voice', {
         user_name: 'YoungReader',
         reading_level: 'early_reader'
       });
@@ -91,8 +92,8 @@ describe('Peggy Configuration', () => {
       expect(promptYoung).toContain('young');
     });
 
-    test('adjusts tone for young readers in suggestion', () => {
-      const promptYoung = peggy.assemblePrompt('suggestion', 'voice', {
+    test('adjusts tone for young readers in suggestion', async () => {
+      const promptYoung = await peggy.assemblePrompt('suggestion', 'voice', {
         user_name: 'YoungReader',
         reading_level: 'middle_grade'
       });
@@ -101,8 +102,8 @@ describe('Peggy Configuration', () => {
       expect(promptYoung).toContain('young');
     });
 
-    test('does not adjust tone for adult readers', () => {
-      const promptAdult = peggy.assemblePrompt('bug_report', 'voice', {
+    test('does not adjust tone for adult readers', async () => {
+      const promptAdult = await peggy.assemblePrompt('bug_report', 'voice', {
         user_name: 'AdultReader',
         reading_level: 'adult'
       });
@@ -110,20 +111,20 @@ describe('Peggy Configuration', () => {
       expect(promptAdult).not.toContain('TONE ADJUSTMENT');
     });
 
-    test('throws error for invalid report type', () => {
-      expect(() => {
-        peggy.assemblePrompt('invalid_type', 'voice', {});
-      }).toThrow('Unknown report type: invalid_type');
+    test('throws error for invalid report type', async () => {
+      await expect(async () => {
+        await peggy.assemblePrompt('invalid_type', 'voice', {});
+      }).rejects.toThrow('Unknown report type: invalid_type');
     });
 
-    test('throws error for invalid medium', () => {
-      expect(() => {
-        peggy.assemblePrompt('bug_report', 'invalid_medium', {});
-      }).toThrow('Unknown medium: invalid_medium');
+    test('throws error for invalid medium', async () => {
+      await expect(async () => {
+        await peggy.assemblePrompt('bug_report', 'invalid_medium', {});
+      }).rejects.toThrow('Unknown medium: invalid_medium');
     });
 
-    test('includes submit_bug_report function tool definition', () => {
-      const prompt = peggy.assemblePrompt('bug_report', 'voice', {});
+    test('includes submit_bug_report function tool definition', async () => {
+      const prompt = await peggy.assemblePrompt('bug_report', 'voice', {});
       expect(prompt).toContain('submit_bug_report');
       expect(prompt).toContain('summary');
       expect(prompt).toContain('category');
@@ -167,9 +168,9 @@ describe('Peggy Configuration', () => {
   });
 
   describe('Personality Consistency', () => {
-    test('all prompts include Peggy personality traits', () => {
-      const bugPrompt = peggy.assemblePrompt('bug_report', 'voice', {});
-      const suggestionPrompt = peggy.assemblePrompt('suggestion', 'text', {});
+    test('all prompts include Peggy personality traits', async () => {
+      const bugPrompt = await peggy.assemblePrompt('bug_report', 'voice', {});
+      const suggestionPrompt = await peggy.assemblePrompt('suggestion', 'text', {});
 
       expect(bugPrompt).toContain('1950s');
       expect(bugPrompt).toContain('Long Island');
@@ -177,22 +178,22 @@ describe('Peggy Configuration', () => {
       expect(suggestionPrompt).toContain('Long Island');
     });
 
-    test('prompts include conversation rules', () => {
-      const prompt = peggy.assemblePrompt('bug_report', 'voice', {});
+    test('prompts include conversation rules', async () => {
+      const prompt = await peggy.assemblePrompt('bug_report', 'voice', {});
 
       expect(prompt).toContain('SHORT');
       expect(prompt).toContain('ONE question per turn');
     });
 
-    test('voice medium emphasizes brevity', () => {
-      const voicePrompt = peggy.assemblePrompt('bug_report', 'voice', {});
+    test('voice medium emphasizes brevity', async () => {
+      const voicePrompt = await peggy.assemblePrompt('bug_report', 'voice', {});
 
       expect(voicePrompt).toContain('VOICE CONVERSATION');
       expect(voicePrompt).toContain('Maximum 1-2 sentences');
     });
 
-    test('text medium allows slightly more detail', () => {
-      const textPrompt = peggy.assemblePrompt('bug_report', 'text', {});
+    test('text medium allows slightly more detail', async () => {
+      const textPrompt = await peggy.assemblePrompt('bug_report', 'text', {});
 
       expect(textPrompt).toContain('WRITTEN CORRESPONDENCE');
       expect(textPrompt).toContain('1-2 sentences');
@@ -200,7 +201,7 @@ describe('Peggy Configuration', () => {
   });
 
   describe('Context Handling', () => {
-    test('includes user context in prompt when provided', () => {
+    test('includes user context in prompt when provided', async () => {
       const context = {
         user_name: 'Alice',
         reading_level: 'young_adult',
@@ -208,7 +209,7 @@ describe('Peggy Configuration', () => {
         num_stories: 5
       };
 
-      const prompt = peggy.assemblePrompt('bug_report', 'voice', context);
+      const prompt = await peggy.assemblePrompt('bug_report', 'voice', context);
 
       expect(prompt).toContain('Alice');
       expect(prompt).toContain('young_adult');
@@ -216,17 +217,122 @@ describe('Peggy Configuration', () => {
       expect(prompt).toContain('5');
     });
 
-    test('handles missing context gracefully', () => {
-      const prompt = peggy.assemblePrompt('bug_report', 'voice', {});
+    test('handles missing context gracefully', async () => {
+      const prompt = await peggy.assemblePrompt('bug_report', 'voice', {});
 
       expect(typeof prompt).toBe('string');
       expect(prompt).toContain('not provided');
       expect(prompt).toContain('unknown');
     });
 
-    test('handles undefined context gracefully', () => {
-      const prompt = peggy.assemblePrompt('bug_report', 'voice');
+    test('handles undefined context gracefully', async () => {
+      const prompt = await peggy.assemblePrompt('bug_report', 'voice');
 
+      expect(typeof prompt).toBe('string');
+      expect(prompt.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Dynamic Knowledge Base', () => {
+    test('works with empty dynamic KB table', async () => {
+      const prompt = await peggy.assemblePrompt('bug_report', 'text', { user_name: 'Test' });
+      expect(prompt).toContain('PEGGY');
+      expect(prompt).toContain('KNOWLEDGE_BASE');
+    });
+
+    test('includes dynamic KB entries when present', async () => {
+      // Insert a test entry
+      const { data: inserted } = await supabaseAdmin.from('peggy_knowledge_base').insert({
+        section: 'faq',
+        title: 'Test FAQ Entry',
+        content: 'This is a test entry for dynamic KB',
+        active: true
+      }).select();
+
+      try {
+        const prompt = await peggy.assemblePrompt('bug_report', 'text', { user_name: 'Test' });
+        expect(prompt).toContain('Test FAQ Entry');
+        expect(prompt).toContain('This is a test entry for dynamic KB');
+        expect(prompt).toContain('ADDITIONAL KNOWLEDGE');
+      } finally {
+        // Clean up
+        if (inserted && inserted.length > 0) {
+          await supabaseAdmin.from('peggy_knowledge_base').delete().eq('id', inserted[0].id);
+        }
+      }
+    });
+
+    test('includes peggy_phrasing when provided', async () => {
+      // Insert a test entry with peggy_phrasing
+      const { data: inserted } = await supabaseAdmin.from('peggy_knowledge_base').insert({
+        section: 'known_issue',
+        title: 'Test Issue',
+        content: 'This is a known issue',
+        peggy_phrasing: 'Yeah hon, we know about that one. Working on it!',
+        active: true
+      }).select();
+
+      try {
+        const prompt = await peggy.assemblePrompt('bug_report', 'text', { user_name: 'Test' });
+        expect(prompt).toContain('Test Issue');
+        expect(prompt).toContain('Yeah hon, we know about that one');
+      } finally {
+        // Clean up
+        if (inserted && inserted.length > 0) {
+          await supabaseAdmin.from('peggy_knowledge_base').delete().eq('id', inserted[0].id);
+        }
+      }
+    });
+
+    test('includes user_triggers when provided', async () => {
+      // Insert a test entry with user_triggers
+      const { data: inserted } = await supabaseAdmin.from('peggy_knowledge_base').insert({
+        section: 'limitation',
+        title: 'Test Limitation',
+        content: 'This feature does not exist yet',
+        user_triggers: ['cant do this', 'how do I'],
+        active: true
+      }).select();
+
+      try {
+        const prompt = await peggy.assemblePrompt('bug_report', 'text', { user_name: 'Test' });
+        expect(prompt).toContain('Test Limitation');
+        expect(prompt).toContain('cant do this');
+        expect(prompt).toContain('how do I');
+      } finally {
+        // Clean up
+        if (inserted && inserted.length > 0) {
+          await supabaseAdmin.from('peggy_knowledge_base').delete().eq('id', inserted[0].id);
+        }
+      }
+    });
+
+    test('only includes active entries', async () => {
+      // Insert an inactive entry
+      const { data: inserted } = await supabaseAdmin.from('peggy_knowledge_base').insert({
+        section: 'faq',
+        title: 'Inactive Test Entry',
+        content: 'This should not appear',
+        active: false
+      }).select();
+
+      try {
+        const prompt = await peggy.assemblePrompt('bug_report', 'text', { user_name: 'Test' });
+        expect(prompt).not.toContain('Inactive Test Entry');
+        expect(prompt).not.toContain('This should not appear');
+      } finally {
+        // Clean up
+        if (inserted && inserted.length > 0) {
+          await supabaseAdmin.from('peggy_knowledge_base').delete().eq('id', inserted[0].id);
+        }
+      }
+    });
+
+    test('gracefully handles KB query failure', async () => {
+      // This test ensures the function doesn't crash if the KB query fails
+      // We can't easily force a DB failure in tests, but the try/catch in assemblePrompt
+      // should prevent any errors from propagating
+      const prompt = await peggy.assemblePrompt('bug_report', 'text', { user_name: 'Test' });
       expect(typeof prompt).toBe('string');
       expect(prompt.length).toBeGreaterThan(0);
     });

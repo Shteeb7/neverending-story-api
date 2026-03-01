@@ -208,7 +208,7 @@ async function createChatSession(userId, interviewType, context = {}) {
   let systemPrompt, greeting;
   if (isPeggy) {
     // Use Peggy persona for bug reports and suggestions
-    systemPrompt = peggy.assemblePrompt(interviewType, 'text', context);
+    systemPrompt = await peggy.assemblePrompt(interviewType, 'text', context);
     greeting = peggy.getGreeting(interviewType, context);
   } else {
     // Use Prospero persona for story interviews
@@ -344,12 +344,28 @@ async function sendMessage(sessionId, userMessage) {
       console.log('✅ Peggy deflected conversation — no bug report filed');
       // Log the deflection
       try {
+        // Try to link deflection to the knowledge base entry that powered it
+        let kbEntryId = null;
+        try {
+          const { data: kbEntry } = await supabaseAdmin
+            .from('peggy_knowledge_base')
+            .select('id')
+            .eq('active', true)
+            .ilike('title', `%${toolUseBlock.input.matched_topic}%`)
+            .limit(1)
+            .maybeSingle();
+          kbEntryId = kbEntry?.id || null;
+        } catch (lookupErr) {
+          // Non-critical — proceed without linking
+        }
+
         await supabaseAdmin.from('peggy_deflections').insert({
           user_id: session.user_id,
           resolution_type: toolUseBlock.input.resolution_type,
           matched_topic: toolUseBlock.input.matched_topic,
           user_satisfied: toolUseBlock.input.user_satisfied,
-          interview_mode: 'text'
+          interview_mode: 'text',
+          knowledge_base_entry_id: kbEntryId
         });
         console.log(`📊 Deflection logged: ${toolUseBlock.input.matched_topic} (${toolUseBlock.input.resolution_type})`);
       } catch (err) {
