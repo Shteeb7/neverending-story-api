@@ -4511,16 +4511,21 @@ Return ONLY a JSON object in this exact format:
     const useBibleRefresh = config.bible_refresh !== false;
     const useArcEnrichment = config.arc_enrichment !== false;
 
+    // Bible refresh (independent — failure doesn't block arc enrichment)
     try {
-      // Bible refresh
       if (useBibleRefresh) {
         const { refreshBible } = require('./bible-arc-maintenance');
         await refreshBible(storyId, batchChapters, userId);
       } else {
         console.log(`⚙️ [${storyTitle}] Bible refresh DISABLED by generation_config`);
       }
+    } catch (error) {
+      console.error(`⚠️ [${storyTitle}] Bible refresh failed (non-fatal): ${error.message}`);
+      storyLog(storyId, storyTitle, `⚠️ Bible refresh failed (non-fatal): ${error.message}`);
+    }
 
-      // Arc enrichment (skip for final batch — no upcoming chapters to enrich)
+    // Arc enrichment (independent — skip for final batch, no upcoming chapters to enrich)
+    try {
       if (useArcEnrichment && chapterNumber < 12) {
         const { enrichArc } = require('./bible-arc-maintenance');
         await enrichArc(storyId, batchChapters, userId);
@@ -4530,9 +4535,8 @@ Return ONLY a JSON object in this exact format:
         console.log(`⚙️ [${storyTitle}] Skipping arc enrichment for final batch (no upcoming chapters)`);
       }
     } catch (error) {
-      // Non-fatal: log and continue. Don't block checkpoint progression.
-      console.error(`⚠️ [${storyTitle}] Between-batch maintenance failed: ${error.message}`);
-      storyLog(storyId, storyTitle, `⚠️ Between-batch maintenance failed (non-fatal): ${error.message}`);
+      console.error(`⚠️ [${storyTitle}] Arc enrichment failed (non-fatal): ${error.message}`);
+      storyLog(storyId, storyTitle, `⚠️ Arc enrichment failed (non-fatal): ${error.message}`);
     }
   }
 
