@@ -219,7 +219,7 @@ router.post('/', authenticateUser, asyncHandler(async (req, res) => {
   }
 
   const currentStep = storyWithProgress?.generation_progress?.current_step;
-  if (currentStep !== 'complete') {
+  if (currentStep !== 'chapter_12_complete') {
     return res.status(403).json({
       success: false,
       error: 'Story must be fully complete before publishing to WhisperNet'
@@ -607,7 +607,7 @@ router.post('/classify', authenticateUser, asyncHandler(async (req, res) => {
   }
 
   const currentStep = storyWithProgress?.generation_progress?.current_step;
-  if (currentStep !== 'complete') {
+  if (currentStep !== 'chapter_12_complete') {
     return res.status(403).json({
       success: false,
       error: 'Story must be fully complete before classification'
