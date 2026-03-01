@@ -589,12 +589,20 @@ router.post('/:storyId/generate-sequel', authenticateUser, asyncHandler(async (r
     console.log(`📚 Created series "${seriesName}" (${seriesId})`);
   }
 
-  // Determine next book number (supports Book 3+, not just Book 2)
+  // Determine next book number — query actual max in series (defensive against stale/null book_number)
   const { extractBookContext, generateSequelBible, generateArcOutline, orchestratePreGeneration } = require('../services/generation');
 
-  const currentBookNumber = book1Story.book_number || 1;
-  const nextBookNumber = currentBookNumber + 1;
-  console.log(`📚 Creating Book ${nextBookNumber} sequel (predecessor is Book ${currentBookNumber})`);
+  const { data: maxBookInSeries } = await supabaseAdmin
+    .from('stories')
+    .select('book_number')
+    .eq('series_id', seriesId)
+    .order('book_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const nextBookNumber = (maxBookInSeries?.book_number || 1) + 1;
+  const currentBookNumber = book1Story.book_number || (nextBookNumber - 1);
+  console.log(`📚 Creating Book ${nextBookNumber} sequel (predecessor is Book ${currentBookNumber}, max in series: ${maxBookInSeries?.book_number || 'none'})`);
 
   // Extract context from the predecessor book if not already stored
   const { data: storedPredecessorCtx } = await supabaseAdmin
