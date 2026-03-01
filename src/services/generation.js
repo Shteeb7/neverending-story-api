@@ -3950,6 +3950,23 @@ ${previousBooksBlock}${seriesContextBlock}
   </key_locations>
 </story_context>
 
+${bible.content?.batch_addenda?.length > 0 ? `
+<story_developments>
+  Facts established during earlier chapters that supplement the original bible:
+  ${bible.content.batch_addenda.map(addendum => `
+  <batch chapters="${addendum.chapters_covered.join(',')}">
+    ${addendum.new_characters?.length ? `New characters: ${addendum.new_characters.map(c => `${c.name} (${c.role})`).join(', ')}` : ''}
+    ${addendum.relationship_changes?.length ? `
+    Relationship changes: ${addendum.relationship_changes.map(r => r.change || r.description || r).join('; ')}` : ''}
+    ${addendum.new_world_facts?.length ? `
+    World facts established: ${addendum.new_world_facts.map(f => f.description || f).join('; ')}` : ''}
+    ${addendum.timeline_events?.length ? `
+    Key events: ${addendum.timeline_events.map(e => e.event || e.description || e).join('; ')}` : ''}
+    ${addendum.promises_made?.length ? `
+    Open threads: ${addendum.promises_made.map(p => p.thread || p.description || p).join('; ')}` : ''}
+  </batch>`).join('\n')}
+</story_developments>` : ''}
+
 ${bible.narrative_voice ? `<narrative_voice>
   This story's narrative DNA — follow these voice directives throughout:
 
@@ -3977,6 +3994,10 @@ ${editorNotes ? `  <editor_notes>
 
   ${editorNotes}
   </editor_notes>` : ''}
+${effectiveOutline.enrichment_notes ? `  <enrichment_notes>
+  Context from previous chapters that affects this chapter's plan. Integrate these adjustments naturally:
+  ${effectiveOutline.enrichment_notes}
+  </enrichment_notes>` : ''}
 </chapter_outline>
 
 <previous_chapters>
@@ -4478,6 +4499,41 @@ Return ONLY a JSON object in this exact format:
     }
   } else {
     console.log(`⚙️ [${storyTitle}] Skipping voice review (voice_review disabled)`);
+  }
+
+  // --- BETWEEN-BATCH MAINTENANCE (Bible Refresh + Arc Enrichment) ---
+  const batchEndChapters = [3, 6, 9, 12];
+  if (batchEndChapters.includes(chapterNumber)) {
+    const batchStart = chapterNumber - 2;
+    const batchChapters = [batchStart, batchStart + 1, batchStart + 2];
+    const batchNumber = Math.ceil(chapterNumber / 3);
+
+    const useBibleRefresh = config.bible_refresh !== false;
+    const useArcEnrichment = config.arc_enrichment !== false;
+
+    try {
+      // Bible refresh
+      if (useBibleRefresh) {
+        const { refreshBible } = require('./bible-arc-maintenance');
+        await refreshBible(storyId, batchChapters, userId);
+      } else {
+        console.log(`⚙️ [${storyTitle}] Bible refresh DISABLED by generation_config`);
+      }
+
+      // Arc enrichment (skip for final batch — no upcoming chapters to enrich)
+      if (useArcEnrichment && chapterNumber < 12) {
+        const { enrichArc } = require('./bible-arc-maintenance');
+        await enrichArc(storyId, batchChapters, userId);
+      } else if (!useArcEnrichment) {
+        console.log(`⚙️ [${storyTitle}] Arc enrichment DISABLED by generation_config`);
+      } else if (chapterNumber === 12) {
+        console.log(`⚙️ [${storyTitle}] Skipping arc enrichment for final batch (no upcoming chapters)`);
+      }
+    } catch (error) {
+      // Non-fatal: log and continue. Don't block checkpoint progression.
+      console.error(`⚠️ [${storyTitle}] Between-batch maintenance failed: ${error.message}`);
+      storyLog(storyId, storyTitle, `⚠️ Between-batch maintenance failed (non-fatal): ${error.message}`);
+    }
   }
 
   return storedChapter;
